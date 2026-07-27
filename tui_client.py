@@ -14,7 +14,6 @@ from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.containers import Vertical, Horizontal
 from textual.widgets import Input, Button, Static, RichLog, Label
-from textual import work
 
 DEFAULT_HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
 DEFAULT_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 6667
@@ -270,7 +269,7 @@ class ChatApp(App):
         except Exception as e:  # noqa: BLE001
             login_screen.show_status(f"통신 오류: {e}")
             return
-        self.run_worker(self.listen_loop(), exclusive=True)
+        self._listen_task = asyncio.create_task(self.listen_loop())
 
     async def send_cmd(self, payload: dict):
         if not self.writer:
@@ -278,7 +277,6 @@ class ChatApp(App):
         self.writer.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
         await self.writer.drain()
 
-    @work
     async def listen_loop(self) -> None:
         assert self.reader is not None
         try:
