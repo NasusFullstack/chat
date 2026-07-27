@@ -1,24 +1,43 @@
 """
 친구 채팅 - 단순 CLI 클라이언트 (TUI 없이 순수 텍스트)
 실행: python cli_client.py [서버주소] [포트] [cert.pem 경로(선택)]
+cert.pem 경로를 안 주면, 실행 파일과 같은 폴더의 cert.pem을 자동으로 찾습니다.
 """
 import asyncio
 import json
+import os
 import ssl
 import sys
 
+
+def _app_dir() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 6667
-CERT_PATH = sys.argv[3] if len(sys.argv) > 3 else ""
+if len(sys.argv) > 3:
+    CERT_PATH = sys.argv[3].strip().strip('"').strip("'")
+else:
+    _auto = os.path.join(_app_dir(), "cert.pem")
+    CERT_PATH = _auto if os.path.exists(_auto) else ""
 
 
 def make_ssl_context():
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     if CERT_PATH:
-        ctx.load_verify_locations(cafile=CERT_PATH)
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_REQUIRED
-        print(f"[알림] 인증서로 서버 신원 확인 중... ({CERT_PATH})")
+        try:
+            ctx.load_verify_locations(cafile=CERT_PATH)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_REQUIRED
+            print(f"[알림] 인증서로 서버 신원 확인 중... ({CERT_PATH})")
+        except Exception as e:  # noqa: BLE001
+            print(f"[오류] 인증서 파일을 읽을 수 없습니다: {e}")
+            print("[알림] 인증서 없이 암호화 연결만 시도합니다.")
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
     else:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -116,19 +135,22 @@ async def main():
 
     try:
         reader, writer = await asyncio.open_connection(HOST, PORT, ssl=ssl_context)
-    except (OSError, ssl.SSLError) as e:
+    except Exception as e:  # noqa: BLE001
         print(f"[오류] 연결 실패: {e}")
         return
 
-    my_id = await auth_flow(reader, writer)
-    await channel_flow(reader, writer)
+    try:
+        my_id = await auth_flow(reader, writer)
+        await channel_flow(reader, writer)
 
-    print("채팅을 시작합니다. 종료하려면 /종료 입력\n")
+        print("채팅을 시작합니다. 종료하려면 /종료 입력\n")
 
-    await asyncio.gather(
-        listen_loop(reader, my_id),
-        send_loop(writer),
-    )
+        await asyncio.gather(
+            listen_loop(reader, my_id),
+            send_loop(writer),
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"\n[오류] 예상치 못한 문제가 발생했습니다: {e}")
 
 
 if __name__ == "__main__":
