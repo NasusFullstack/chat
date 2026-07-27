@@ -5,6 +5,7 @@ IRC 스타일 채팅 - 터미널(TUI) 클라이언트
 """
 import asyncio
 import json
+import ssl
 import sys
 from datetime import datetime
 
@@ -41,6 +42,7 @@ class LoginScreen(Screen):
             yield Label("채팅 프로그램 접속", id="title")
             yield Input(placeholder="서버 주소", value=DEFAULT_HOST, id="host")
             yield Input(placeholder="포트", value=str(DEFAULT_PORT), id="port")
+            yield Input(placeholder="cert.pem 경로 (서버가 준 파일, 없으면 비워둠)", id="cert_path")
             yield Input(placeholder="아이디", id="user_id")
             yield Input(placeholder="비밀번호", password=True, id="password")
             with Horizontal():
@@ -51,6 +53,7 @@ class LoginScreen(Screen):
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         host = self.query_one("#host", Input).value.strip()
         port = self.query_one("#port", Input).value.strip()
+        cert_path = self.query_one("#cert_path", Input).value.strip()
         user_id = self.query_one("#user_id", Input).value.strip()
         password = self.query_one("#password", Input).value
 
@@ -67,9 +70,9 @@ class LoginScreen(Screen):
         app: ChatApp = self.app  # type: ignore
 
         if event.button.id == "login_btn":
-            await app.connect_and_auth(host, port_num, "login", user_id, password)
+            await app.connect_and_auth(host, port_num, "login", user_id, password, cert_path)
         elif event.button.id == "register_btn":
-            await app.connect_and_auth(host, port_num, "register", user_id, password)
+            await app.connect_and_auth(host, port_num, "register", user_id, password, cert_path)
 
     def show_status(self, text: str) -> None:
         self.query_one("#status", Static).update(text)
@@ -194,11 +197,29 @@ class ChatApp(App):
     def on_mount(self) -> None:
         self.push_screen(LoginScreen())
 
-    async def connect_and_auth(self, host, port, mode, user_id, password):
+    async def connect_and_auth(self, host, port, mode, user_id, password, cert_path=""):
         login_screen = self.screen
+
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        if cert_path:
+            try:
+                ssl_context.load_verify_locations(cafile=cert_path)
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_REQUIRED
+            except (FileNotFoundError, ssl.SSLError) as e:
+                login_screen.show_status(f"인증서 파일을 읽을 수 없습니다: {e}")
+                return
+        else:
+            # 인증서 없이도 통신 자체는 암호화됨 (도청 방지)
+            # 단, 서버가 진짜인지 확인은 안 하므로 신뢰할 수 있는 서버에서만 사용
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
         try:
-            self.reader, self.writer = await asyncio.open_connection(host, port)
-        except OSError as e:
+            self.reader, self.writer = await asyncio.open_connection(
+                host, port, ssl=ssl_context
+            )
+        except (OSError, ssl.SSLError) as e:
             login_screen.show_status(f"연결 실패: {e}")
             return
 
