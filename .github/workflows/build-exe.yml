@@ -23,9 +23,13 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build client (FriendChat.exe)
+      - name: Build TUI client (FriendChat.exe)
         run: |
           pyinstaller --noconfirm --onefile --console --name FriendChat tui_client.py
+
+      - name: Build CLI client (FriendChat_CLI.exe)
+        run: |
+          pyinstaller --noconfirm --onefile --console --name FriendChat_CLI cli_client.py
 
       - name: Build server (FriendChat_Server.exe)
         run: |
@@ -37,4 +41,5 @@ jobs:
           name: FriendChat-Windows-EXE
           path: |
             dist/FriendChat.exe
+            dist/FriendChat_CLI.exe
             dist/FriendChat_Server.exe
