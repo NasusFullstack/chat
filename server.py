@@ -6,9 +6,11 @@ IRC 스타일 채팅 서버
 """
 import asyncio
 import json
+import ssl
 import sys
 import time
 from store import Store
+from certs import ensure_certificate
 
 HOST = "0.0.0.0"
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 6667
@@ -144,8 +146,13 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
 
 async def main():
-    server = await asyncio.start_server(handle_client, HOST, PORT)
-    print(f"채팅 서버 시작: {HOST}:{PORT}")
+    cert_path, key_path = ensure_certificate()
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+
+    server = await asyncio.start_server(handle_client, HOST, PORT, ssl=ssl_context)
+    print(f"채팅 서버 시작 (TLS 암호화): {HOST}:{PORT}")
+    print(f"인증서 파일(cert.pem)을 친구들에게 함께 전달하세요: {cert_path}")
     async with server:
         await server.serve_forever()
 
