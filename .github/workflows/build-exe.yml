@@ -6,40 +6,39 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Install dependencies
-        run: |
+      - run: |
           pip install -r requirements.txt
           pip install pyinstaller
-
-      - name: Build TUI client (FriendChat.exe)
-        run: |
-          pyinstaller --noconfirm --onefile --console --name FriendChat tui_client.py
-
-      - name: Build CLI client (FriendChat_CLI.exe)
-        run: |
-          pyinstaller --noconfirm --onefile --console --name FriendChat_CLI cli_client.py
-
-      - name: Build server (FriendChat_Server.exe)
-        run: |
-          pyinstaller --noconfirm --onefile --console --name FriendChat_Server server.py
-
-      - name: Upload EXE files
-        uses: actions/upload-artifact@v4
+      - run: pyinstaller --noconfirm --onefile --console --name FriendChat tui_client.py
+      - run: pyinstaller --noconfirm --onefile --console --name FriendChat_CLI cli_client.py
+      - run: pyinstaller --noconfirm --onefile --console --name FriendChat_Server server.py
+      - uses: actions/upload-artifact@v4
         with:
-          name: FriendChat-Windows-EXE
+          name: FriendChat-Windows
           path: |
             dist/FriendChat.exe
             dist/FriendChat_CLI.exe
             dist/FriendChat_Server.exe
+
+  build-linux-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - run: pyinstaller --noconfirm --onefile --name FriendChat_Server_Linux server.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FriendChat-Server-Linux
+          path: dist/FriendChat_Server_Linux
