@@ -1,17 +1,20 @@
 """
 친구 채팅 - 단순 CLI 클라이언트 (TUI 없이 순수 텍스트)
-실행: python cli_client.py [서버주소] [포트] [cert.pem 경로(선택)] [ssl여부: on/off, 기본 on]
+실행: python cli_client.py [서버주소] [포트] [cert.pem 경로(선택)] [ssl여부: on/off, 기본 on] [프로토콜: custom/irc, 기본 custom]
 인자 없이 실행하면 등록된 공용서버 목록에서 골라 접속하거나, 새 서버를 등록할 수 있습니다.
 SSL을 켜면 기본 포트 6697(암호화), 끄면 기본 포트 6667(평문)을 사용합니다.
 cert.pem 경로를 안 주면, 실행 파일과 같은 폴더의 cert.pem을 자동으로 찾습니다.
+프로토콜을 irc로 지정하면 이 프로젝트의 커스텀 서버(server.py)가 아니라 실제 IRC 서버에 접속합니다.
 """
 import asyncio
 import json
 import os
 import ssl
 import sys
+from dataclasses import dataclass, field
 
 import server_registry
+import irc_protocol
 
 CONNECT_TIMEOUT_SEC = 10
 
@@ -34,13 +37,14 @@ def _prompt_yes_no(prompt: str, default: bool) -> bool:
     return ans in ("y", "yes")
 
 
-def _prompt_server_choice() -> tuple[str, int, str, bool]:
+def _prompt_server_choice() -> tuple[str, int, str, bool, str]:
     """저장된 공용서버 목록에서 고르거나, 직접 입력/새로 등록"""
     servers = server_registry.load_servers()
     print("\n=== 서버 선택 ===")
     for i, s in enumerate(servers, start=1):
         mode = "SSL" if s.get("ssl", True) else "평문"
-        print(f"  {i}) {s['name']} ({s['host']}:{s['port']}, {mode})")
+        proto = "IRC" if s.get("protocol", "custom") == "irc" else "커스텀"
+        print(f"  {i}) {s['name']} ({s['host']}:{s['port']}, {mode}, {proto})")
     manual_no = len(servers) + 1
     register_no = len(servers) + 2
     print(f"  {manual_no}) 직접 입력")
@@ -55,24 +59,29 @@ def _prompt_server_choice() -> tuple[str, int, str, bool]:
 
         if 1 <= choice <= len(servers):
             s = servers[choice - 1]
-            return s["host"], int(s["port"]), s.get("cert_path", ""), s.get("ssl", True)
+            return (
+                s["host"], int(s["port"]), s.get("cert_path", ""),
+                s.get("ssl", True), s.get("protocol", "custom"),
+            )
 
         if choice == manual_no:
             return _prompt_server_details()
 
         if choice == register_no:
             name = input("서버 이름: ").strip()
-            host, port, cert_path, use_ssl = _prompt_server_details()
+            host, port, cert_path, use_ssl, protocol = _prompt_server_details()
             if name:
-                server_registry.add_server(name, host, port, cert_path, ssl=use_ssl)
+                server_registry.add_server(name, host, port, cert_path, ssl=use_ssl, protocol=protocol)
                 print(f"[알림] '{name}' 서버가 등록되었습니다. 다음부터 목록에서 바로 고를 수 있어요.")
-            return host, port, cert_path, use_ssl
+            return host, port, cert_path, use_ssl, protocol
 
         print("[오류] 올바른 번호를 선택하세요.")
 
 
-def _prompt_server_details() -> tuple[str, int, str, bool]:
+def _prompt_server_details() -> tuple[str, int, str, bool, str]:
     host = input("서버 주소: ").strip()
+    is_irc = _prompt_yes_no("실제 IRC 서버에 접속합니까? (친구 채팅 서버면 N) (y/N): ", default=False)
+    protocol = "irc" if is_irc else "custom"
     use_ssl = _prompt_yes_no("SSL 암호화 연결을 사용할까요? (Y/n): ", default=True)
     default_port = 6697 if use_ssl else 6667
     port_text = input(f"포트 (기본값 {default_port}, Enter로 기본값 사용): ").strip()
@@ -87,16 +96,16 @@ def _prompt_server_details() -> tuple[str, int, str, bool]:
         port = default_port
 
     cert_path = ""
-    if use_ssl:
+    if use_ssl and protocol == "custom":
         cert_path = input("cert.pem 경로 (없으면 Enter): ").strip().strip('"').strip("'")
         if not cert_path:
             cert_path = _auto_cert()
-    return host, port, cert_path, use_ssl
+    return host, port, cert_path, use_ssl, protocol
 
 
-def make_ssl_context(cert_path: str):
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+def make_ssl_context(cert_path: str, protocol: str = "custom"):
     if cert_path:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         try:
             ctx.load_verify_locations(cafile=cert_path)
             ctx.check_hostname = False
@@ -107,10 +116,16 @@ def make_ssl_context(cert_path: str):
             print("[알림] 인증서 없이 암호화 연결만 시도합니다.")
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
-    else:
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        print("[경고] 인증서 없이 접속 - 통신은 암호화되지만 서버 신원 확인은 안 됩니다.")
+        return ctx
+    if protocol == "irc":
+        # 실제 IRC 서버는 보통 정식 CA 인증서를 쓰므로 시스템 신뢰 저장소로 표준 검증한다
+        # (우리 서버의 자체 서명 인증서처럼 검증을 생략하지 않음).
+        print("[알림] 시스템 인증서 저장소로 서버 신원을 표준 검증합니다.")
+        return ssl.create_default_context()
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    print("[경고] 인증서 없이 접속 - 통신은 암호화되지만 서버 신원 확인은 안 됩니다.")
     return ctx
 
 
@@ -198,19 +213,177 @@ async def send_loop(writer):
         await send(writer, {"cmd": "msg", "text": text})
 
 
+# ==================== 실제 IRC 서버 모드 ====================
+
+@dataclass
+class IrcSession:
+    nick: str
+    channel: str = ""
+    members: set = field(default_factory=set)
+
+
+async def send_irc_line(writer, line: str):
+    writer.write(irc_protocol.encode_line(line))
+    await writer.drain()
+
+
+async def recv_irc_line(reader) -> irc_protocol.IrcMessage:
+    line = await reader.readline()
+    if not line:
+        raise ConnectionResetError("서버 연결이 끊겼습니다.")
+    return irc_protocol.parse_line(line.decode("utf-8", errors="replace"))
+
+
+async def irc_register(reader, writer) -> IrcSession:
+    nick = (await ainput("닉네임: ")).strip()
+    password = await ainput("서버/NickServ 비밀번호 (없으면 Enter): ")
+
+    if password:
+        await send_irc_line(writer, irc_protocol.format_pass(password))
+    await send_irc_line(writer, irc_protocol.format_nick(nick))
+    await send_irc_line(writer, irc_protocol.format_user(nick, nick))
+
+    retries = 0
+    while True:
+        msg = await recv_irc_line(reader)
+
+        if msg.command == "PING":
+            await send_irc_line(writer, irc_protocol.format_pong(msg.trailing))
+            continue
+
+        if msg.command == irc_protocol.RPL_WELCOME:
+            if password:
+                await send_irc_line(writer, irc_protocol.format_privmsg("NickServ", f"IDENTIFY {password}"))
+            print(f"[등록 완료: {nick}]")
+            return IrcSession(nick=nick)
+
+        if msg.command in irc_protocol.NICK_COLLISION_NUMERICS:
+            if retries < irc_protocol.MAX_NICK_RETRIES:
+                retries += 1
+                nick = nick + "_"
+                print(f"[알림] 닉네임이 사용 중입니다. '{nick}'(으)로 재시도합니다.")
+            else:
+                nick = (await ainput("[오류] 사용 가능한 닉네임이 없습니다. 새 닉네임: ")).strip()
+                retries = 0
+            await send_irc_line(writer, irc_protocol.format_nick(nick))
+            continue
+
+        if msg.command == "NOTICE":
+            print(f"[{msg.trailing}]")
+            continue
+
+        if msg.command == "ERROR":
+            raise ConnectionResetError(f"서버가 연결을 종료했습니다: {msg.trailing}")
+        # 그 외 등록 과정의 잡다한 numeric 응답은 무시
+
+
+async def irc_channel_flow(reader, writer, session: IrcSession):
+    while True:
+        channel = irc_protocol.normalize_channel(await ainput("채널명 (예: #친구들): "))
+        key = await ainput("채널 비밀번호 (없으면 Enter): ")
+        await send_irc_line(writer, irc_protocol.format_join(channel, key or None))
+
+        joined = False
+        failed = False
+        while not joined and not failed:
+            msg = await recv_irc_line(reader)
+            if msg.command == "PING":
+                await send_irc_line(writer, irc_protocol.format_pong(msg.trailing))
+            elif msg.command in irc_protocol.CHANNEL_JOIN_ERROR_NUMERICS:
+                print(f"[오류] {msg.trailing or '채널 입장에 실패했습니다.'}")
+                failed = True
+            elif msg.command == irc_protocol.RPL_NAMREPLY:
+                session.members.update(irc_protocol.parse_names_reply(msg))
+            elif msg.command == "JOIN" and msg.source_nick == session.nick:
+                session.channel = channel
+                session.members.add(session.nick)
+                print(f"[{channel} 입장 완료]")
+                joined = True
+            elif msg.command == "NOTICE":
+                print(f"[{msg.trailing}]")
+
+        if joined:
+            return
+
+
+async def irc_listen_loop(reader, writer, session: IrcSession):
+    while True:
+        try:
+            msg = await recv_irc_line(reader)
+        except (ConnectionResetError, asyncio.IncompleteReadError):
+            print("\n[서버 연결이 종료되었습니다]")
+            return
+
+        cmd = msg.command
+        if cmd == "PING":
+            await send_irc_line(writer, irc_protocol.format_pong(msg.trailing))
+
+        elif cmd == "PRIVMSG":
+            sender = msg.source_nick
+            target = msg.params[0] if msg.params else ""
+            text = msg.trailing
+            tag = f"{sender} (귓속말)" if target == session.nick else sender
+            print(f"\n{tag}: {text}\n> ", end="", flush=True)
+
+        elif cmd == "JOIN":
+            nick = msg.source_nick
+            if nick != session.nick:
+                session.members.add(nick)
+                print(f"\n* {nick}님이 입장했습니다.\n> ", end="", flush=True)
+
+        elif cmd in ("PART", "QUIT"):
+            nick = msg.source_nick
+            session.members.discard(nick)
+            verb = "나갔습니다" if cmd == "PART" else "접속을 종료했습니다"
+            print(f"\n* {nick}님이 {verb}.\n> ", end="", flush=True)
+
+        elif cmd == "NICK":
+            old_nick = msg.source_nick
+            new_nick = msg.trailing or (msg.params[0] if msg.params else "")
+            session.members.discard(old_nick)
+            session.members.add(new_nick)
+            if old_nick == session.nick:
+                session.nick = new_nick
+            print(f"\n* {old_nick}님이 {new_nick}(으)로 닉네임을 변경했습니다.\n> ", end="", flush=True)
+
+        elif cmd == "NOTICE":
+            print(f"\n* {msg.trailing}\n> ", end="", flush=True)
+
+        elif cmd == "ERROR":
+            print(f"\n[서버 연결이 종료되었습니다: {msg.trailing}]")
+            return
+
+
+async def irc_send_loop(writer, session: IrcSession):
+    while True:
+        text = await ainput("> ")
+        if not text.strip():
+            continue
+        if text.strip() in ("/종료", "/quit", "/exit"):
+            await send_irc_line(writer, irc_protocol.format_quit("나감"))
+            writer.close()
+            return
+        print(f"나: {text}")
+        await send_irc_line(writer, irc_protocol.format_privmsg(session.channel, text))
+
+
 async def main():
     if len(sys.argv) > 1:
         host = sys.argv[1]
         use_ssl = not (len(sys.argv) > 4 and sys.argv[4].strip().lower() in ("off", "plain", "no", "0"))
         port = int(sys.argv[2]) if len(sys.argv) > 2 else (6697 if use_ssl else 6667)
         cert_path = sys.argv[3].strip().strip('"').strip("'") if len(sys.argv) > 3 else _auto_cert()
-        if not use_ssl:
+        protocol = sys.argv[5].strip().lower() if len(sys.argv) > 5 else "custom"
+        if protocol not in ("custom", "irc"):
+            protocol = "custom"
+        if not use_ssl or protocol == "irc":
             cert_path = ""
     else:
-        host, port, cert_path, use_ssl = _prompt_server_choice()
+        host, port, cert_path, use_ssl, protocol = _prompt_server_choice()
 
-    print(f"\n=== 친구 채팅 CLI === ({host}:{port}, {'SSL' if use_ssl else '평문'})")
-    ssl_context = make_ssl_context(cert_path) if use_ssl else None
+    proto_label = "IRC" if protocol == "irc" else "커스텀"
+    print(f"\n=== 친구 채팅 CLI === ({host}:{port}, {'SSL' if use_ssl else '평문'}, {proto_label})")
+    ssl_context = make_ssl_context(cert_path, protocol) if use_ssl else None
 
     print(f"[알림] 연결 시도 중... (최대 {CONNECT_TIMEOUT_SEC}초, Ctrl+C로 언제든 취소)")
     try:
@@ -225,15 +398,26 @@ async def main():
         return
 
     try:
-        my_id = await auth_flow(reader, writer)
-        await channel_flow(reader, writer)
+        if protocol == "irc":
+            session = await irc_register(reader, writer)
+            await irc_channel_flow(reader, writer, session)
 
-        print("채팅을 시작합니다. 종료하려면 /종료 입력\n")
+            print("채팅을 시작합니다. 종료하려면 /종료 입력\n")
 
-        await asyncio.gather(
-            listen_loop(reader, my_id),
-            send_loop(writer),
-        )
+            await asyncio.gather(
+                irc_listen_loop(reader, writer, session),
+                irc_send_loop(writer, session),
+            )
+        else:
+            my_id = await auth_flow(reader, writer)
+            await channel_flow(reader, writer)
+
+            print("채팅을 시작합니다. 종료하려면 /종료 입력\n")
+
+            await asyncio.gather(
+                listen_loop(reader, my_id),
+                send_loop(writer),
+            )
     except Exception as e:  # noqa: BLE001
         print(f"\n[오류] 예상치 못한 문제가 발생했습니다: {e}")
 
