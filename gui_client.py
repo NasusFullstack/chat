@@ -8,14 +8,18 @@ import json
 import os
 import sys
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtNetwork import QSslSocket, QSslCertificate, QSslConfiguration, QSslError
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit, QListWidget,
-    QFileDialog, QMessageBox, QFrame,
+    QFileDialog, QMessageBox, QFrame, QComboBox, QInputDialog,
 )
+
+import server_registry
+
+CONNECT_TIMEOUT_MS = 10_000
 
 APP_TITLE = "친구 채팅"
 
@@ -157,9 +161,10 @@ class ChatClient(QSslSocket):
 
 
 class LoginPage(QWidget):
-    def __init__(self, on_submit):
+    def __init__(self, on_submit, on_cancel):
         super().__init__()
         self.on_submit = on_submit
+        self.on_cancel = on_cancel
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(10)
@@ -169,6 +174,21 @@ class LoginPage(QWidget):
         title = QLabel("채팅 프로그램 접속")
         title.setObjectName("title")
         box.addWidget(title)
+
+        self.server_combo = QComboBox()
+        self.server_combo.currentIndexChanged.connect(self._on_server_selected)
+        box.addWidget(self.server_combo)
+
+        server_btn_row = QHBoxLayout()
+        register_server_btn = QPushButton("공용서버 등록")
+        register_server_btn.setObjectName("secondary")
+        register_server_btn.clicked.connect(self._register_server)
+        delete_server_btn = QPushButton("선택 서버 삭제")
+        delete_server_btn.setObjectName("secondary")
+        delete_server_btn.clicked.connect(self._delete_server)
+        server_btn_row.addWidget(register_server_btn)
+        server_btn_row.addWidget(delete_server_btn)
+        box.addLayout(server_btn_row)
 
         self.host_input = QLineEdit("127.0.0.1")
         self.host_input.setPlaceholderText("서버 주소")
@@ -188,8 +208,9 @@ class LoginPage(QWidget):
         cert_row.addWidget(cert_browse)
         box.addLayout(cert_row)
 
-        hint = QLabel("※ 파일 선택 버튼으로 cert.pem을 고르면 경로 입력이 필요 없어요")
+        hint = QLabel("※ 목록에서 공용서버를 고르거나, 주소를 직접 입력한 뒤 '공용서버 등록'으로 저장해두면 다음부터 목록에서 바로 고를 수 있어요")
         hint.setObjectName("hint")
+        hint.setWordWrap(True)
         box.addWidget(hint)
 
         self.user_input = QLineEdit()
@@ -202,13 +223,18 @@ class LoginPage(QWidget):
         box.addWidget(self.pw_input)
 
         btn_row = QHBoxLayout()
-        login_btn = QPushButton("로그인")
-        login_btn.clicked.connect(lambda: self.on_submit("login"))
-        register_btn = QPushButton("회원가입")
-        register_btn.setObjectName("secondary")
-        register_btn.clicked.connect(lambda: self.on_submit("register"))
-        btn_row.addWidget(login_btn)
-        btn_row.addWidget(register_btn)
+        self.login_btn = QPushButton("로그인")
+        self.login_btn.clicked.connect(lambda: self.on_submit("login"))
+        self.register_btn = QPushButton("회원가입")
+        self.register_btn.setObjectName("secondary")
+        self.register_btn.clicked.connect(lambda: self.on_submit("register"))
+        self.cancel_btn = QPushButton("연결 취소")
+        self.cancel_btn.setObjectName("secondary")
+        self.cancel_btn.clicked.connect(self.on_cancel)
+        self.cancel_btn.setVisible(False)
+        btn_row.addWidget(self.login_btn)
+        btn_row.addWidget(self.register_btn)
+        btn_row.addWidget(self.cancel_btn)
         box.addLayout(btn_row)
 
         self.status_label = QLabel("")
@@ -222,6 +248,61 @@ class LoginPage(QWidget):
         layout.addWidget(container)
         self.setLayout(layout)
 
+        self._reload_servers()
+
+    def _reload_servers(self, select_name: str | None = None):
+        self.server_combo.blockSignals(True)
+        self.server_combo.clear()
+        self.server_combo.addItem("직접 입력", None)
+        select_index = 0
+        for i, s in enumerate(server_registry.load_servers(), start=1):
+            self.server_combo.addItem(f"{s['name']} ({s['host']}:{s['port']})", s)
+            if select_name and s["name"] == select_name:
+                select_index = i
+        self.server_combo.setCurrentIndex(select_index)
+        self.server_combo.blockSignals(False)
+
+    def _on_server_selected(self, index: int):
+        data = self.server_combo.itemData(index)
+        if data:
+            self.host_input.setText(data["host"])
+            self.port_input.setText(str(data["port"]))
+            self.cert_input.setText(data.get("cert_path", ""))
+
+    def _register_server(self):
+        host = self.host_input.text().strip()
+        port = self.port_input.text().strip()
+        if not host or not port:
+            self.show_status("서버 주소와 포트를 먼저 입력하세요.")
+            return
+        try:
+            port = int(port)
+        except ValueError:
+            self.show_status("포트는 숫자여야 합니다.")
+            return
+        name, ok = QInputDialog.getText(self, "공용서버 등록", "서버 이름:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        cert_path = self.cert_input.text().strip().strip('"').strip("'")
+        server_registry.add_server(name, host, port, cert_path)
+        self._reload_servers(select_name=name)
+        self.show_status(f"'{name}' 서버가 등록되었습니다. 다음부터 목록에서 바로 선택할 수 있어요.")
+
+    def _delete_server(self):
+        data = self.server_combo.itemData(self.server_combo.currentIndex())
+        if not data:
+            self.show_status("삭제할 서버를 목록에서 선택하세요.")
+            return
+        confirm = QMessageBox.question(
+            self, "서버 삭제", f"'{data['name']}' 서버를 목록에서 삭제할까요?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        server_registry.remove_server(data["name"])
+        self._reload_servers()
+        self.show_status(f"'{data['name']}' 서버를 삭제했습니다.")
+
     def _browse_cert(self):
         path, _ = QFileDialog.getOpenFileName(self, "cert.pem 선택", "", "PEM Files (*.pem);;All Files (*)")
         if path:
@@ -229,6 +310,11 @@ class LoginPage(QWidget):
 
     def show_status(self, text: str):
         self.status_label.setText(text)
+
+    def set_connecting(self, connecting: bool):
+        self.login_btn.setEnabled(not connecting)
+        self.register_btn.setEnabled(not connecting)
+        self.cancel_btn.setVisible(connecting)
 
     def get_values(self):
         return {
@@ -367,10 +453,15 @@ class MainWindow(QMainWindow):
 
         self.my_id = ""
         self.pending_mode = ""
+        self._connecting = False
+
+        self._connect_timer = QTimer(self)
+        self._connect_timer.setSingleShot(True)
+        self._connect_timer.timeout.connect(self._on_connect_timeout)
 
         self.stack = QStackedWidget()
 
-        self.login_page = LoginPage(self._handle_login_submit)
+        self.login_page = LoginPage(self._handle_login_submit, self._handle_cancel_connect)
         self.channel_page = ChannelPage(self._handle_channel_submit)
         self.chat_page = ChatPage(self._handle_send)
 
@@ -400,17 +491,45 @@ class MainWindow(QMainWindow):
             self._on_connected()
             return
 
-        self.login_page.show_status("연결 중...")
+        self.login_page.show_status("연결 중... (최대 10초, 언제든 '연결 취소' 가능)")
+        self.login_page.set_connecting(True)
+        self._connecting = True
+        self._connect_timer.start(CONNECT_TIMEOUT_MS)
         try:
             self.client.connect_to_server(values["host"], port, values["cert_path"])
         except Exception as e:  # noqa: BLE001
+            self._stop_connecting()
             self.login_page.show_status(f"오류: {e}")
 
+    def _stop_connecting(self):
+        self._connecting = False
+        self._connect_timer.stop()
+        self.login_page.set_connecting(False)
+
+    def _handle_cancel_connect(self):
+        if not self._connecting:
+            return
+        self._stop_connecting()
+        self.client.abort()
+        self.login_page.show_status("연결을 취소했습니다.")
+
+    def _on_connect_timeout(self):
+        if not self._connecting:
+            return
+        self._stop_connecting()
+        self.client.abort()
+        self.login_page.show_status(f"연결 시간이 초과되었습니다. ({CONNECT_TIMEOUT_MS // 1000}초)")
+
     def _on_connected(self):
+        self._stop_connecting()
         cmd = "login" if self.pending_mode == "login" else "register"
         self.client.send_cmd({"cmd": cmd, "id": self._pending_user_id, "pw": self._pending_password})
 
     def _on_connection_failed(self, err: str):
+        if not self._connecting:
+            # 사용자가 취소했거나 타임아웃으로 이미 처리된 경우 - 중복 메시지 방지
+            return
+        self._stop_connecting()
         if self.stack.currentWidget() is self.login_page:
             self.login_page.show_status(f"연결 실패: {err}")
 

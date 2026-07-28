@@ -1,6 +1,7 @@
 """
 친구 채팅 - 단순 CLI 클라이언트 (TUI 없이 순수 텍스트)
 실행: python cli_client.py [서버주소] [포트] [cert.pem 경로(선택)]
+인자 없이 실행하면 등록된 공용서버 목록에서 골라 접속하거나, 새 서버를 등록할 수 있습니다.
 cert.pem 경로를 안 주면, 실행 파일과 같은 폴더의 cert.pem을 자동으로 찾습니다.
 """
 import asyncio
@@ -9,6 +10,10 @@ import os
 import ssl
 import sys
 
+import server_registry
+
+CONNECT_TIMEOUT_SEC = 10
+
 
 def _app_dir() -> str:
     if getattr(sys, "frozen", False):
@@ -16,23 +21,70 @@ def _app_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
-PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 6667
-if len(sys.argv) > 3:
-    CERT_PATH = sys.argv[3].strip().strip('"').strip("'")
-else:
-    _auto = os.path.join(_app_dir(), "cert.pem")
-    CERT_PATH = _auto if os.path.exists(_auto) else ""
+def _auto_cert() -> str:
+    candidate = os.path.join(_app_dir(), "cert.pem")
+    return candidate if os.path.exists(candidate) else ""
 
 
-def make_ssl_context():
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    if CERT_PATH:
+def _prompt_server_choice() -> tuple[str, int, str]:
+    """저장된 공용서버 목록에서 고르거나, 직접 입력/새로 등록"""
+    servers = server_registry.load_servers()
+    print("\n=== 서버 선택 ===")
+    for i, s in enumerate(servers, start=1):
+        print(f"  {i}) {s['name']} ({s['host']}:{s['port']})")
+    manual_no = len(servers) + 1
+    register_no = len(servers) + 2
+    print(f"  {manual_no}) 직접 입력")
+    print(f"  {register_no}) 새 공용서버 등록")
+
+    while True:
+        choice = input("번호 선택: ").strip()
+        if not choice.isdigit():
+            print("[오류] 숫자를 입력하세요.")
+            continue
+        choice = int(choice)
+
+        if 1 <= choice <= len(servers):
+            s = servers[choice - 1]
+            return s["host"], int(s["port"]), s.get("cert_path", "")
+
+        if choice == manual_no:
+            return _prompt_server_details()
+
+        if choice == register_no:
+            name = input("서버 이름: ").strip()
+            host, port, cert_path = _prompt_server_details()
+            if name:
+                server_registry.add_server(name, host, port, cert_path)
+                print(f"[알림] '{name}' 서버가 등록되었습니다. 다음부터 목록에서 바로 고를 수 있어요.")
+            return host, port, cert_path
+
+        print("[오류] 올바른 번호를 선택하세요.")
+
+
+def _prompt_server_details() -> tuple[str, int, str]:
+    host = input("서버 주소: ").strip()
+    while True:
+        port_text = input("포트: ").strip()
         try:
-            ctx.load_verify_locations(cafile=CERT_PATH)
+            port = int(port_text)
+            break
+        except ValueError:
+            print("[오류] 포트는 숫자여야 합니다.")
+    cert_path = input("cert.pem 경로 (없으면 Enter): ").strip().strip('"').strip("'")
+    if not cert_path:
+        cert_path = _auto_cert()
+    return host, port, cert_path
+
+
+def make_ssl_context(cert_path: str):
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    if cert_path:
+        try:
+            ctx.load_verify_locations(cafile=cert_path)
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_REQUIRED
-            print(f"[알림] 인증서로 서버 신원 확인 중... ({CERT_PATH})")
+            print(f"[알림] 인증서로 서버 신원 확인 중... ({cert_path})")
         except Exception as e:  # noqa: BLE001
             print(f"[오류] 인증서 파일을 읽을 수 없습니다: {e}")
             print("[알림] 인증서 없이 암호화 연결만 시도합니다.")
@@ -130,11 +182,24 @@ async def send_loop(writer):
 
 
 async def main():
-    print(f"=== 친구 채팅 CLI === ({HOST}:{PORT})")
-    ssl_context = make_ssl_context()
+    if len(sys.argv) > 1:
+        host = sys.argv[1]
+        port = int(sys.argv[2]) if len(sys.argv) > 2 else 6667
+        cert_path = sys.argv[3].strip().strip('"').strip("'") if len(sys.argv) > 3 else _auto_cert()
+    else:
+        host, port, cert_path = _prompt_server_choice()
 
+    print(f"\n=== 친구 채팅 CLI === ({host}:{port})")
+    ssl_context = make_ssl_context(cert_path)
+
+    print(f"[알림] 연결 시도 중... (최대 {CONNECT_TIMEOUT_SEC}초, Ctrl+C로 언제든 취소)")
     try:
-        reader, writer = await asyncio.open_connection(HOST, PORT, ssl=ssl_context)
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port, ssl=ssl_context), timeout=CONNECT_TIMEOUT_SEC
+        )
+    except asyncio.TimeoutError:
+        print(f"[오류] 연결 시간이 초과되었습니다. ({CONNECT_TIMEOUT_SEC}초)")
+        return
     except Exception as e:  # noqa: BLE001
         print(f"[오류] 연결 실패: {e}")
         return
