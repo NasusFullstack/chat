@@ -18,6 +18,7 @@ jobs:
           pip install pyinstaller
       - run: pyinstaller --noconfirm --onefile --console --name FriendChat tui_client.py
       - run: pyinstaller --noconfirm --onefile --console --name FriendChat_CLI cli_client.py
+      - run: pyinstaller --noconfirm --onefile --windowed --name FriendChat_GUI gui_client.py
       - run: pyinstaller --noconfirm --onefile --console --name FriendChat_Server server.py
       - uses: actions/upload-artifact@v4
         with:
@@ -25,6 +26,7 @@ jobs:
           path: |
             dist/FriendChat.exe
             dist/FriendChat_CLI.exe
+            dist/FriendChat_GUI.exe
             dist/FriendChat_Server.exe
 
   build-linux-server:
