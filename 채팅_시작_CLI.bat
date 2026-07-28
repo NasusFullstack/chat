@@ -1,10 +1,10 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
-title 친구 채팅
+title 친구 채팅 (CLI)
 cd /d "%~dp0"
 
 echo ============================================
-echo   친구 채팅 실행 준비 중...
+echo   친구 채팅 (CLI) 실행 준비 중...
 echo ============================================
 echo.
 
@@ -35,7 +35,6 @@ if "%SERVER_IP%"=="" set SERVER_IP=127.0.0.1
 set /p SERVER_PORT="포트 번호 (그냥 Enter하면 6667): "
 if "%SERVER_PORT%"=="" set SERVER_PORT=6667
 
-cd client
-python tui_client.py %SERVER_IP% %SERVER_PORT%
+python cli_client.py %SERVER_IP% %SERVER_PORT%
 
 pause
