@@ -124,10 +124,17 @@ class ChatClient(QSslSocket):
                 self.connection_failed.emit(f"인증서 파일을 읽을 수 없습니다: {cert_path}")
                 return
             config.setCaCertificates(certs)
+        # setSslConfiguration()이 peerVerifyMode를 기본값으로 되돌려버리므로,
+        # 반드시 setSslConfiguration() 이후에 setPeerVerifyMode()를 호출해야 함
+        # (먼저 호출하면 아래에서 덮어써져 무시됨).
+        self.setSslConfiguration(config)
+        if cert_path:
             self.setPeerVerifyMode(QSslSocket.PeerVerifyMode.VerifyPeer)
         else:
-            self.setPeerVerifyMode(QSslSocket.PeerVerifyMode.QueryPeer)
-        self.setSslConfiguration(config)
+            # Windows 기본 TLS 백엔드(Schannel)는 QueryPeer + ignoreSslErrors()로
+            # "루트 인증서 미신뢰" 오류를 무시하지 못하고 핸드셰이크를 그대로 실패시킴.
+            # 인증서 검증 자체를 생략하는 VerifyNone을 써야 암호화만 하는 접속이 실제로 됨.
+            self.setPeerVerifyMode(QSslSocket.PeerVerifyMode.VerifyNone)
         self.connectToHostEncrypted(host, port)
 
     def send_cmd(self, payload: dict):
@@ -149,18 +156,26 @@ class ChatClient(QSslSocket):
             self.message_received.emit(msg)
 
     def _on_error(self, _error):
-        if self.state() != QSslSocket.SocketState.ConnectedState:
-            self.connection_failed.emit(self.errorString())
+        # state()는 handshake 실패 시점에도 여전히 ConnectedState를 보고하는 경우가 있어
+        # (Qt가 Closing/Unconnected로 전이하기 전에 errorOccurred를 먼저 emit) 상태로
+        # 판단하지 않고 항상 알림. 로그인 이후 발생하는 에러는 MainWindow 쪽에서
+        # _connecting 플래그로 걸러낸다.
+        self.connection_failed.emit(self.errorString())
 
     def _on_ssl_errors(self, errors: list[QSslError]):
-        if self.peerVerifyMode() == QSslSocket.PeerVerifyMode.QueryPeer:
+        if self.peerVerifyMode() == QSslSocket.PeerVerifyMode.VerifyNone:
             # cert.pem 없이 접속: 암호화만 하고 신원 검증은 생략
             self.ignoreSslErrors()
             return
-        # cert.pem으로 검증하는 경우: 인증서 자체의 진위는 반드시 확인하되,
-        # "호스트명이 인증서와 다르다"는 오류만 무시 (자체 서명 인증서라 IP/도메인이
-        # 뭐든 상관없이 같은 인증서를 쓰기 때문 - 기존 asyncio 클라이언트와 동일한 방식)
-        real_errors = [e for e in errors if e.error() != QSslError.SslError.HostNameMismatch]
+        # cert.pem으로 검증하는 경우: CaCertificates에 등록해둔 바로 그 인증서와
+        # 일치하는지는 반드시 확인하되, 다음 두 오류만 무시한다.
+        # - HostNameMismatch: 자체 서명 인증서라 IP/도메인이 뭐든 같은 인증서를 씀
+        # - SelfSignedCertificate: 우리가 CaCertificates로 정확히 이 인증서를 이미
+        #   신뢰 목록에 넣었으므로 자체 서명이라는 사실 자체는 문제가 아님
+        # (다른/가짜 인증서를 준 경우엔 CertificateUntrusted 등 다른 오류가 남기 때문에
+        # 여전히 거부됨 - 등록한 인증서와 다르면 접속이 실패해야 정상)
+        ignorable = {QSslError.SslError.HostNameMismatch, QSslError.SslError.SelfSignedCertificate}
+        real_errors = [e for e in errors if e.error() not in ignorable]
         if not real_errors:
             self.ignoreSslErrors()
 
@@ -470,13 +485,16 @@ class MainWindow(QMainWindow):
         self.resize(720, 480)
 
         self.client = ChatClient()
-        self.client.connected.connect(self._on_connected)
+        self.client.connected.connect(self._on_tcp_connected)
+        self.client.encrypted.connect(self._on_connected)
         self.client.connection_failed.connect(self._on_connection_failed)
         self.client.message_received.connect(self._on_message)
 
         self.my_id = ""
         self.pending_mode = ""
         self._connecting = False
+        self._auth_phase = False
+        self._pending_ssl = True
 
         self._connect_timer = QTimer(self)
         self._connect_timer.setSingleShot(True)
@@ -518,6 +536,7 @@ class MainWindow(QMainWindow):
         self.login_page.show_status(f"연결 중... ({mode}, 최대 10초, 언제든 '연결 취소' 가능)")
         self.login_page.set_connecting(True)
         self._connecting = True
+        self._pending_ssl = values["ssl"]
         self._connect_timer.start(CONNECT_TIMEOUT_MS)
         try:
             self.client.connect_to_server(values["host"], port, values["cert_path"], values["ssl"])
@@ -527,6 +546,7 @@ class MainWindow(QMainWindow):
 
     def _stop_connecting(self):
         self._connecting = False
+        self._auth_phase = False
         self._connect_timer.stop()
         self.login_page.set_connecting(False)
 
@@ -540,12 +560,34 @@ class MainWindow(QMainWindow):
     def _on_connect_timeout(self):
         if not self._connecting:
             return
+        was_auth_phase = self._auth_phase
         self._stop_connecting()
         self.client.abort()
-        self.login_page.show_status(f"연결 시간이 초과되었습니다. ({CONNECT_TIMEOUT_MS // 1000}초)")
+        if was_auth_phase:
+            # 소켓/TLS 연결은 됐지만 로그인 응답이 안 온 경우 - 우리 채팅 서버가 아니거나
+            # (예: 진짜 IRC 서버 등 다른 프로토콜) 서버가 멈춰있을 가능성이 큼
+            self.login_page.show_status(
+                f"서버 응답이 없습니다. ({CONNECT_TIMEOUT_MS // 1000}초) "
+                "이 친구 채팅 서버(server.py)가 맞는지, 주소/포트가 맞는지 확인하세요."
+            )
+        else:
+            self.login_page.show_status(f"연결 시간이 초과되었습니다. ({CONNECT_TIMEOUT_MS // 1000}초)")
+
+    def _on_tcp_connected(self):
+        # SSL 모드는 TLS 핸드셰이크가 끝나는 encrypted() 신호를 기다려야 함.
+        # (여기서 로그인 정보를 보내면 핸드셰이크 완료 전에 취소/타임아웃 창이 사라짐)
+        if not self._pending_ssl:
+            self._on_connected()
 
     def _on_connected(self):
-        self._stop_connecting()
+        # 소켓/TLS 연결은 끝났지만 아직 로그인 응답을 못 받은 상태이므로 취소/타임아웃을
+        # 계속 활성 상태로 유지한 채 응답 대기 단계로 넘어간다 (연결만 되고 로그인 응답이
+        # 영영 안 오는 경우에도 무한정 "연결 중"에 멈추지 않도록).
+        self._connecting = True
+        self._auth_phase = True
+        self.login_page.set_connecting(True)
+        self._connect_timer.start(CONNECT_TIMEOUT_MS)
+        self.login_page.show_status("로그인 확인 중... (언제든 '연결 취소' 가능)")
         cmd = "login" if self.pending_mode == "login" else "register"
         self.client.send_cmd({"cmd": cmd, "id": self._pending_user_id, "pw": self._pending_password})
 
@@ -577,6 +619,7 @@ class MainWindow(QMainWindow):
         mtype = msg.get("type")
 
         if mtype == "auth_result":
+            self._stop_connecting()
             if msg.get("ok"):
                 if self.pending_mode == "register":
                     self.login_page.show_status("회원가입 완료! 이제 로그인하세요.")
