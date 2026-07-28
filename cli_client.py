@@ -1,7 +1,8 @@
 """
 친구 채팅 - 단순 CLI 클라이언트 (TUI 없이 순수 텍스트)
-실행: python cli_client.py [서버주소] [포트] [cert.pem 경로(선택)]
+실행: python cli_client.py [서버주소] [포트] [cert.pem 경로(선택)] [ssl여부: on/off, 기본 on]
 인자 없이 실행하면 등록된 공용서버 목록에서 골라 접속하거나, 새 서버를 등록할 수 있습니다.
+SSL을 켜면 기본 포트 6697(암호화), 끄면 기본 포트 6667(평문)을 사용합니다.
 cert.pem 경로를 안 주면, 실행 파일과 같은 폴더의 cert.pem을 자동으로 찾습니다.
 """
 import asyncio
@@ -26,12 +27,20 @@ def _auto_cert() -> str:
     return candidate if os.path.exists(candidate) else ""
 
 
-def _prompt_server_choice() -> tuple[str, int, str]:
+def _prompt_yes_no(prompt: str, default: bool) -> bool:
+    ans = input(prompt).strip().lower()
+    if not ans:
+        return default
+    return ans in ("y", "yes")
+
+
+def _prompt_server_choice() -> tuple[str, int, str, bool]:
     """저장된 공용서버 목록에서 고르거나, 직접 입력/새로 등록"""
     servers = server_registry.load_servers()
     print("\n=== 서버 선택 ===")
     for i, s in enumerate(servers, start=1):
-        print(f"  {i}) {s['name']} ({s['host']}:{s['port']})")
+        mode = "SSL" if s.get("ssl", True) else "평문"
+        print(f"  {i}) {s['name']} ({s['host']}:{s['port']}, {mode})")
     manual_no = len(servers) + 1
     register_no = len(servers) + 2
     print(f"  {manual_no}) 직접 입력")
@@ -46,35 +55,43 @@ def _prompt_server_choice() -> tuple[str, int, str]:
 
         if 1 <= choice <= len(servers):
             s = servers[choice - 1]
-            return s["host"], int(s["port"]), s.get("cert_path", "")
+            return s["host"], int(s["port"]), s.get("cert_path", ""), s.get("ssl", True)
 
         if choice == manual_no:
             return _prompt_server_details()
 
         if choice == register_no:
             name = input("서버 이름: ").strip()
-            host, port, cert_path = _prompt_server_details()
+            host, port, cert_path, use_ssl = _prompt_server_details()
             if name:
-                server_registry.add_server(name, host, port, cert_path)
+                server_registry.add_server(name, host, port, cert_path, ssl=use_ssl)
                 print(f"[알림] '{name}' 서버가 등록되었습니다. 다음부터 목록에서 바로 고를 수 있어요.")
-            return host, port, cert_path
+            return host, port, cert_path, use_ssl
 
         print("[오류] 올바른 번호를 선택하세요.")
 
 
-def _prompt_server_details() -> tuple[str, int, str]:
+def _prompt_server_details() -> tuple[str, int, str, bool]:
     host = input("서버 주소: ").strip()
-    while True:
-        port_text = input("포트: ").strip()
-        try:
-            port = int(port_text)
-            break
-        except ValueError:
-            print("[오류] 포트는 숫자여야 합니다.")
-    cert_path = input("cert.pem 경로 (없으면 Enter): ").strip().strip('"').strip("'")
-    if not cert_path:
-        cert_path = _auto_cert()
-    return host, port, cert_path
+    use_ssl = _prompt_yes_no("SSL 암호화 연결을 사용할까요? (Y/n): ", default=True)
+    default_port = 6697 if use_ssl else 6667
+    port_text = input(f"포트 (기본값 {default_port}, Enter로 기본값 사용): ").strip()
+    if port_text:
+        while True:
+            try:
+                port = int(port_text)
+                break
+            except ValueError:
+                port_text = input("[오류] 포트는 숫자여야 합니다. 다시 입력: ").strip()
+    else:
+        port = default_port
+
+    cert_path = ""
+    if use_ssl:
+        cert_path = input("cert.pem 경로 (없으면 Enter): ").strip().strip('"').strip("'")
+        if not cert_path:
+            cert_path = _auto_cert()
+    return host, port, cert_path, use_ssl
 
 
 def make_ssl_context(cert_path: str):
@@ -184,13 +201,16 @@ async def send_loop(writer):
 async def main():
     if len(sys.argv) > 1:
         host = sys.argv[1]
-        port = int(sys.argv[2]) if len(sys.argv) > 2 else 6667
+        use_ssl = not (len(sys.argv) > 4 and sys.argv[4].strip().lower() in ("off", "plain", "no", "0"))
+        port = int(sys.argv[2]) if len(sys.argv) > 2 else (6697 if use_ssl else 6667)
         cert_path = sys.argv[3].strip().strip('"').strip("'") if len(sys.argv) > 3 else _auto_cert()
+        if not use_ssl:
+            cert_path = ""
     else:
-        host, port, cert_path = _prompt_server_choice()
+        host, port, cert_path, use_ssl = _prompt_server_choice()
 
-    print(f"\n=== 친구 채팅 CLI === ({host}:{port})")
-    ssl_context = make_ssl_context(cert_path)
+    print(f"\n=== 친구 채팅 CLI === ({host}:{port}, {'SSL' if use_ssl else '평문'})")
+    ssl_context = make_ssl_context(cert_path) if use_ssl else None
 
     print(f"[알림] 연결 시도 중... (최대 {CONNECT_TIMEOUT_SEC}초, Ctrl+C로 언제든 취소)")
     try:

@@ -69,14 +69,14 @@ Python만 미리 설치되어 있으면 (<https://www.python.org/downloads/> 에
 
 ```bash
 pip install -r requirements.txt
-python server.py 6667
+python server.py 6667 6697
 ```
 
-- `6667`은 포트 번호. 원하는 포트로 바꿔도 됩니다.
+- 평문(암호화 없음) 포트와 TLS(SSL 암호화) 포트를 동시에 엽니다. IRC 관례대로 기본값은 `6667`(평문) / `6697`(SSL)이며, 원하는 포트로 바꿔도 됩니다.
 - 이 서버를 계속 켜둘 컴퓨터 또는 클라우드 VM에서 실행하세요.
 - 데이터(계정/채널 정보)는 `server_data.json`에 저장됩니다. (비밀번호는 평문이 아니라 salt+sha256 해시로 저장)
-- 방화벽/공유기에서 해당 포트를 열어줘야 외부 친구들이 접속 가능합니다.
-- 최초 실행 시 `cert.pem`, `key.pem`이 자동 생성됩니다. `cert.pem`을 친구들에게 나눠주세요.
+- 방화벽/공유기에서 사용할 포트를 열어줘야 외부 친구들이 접속 가능합니다.
+- 최초 실행 시 `cert.pem`, `key.pem`이 자동 생성됩니다. SSL로 접속할 친구들에게 `cert.pem`을 나눠주세요.
 
 ## 클라이언트 직접 실행
 
@@ -87,8 +87,12 @@ pip install -r requirements.txt
 python gui_client.py
 
 # CLI
-python cli_client.py <서버주소> <포트> [cert.pem 경로]
+python cli_client.py <서버주소> <포트> [cert.pem 경로] [ssl여부: on/off, 기본 on]
 ```
+
+- GUI/CLI 모두 접속할 때 SSL 사용 여부(포트 6697/6667)와 인증서 사용 여부를 선택할 수 있습니다.
+- 자주 쓰는 서버는 "공용서버 등록"으로 저장해두면 다음부터 목록에서 바로 골라 접속할 수 있습니다 (`servers.json`에 로컬 저장).
+- 접속 시도는 최대 10초 후 자동 취소되며, GUI는 '연결 취소' 버튼으로, CLI는 Ctrl+C로 언제든 즉시 중단할 수 있습니다.
 
 ## 현재 구현된 것
 
@@ -96,7 +100,8 @@ python cli_client.py <서버주소> <포트> [cert.pem 경로]
 - 채널 생성 + 채널 비밀번호(선택)
 - 채널 입장 시 비밀번호 검증
 - 실시간 메시지 송수신, 입장/퇴장 알림, 참여자 목록 실시간 갱신
-- TLS 암호화 통신 (자체 서명 인증서, `cert.pem`으로 서버 신원 확인)
+- 평문 / TLS 암호화 접속 선택 (자체 서명 인증서, `cert.pem`으로 서버 신원 확인 여부도 선택)
+- 공용서버 등록/선택, 접속 타임아웃 및 취소
 
 ## 아직 없는 것
 

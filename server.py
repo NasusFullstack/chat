@@ -2,7 +2,9 @@
 IRC 스타일 채팅 서버
 - 순수 RFC 1459 IRC 프로토콜 대신, 같은 개념(계정, 채널, 채널 키)을
   JSON 한 줄짜리 메시지로 단순화해서 구현 (파싱이 쉽고 안정적)
-- 실행: python server.py [포트]
+- 실행: python server.py [평문 포트] [TLS 포트]
+- 평문(암호화 없음)과 TLS(SSL 암호화) 두 포트를 동시에 열어서, 클라이언트가
+  접속 방식을 선택할 수 있게 함 (IRC 관례대로 기본 6667=평문, 6697=SSL)
 """
 import asyncio
 import json
@@ -13,7 +15,8 @@ from store import Store
 from certs import ensure_certificate
 
 HOST = "0.0.0.0"
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 6667
+PLAIN_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 6667
+SSL_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 6697
 
 store = Store()
 
@@ -150,11 +153,16 @@ async def main():
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
 
-    server = await asyncio.start_server(handle_client, HOST, PORT, ssl=ssl_context)
-    print(f"채팅 서버 시작 (TLS 암호화): {HOST}:{PORT}")
+    plain_server = await asyncio.start_server(handle_client, HOST, PLAIN_PORT)
+    ssl_server = await asyncio.start_server(handle_client, HOST, SSL_PORT, ssl=ssl_context)
+
+    print("채팅 서버 시작")
+    print(f"  - 평문 (암호화 없음): {HOST}:{PLAIN_PORT}")
+    print(f"  - TLS (SSL 암호화):   {HOST}:{SSL_PORT}")
     print(f"인증서 파일(cert.pem)을 친구들에게 함께 전달하세요: {cert_path}")
-    async with server:
-        await server.serve_forever()
+
+    async with plain_server, ssl_server:
+        await asyncio.gather(plain_server.serve_forever(), ssl_server.serve_forever())
 
 
 if __name__ == "__main__":

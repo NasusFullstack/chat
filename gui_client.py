@@ -14,12 +14,14 @@ from PySide6.QtNetwork import QSslSocket, QSslCertificate, QSslConfiguration, QS
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit, QListWidget,
-    QFileDialog, QMessageBox, QFrame, QComboBox, QInputDialog,
+    QFileDialog, QMessageBox, QFrame, QComboBox, QInputDialog, QCheckBox,
 )
 
 import server_registry
 
 CONNECT_TIMEOUT_MS = 10_000
+DEFAULT_SSL_PORT = "6697"
+DEFAULT_PLAIN_PORT = "6667"
 
 APP_TITLE = "친구 채팅"
 
@@ -111,7 +113,10 @@ class ChatClient(QSslSocket):
         self.errorOccurred.connect(self._on_error)
         self.sslErrors.connect(self._on_ssl_errors)
 
-    def connect_to_server(self, host: str, port: int, cert_path: str):
+    def connect_to_server(self, host: str, port: int, cert_path: str, use_ssl: bool):
+        if not use_ssl:
+            self.connectToHost(host, port)
+            return
         config = QSslConfiguration.defaultConfiguration()
         if cert_path:
             certs = QSslCertificate.fromPath(cert_path)
@@ -194,21 +199,29 @@ class LoginPage(QWidget):
         self.host_input.setPlaceholderText("서버 주소")
         box.addWidget(self.host_input)
 
-        self.port_input = QLineEdit("6667")
+        self.port_input = QLineEdit(DEFAULT_SSL_PORT)
         self.port_input.setPlaceholderText("포트")
         box.addWidget(self.port_input)
+
+        self.ssl_checkbox = QCheckBox("SSL 암호화 사용 (권장, 포트 6697)")
+        self.ssl_checkbox.setChecked(True)
+        self.ssl_checkbox.toggled.connect(self._on_ssl_toggled)
+        box.addWidget(self.ssl_checkbox)
 
         cert_row = QHBoxLayout()
         self.cert_input = QLineEdit(_find_default_cert())
         self.cert_input.setPlaceholderText("cert.pem 경로 (없으면 비워둠)")
-        cert_browse = QPushButton("찾아보기")
-        cert_browse.setObjectName("secondary")
-        cert_browse.clicked.connect(self._browse_cert)
+        self.cert_browse_btn = QPushButton("찾아보기")
+        self.cert_browse_btn.setObjectName("secondary")
+        self.cert_browse_btn.clicked.connect(self._browse_cert)
         cert_row.addWidget(self.cert_input)
-        cert_row.addWidget(cert_browse)
+        cert_row.addWidget(self.cert_browse_btn)
         box.addLayout(cert_row)
 
-        hint = QLabel("※ 목록에서 공용서버를 고르거나, 주소를 직접 입력한 뒤 '공용서버 등록'으로 저장해두면 다음부터 목록에서 바로 고를 수 있어요")
+        hint = QLabel(
+            "※ SSL을 끄면 암호화 없이 평문(포트 6667)으로 접속해요. "
+            "목록에서 공용서버를 고르거나, 주소를 직접 입력한 뒤 '공용서버 등록'으로 저장해두면 다음부터 목록에서 바로 고를 수 있어요"
+        )
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         box.addWidget(hint)
@@ -268,6 +281,14 @@ class LoginPage(QWidget):
             self.host_input.setText(data["host"])
             self.port_input.setText(str(data["port"]))
             self.cert_input.setText(data.get("cert_path", ""))
+            self.ssl_checkbox.setChecked(data.get("ssl", True))
+
+    def _on_ssl_toggled(self, checked: bool):
+        self.cert_input.setEnabled(checked)
+        self.cert_browse_btn.setEnabled(checked)
+        current_port = self.port_input.text().strip()
+        if current_port in (DEFAULT_SSL_PORT, DEFAULT_PLAIN_PORT, ""):
+            self.port_input.setText(DEFAULT_SSL_PORT if checked else DEFAULT_PLAIN_PORT)
 
     def _register_server(self):
         host = self.host_input.text().strip()
@@ -284,8 +305,9 @@ class LoginPage(QWidget):
         name = name.strip()
         if not ok or not name:
             return
-        cert_path = self.cert_input.text().strip().strip('"').strip("'")
-        server_registry.add_server(name, host, port, cert_path)
+        use_ssl = self.ssl_checkbox.isChecked()
+        cert_path = self.cert_input.text().strip().strip('"').strip("'") if use_ssl else ""
+        server_registry.add_server(name, host, port, cert_path, ssl=use_ssl)
         self._reload_servers(select_name=name)
         self.show_status(f"'{name}' 서버가 등록되었습니다. 다음부터 목록에서 바로 선택할 수 있어요.")
 
@@ -321,6 +343,7 @@ class LoginPage(QWidget):
             "host": self.host_input.text().strip(),
             "port": self.port_input.text().strip(),
             "cert_path": self.cert_input.text().strip().strip('"').strip("'"),
+            "ssl": self.ssl_checkbox.isChecked(),
             "user_id": self.user_input.text().strip(),
             "password": self.pw_input.text(),
         }
@@ -491,12 +514,13 @@ class MainWindow(QMainWindow):
             self._on_connected()
             return
 
-        self.login_page.show_status("연결 중... (최대 10초, 언제든 '연결 취소' 가능)")
+        mode = "SSL" if values["ssl"] else "평문(암호화 없음)"
+        self.login_page.show_status(f"연결 중... ({mode}, 최대 10초, 언제든 '연결 취소' 가능)")
         self.login_page.set_connecting(True)
         self._connecting = True
         self._connect_timer.start(CONNECT_TIMEOUT_MS)
         try:
-            self.client.connect_to_server(values["host"], port, values["cert_path"])
+            self.client.connect_to_server(values["host"], port, values["cert_path"], values["ssl"])
         except Exception as e:  # noqa: BLE001
             self._stop_connecting()
             self.login_page.show_status(f"오류: {e}")

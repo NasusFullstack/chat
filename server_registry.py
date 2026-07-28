@@ -32,9 +32,9 @@ def save_servers(servers: list[dict]):
         json.dump({"servers": servers}, f, ensure_ascii=False, indent=2)
 
 
-def add_server(name: str, host: str, port: int, cert_path: str = "") -> list[dict]:
+def add_server(name: str, host: str, port: int, cert_path: str = "", ssl: bool = True) -> list[dict]:
     servers = [s for s in load_servers() if s["name"] != name]
-    servers.append({"name": name, "host": host, "port": port, "cert_path": cert_path})
+    servers.append({"name": name, "host": host, "port": port, "cert_path": cert_path, "ssl": ssl})
     save_servers(servers)
     return servers
 
