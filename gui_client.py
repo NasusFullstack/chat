@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 import server_registry
+import irc_protocol
 
 CONNECT_TIMEOUT_MS = 10_000
 DEFAULT_SSL_PORT = "6697"
@@ -101,22 +102,30 @@ def _find_default_cert() -> str:
 
 
 class ChatClient(QSslSocket):
-    """서버와의 TLS 소켓 통신 + JSON 라인 프로토콜 파싱을 담당"""
+    """서버와의 TLS 소켓 통신 + 라인 프로토콜 파싱을 담당 (커스텀 JSON 프로토콜 / 실제 IRC 프로토콜 둘 다 지원)"""
 
     message_received = Signal(dict)
+    irc_line_received = Signal(object)
     connection_failed = Signal(str)
 
     def __init__(self):
         super().__init__()
         self._buffer = b""
+        self._mode = "custom"
+        self._pinned_cert = False
         self.readyRead.connect(self._on_ready_read)
         self.errorOccurred.connect(self._on_error)
         self.sslErrors.connect(self._on_ssl_errors)
+
+    def set_mode(self, mode: str):
+        """연결 시작 전에 호출: "custom"(친구 채팅 서버 JSON) 또는 "irc"(실제 IRC 서버)"""
+        self._mode = mode
 
     def connect_to_server(self, host: str, port: int, cert_path: str, use_ssl: bool):
         if not use_ssl:
             self.connectToHost(host, port)
             return
+        self._pinned_cert = bool(cert_path)
         config = QSslConfiguration.defaultConfiguration()
         if cert_path:
             certs = QSslCertificate.fromPath(cert_path)
@@ -128,7 +137,10 @@ class ChatClient(QSslSocket):
         # 반드시 setSslConfiguration() 이후에 setPeerVerifyMode()를 호출해야 함
         # (먼저 호출하면 아래에서 덮어써져 무시됨).
         self.setSslConfiguration(config)
-        if cert_path:
+        if cert_path or self._mode == "irc":
+            # cert.pem을 지정한 경우(우리 서버, 자체 서명 인증서 핀닝) 뿐 아니라
+            # 실제 IRC 서버 모드도 표준 방식으로 검증한다 (실제 서버는 보통 정식
+            # CA 인증서를 쓰므로 시스템 신뢰 저장소로 검증해야 위조 인증서를 걸러냄).
             self.setPeerVerifyMode(QSslSocket.PeerVerifyMode.VerifyPeer)
         else:
             # Windows 기본 TLS 백엔드(Schannel)는 QueryPeer + ignoreSslErrors()로
@@ -143,8 +155,19 @@ class ChatClient(QSslSocket):
         data = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
         self.write(data)
 
+    def send_irc(self, line: str):
+        if self.state() != QSslSocket.SocketState.ConnectedState:
+            return
+        self.write(irc_protocol.encode_line(line))
+
     def _on_ready_read(self):
         self._buffer += bytes(self.readAll())
+        if self._mode == "irc":
+            self._process_irc_buffer()
+        else:
+            self._process_custom_buffer()
+
+    def _process_custom_buffer(self):
         while b"\n" in self._buffer:
             line, self._buffer = self._buffer.split(b"\n", 1)
             if not line.strip():
@@ -154,6 +177,19 @@ class ChatClient(QSslSocket):
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
             self.message_received.emit(msg)
+
+    def _process_irc_buffer(self):
+        while b"\n" in self._buffer:
+            line, self._buffer = self._buffer.split(b"\n", 1)
+            text = line.decode("utf-8", errors="replace")
+            if not text.strip():
+                continue
+            msg = irc_protocol.parse_line(text)
+            if msg.command == "PING":
+                # 연결 유지의 핵심 - UI 상태와 무관하게 즉시 응답해야 서버가 끊지 않음
+                self.write(irc_protocol.encode_line(irc_protocol.format_pong(msg.trailing)))
+                continue
+            self.irc_line_received.emit(msg)
 
     def _on_error(self, _error):
         # state()는 handshake 실패 시점에도 여전히 ConnectedState를 보고하는 경우가 있어
@@ -166,6 +202,11 @@ class ChatClient(QSslSocket):
         if self.peerVerifyMode() == QSslSocket.PeerVerifyMode.VerifyNone:
             # cert.pem 없이 접속: 암호화만 하고 신원 검증은 생략
             self.ignoreSslErrors()
+            return
+        if not self._pinned_cert:
+            # cert.pem 지정 없이 VerifyPeer인 경우 = 실제 IRC 서버 표준 검증 모드.
+            # 우리가 지정한 CA 목록이 없으므로 시스템 신뢰 판단을 그대로 따른다
+            # (아무것도 무시하지 않음 - 위조/무효 인증서는 그대로 거부되어야 정상).
             return
         # cert.pem으로 검증하는 경우: CaCertificates에 등록해둔 바로 그 인증서와
         # 일치하는지는 반드시 확인하되, 다음 두 오류만 무시한다.
@@ -194,6 +235,12 @@ class LoginPage(QWidget):
         title = QLabel("채팅 프로그램 접속")
         title.setObjectName("title")
         box.addWidget(title)
+
+        self.protocol_combo = QComboBox()
+        self.protocol_combo.addItem("친구 채팅 서버 (커스텀)", "custom")
+        self.protocol_combo.addItem("실제 IRC 서버", "irc")
+        self.protocol_combo.currentIndexChanged.connect(self._on_protocol_changed)
+        box.addWidget(self.protocol_combo)
 
         self.server_combo = QComboBox()
         self.server_combo.currentIndexChanged.connect(self._on_server_selected)
@@ -290,6 +337,17 @@ class LoginPage(QWidget):
         self.server_combo.setCurrentIndex(select_index)
         self.server_combo.blockSignals(False)
 
+    def _on_protocol_changed(self, index: int):
+        is_irc = self.protocol_combo.itemData(index) == "irc"
+        if is_irc:
+            self.user_input.setPlaceholderText("닉네임")
+            self.pw_input.setPlaceholderText("서버/NickServ 비밀번호 (선택, 보통 비워둠)")
+        else:
+            self.user_input.setPlaceholderText("아이디")
+            self.pw_input.setPlaceholderText("비밀번호")
+        self.register_btn.setVisible(not is_irc)
+        self.login_btn.setText("접속" if is_irc else "로그인")
+
     def _on_server_selected(self, index: int):
         data = self.server_combo.itemData(index)
         if data:
@@ -297,6 +355,9 @@ class LoginPage(QWidget):
             self.port_input.setText(str(data["port"]))
             self.cert_input.setText(data.get("cert_path", ""))
             self.ssl_checkbox.setChecked(data.get("ssl", True))
+            proto_index = self.protocol_combo.findData(data.get("protocol", "custom"))
+            if proto_index >= 0:
+                self.protocol_combo.setCurrentIndex(proto_index)
 
     def _on_ssl_toggled(self, checked: bool):
         self.cert_input.setEnabled(checked)
@@ -322,7 +383,8 @@ class LoginPage(QWidget):
             return
         use_ssl = self.ssl_checkbox.isChecked()
         cert_path = self.cert_input.text().strip().strip('"').strip("'") if use_ssl else ""
-        server_registry.add_server(name, host, port, cert_path, ssl=use_ssl)
+        protocol = self.protocol_combo.currentData()
+        server_registry.add_server(name, host, port, cert_path, ssl=use_ssl, protocol=protocol)
         self._reload_servers(select_name=name)
         self.show_status(f"'{name}' 서버가 등록되었습니다. 다음부터 목록에서 바로 선택할 수 있어요.")
 
@@ -359,6 +421,7 @@ class LoginPage(QWidget):
             "port": self.port_input.text().strip(),
             "cert_path": self.cert_input.text().strip().strip('"').strip("'"),
             "ssl": self.ssl_checkbox.isChecked(),
+            "protocol": self.protocol_combo.currentData(),
             "user_id": self.user_input.text().strip(),
             "password": self.pw_input.text(),
         }
@@ -389,11 +452,11 @@ class ChannelPage(QWidget):
         btn_row = QHBoxLayout()
         join_btn = QPushButton("입장")
         join_btn.clicked.connect(lambda: self.on_submit("join"))
-        create_btn = QPushButton("새 채널 만들기")
-        create_btn.setObjectName("secondary")
-        create_btn.clicked.connect(lambda: self.on_submit("create"))
+        self.create_btn = QPushButton("새 채널 만들기")
+        self.create_btn.setObjectName("secondary")
+        self.create_btn.clicked.connect(lambda: self.on_submit("create"))
         btn_row.addWidget(join_btn)
-        btn_row.addWidget(create_btn)
+        btn_row.addWidget(self.create_btn)
         box.addLayout(btn_row)
 
         self.status_label = QLabel("")
@@ -406,6 +469,9 @@ class ChannelPage(QWidget):
         container.setFixedWidth(360)
         layout.addWidget(container)
         self.setLayout(layout)
+
+    def set_mode(self, protocol: str):
+        self.create_btn.setVisible(protocol != "irc")
 
     def show_status(self, text: str):
         self.status_label.setText(text)
@@ -489,12 +555,23 @@ class MainWindow(QMainWindow):
         self.client.encrypted.connect(self._on_connected)
         self.client.connection_failed.connect(self._on_connection_failed)
         self.client.message_received.connect(self._on_message)
+        self.client.irc_line_received.connect(self._on_irc_line)
 
         self.my_id = ""
         self.pending_mode = ""
         self._connecting = False
         self._auth_phase = False
         self._pending_ssl = True
+        self._protocol_mode = "custom"
+
+        # 실제 IRC 서버 모드 전용 상태
+        self._irc_current_nick = ""
+        self._irc_password = ""
+        self._irc_identified = False
+        self._irc_channel = ""
+        self._irc_members: set[str] = set()
+        self._irc_names_buffer: list[str] = []
+        self._irc_nick_retries = 0
 
         self._connect_timer = QTimer(self)
         self._connect_timer.setSingleShot(True)
@@ -514,7 +591,12 @@ class MainWindow(QMainWindow):
     # ---------------- 로그인 ----------------
     def _handle_login_submit(self, mode: str):
         values = self.login_page.get_values()
-        if not values["host"] or not values["port"] or not values["user_id"] or not values["password"]:
+        protocol = values["protocol"]
+        if protocol == "irc":
+            if not values["host"] or not values["port"] or not values["user_id"]:
+                self.login_page.show_status("서버 주소/포트/닉네임을 입력하세요.")
+                return
+        elif not values["host"] or not values["port"] or not values["user_id"] or not values["password"]:
             self.login_page.show_status("모든 항목을 입력하세요.")
             return
         try:
@@ -524,20 +606,31 @@ class MainWindow(QMainWindow):
             return
 
         self.pending_mode = mode
+        self._protocol_mode = protocol
         self._pending_user_id = values["user_id"]
         self._pending_password = values["password"]
+
+        if protocol == "irc":
+            self._irc_current_nick = values["user_id"]
+            self._irc_password = values["password"]
+            self._irc_identified = False
+            self._irc_channel = ""
+            self._irc_members = set()
+            self._irc_names_buffer = []
+            self._irc_nick_retries = 0
 
         if self.client.state() == QSslSocket.SocketState.ConnectedState:
             # 이미 연결돼 있으면 (예: 회원가입 후 바로 로그인) 재연결하지 않고 바로 전송
             self._on_connected()
             return
 
-        mode = "SSL" if values["ssl"] else "평문(암호화 없음)"
-        self.login_page.show_status(f"연결 중... ({mode}, 최대 10초, 언제든 '연결 취소' 가능)")
+        mode_label = "SSL" if values["ssl"] else "평문(암호화 없음)"
+        self.login_page.show_status(f"연결 중... ({mode_label}, 최대 10초, 언제든 '연결 취소' 가능)")
         self.login_page.set_connecting(True)
         self._connecting = True
         self._pending_ssl = values["ssl"]
         self._connect_timer.start(CONNECT_TIMEOUT_MS)
+        self.client.set_mode(protocol)
         try:
             self.client.connect_to_server(values["host"], port, values["cert_path"], values["ssl"])
         except Exception as e:  # noqa: BLE001
@@ -566,10 +659,15 @@ class MainWindow(QMainWindow):
         if was_auth_phase:
             # 소켓/TLS 연결은 됐지만 로그인 응답이 안 온 경우 - 우리 채팅 서버가 아니거나
             # (예: 진짜 IRC 서버 등 다른 프로토콜) 서버가 멈춰있을 가능성이 큼
-            self.login_page.show_status(
-                f"서버 응답이 없습니다. ({CONNECT_TIMEOUT_MS // 1000}초) "
-                "이 친구 채팅 서버(server.py)가 맞는지, 주소/포트가 맞는지 확인하세요."
-            )
+            if self._protocol_mode == "irc":
+                self.login_page.show_status(
+                    f"서버 응답이 없습니다. ({CONNECT_TIMEOUT_MS // 1000}초) IRC 서버 주소/포트가 맞는지 확인하세요."
+                )
+            else:
+                self.login_page.show_status(
+                    f"서버 응답이 없습니다. ({CONNECT_TIMEOUT_MS // 1000}초) "
+                    "이 친구 채팅 서버(server.py)가 맞는지, 주소/포트가 맞는지 확인하세요."
+                )
         else:
             self.login_page.show_status(f"연결 시간이 초과되었습니다. ({CONNECT_TIMEOUT_MS // 1000}초)")
 
@@ -587,9 +685,19 @@ class MainWindow(QMainWindow):
         self._auth_phase = True
         self.login_page.set_connecting(True)
         self._connect_timer.start(CONNECT_TIMEOUT_MS)
+        if self._protocol_mode == "irc":
+            self.login_page.show_status("서버 접속 중... (언제든 '연결 취소' 가능)")
+            self._start_irc_registration()
+            return
         self.login_page.show_status("로그인 확인 중... (언제든 '연결 취소' 가능)")
         cmd = "login" if self.pending_mode == "login" else "register"
         self.client.send_cmd({"cmd": cmd, "id": self._pending_user_id, "pw": self._pending_password})
+
+    def _start_irc_registration(self):
+        if self._irc_password:
+            self.client.send_irc(irc_protocol.format_pass(self._irc_password))
+        self.client.send_irc(irc_protocol.format_nick(self._irc_current_nick))
+        self.client.send_irc(irc_protocol.format_user(self._irc_current_nick, self._irc_current_nick))
 
     def _on_connection_failed(self, err: str):
         if not self._connecting:
@@ -605,6 +713,10 @@ class MainWindow(QMainWindow):
         if not values["channel"]:
             self.channel_page.show_status("채널명을 입력하세요.")
             return
+        if self._protocol_mode == "irc":
+            channel = irc_protocol.normalize_channel(values["channel"])
+            self.client.send_irc(irc_protocol.format_join(channel, values["key"] or None))
+            return
         if action == "create":
             self.client.send_cmd({"cmd": "create_channel", "channel": values["channel"], "key": values["key"]})
         else:
@@ -612,7 +724,111 @@ class MainWindow(QMainWindow):
 
     # ---------------- 채팅 ----------------
     def _handle_send(self, text: str):
+        if self._protocol_mode == "irc":
+            self.client.send_irc(irc_protocol.format_privmsg(self._irc_channel, text))
+            # IRC 서버는 보낸 메시지를 나에게 다시 돌려주지 않으므로 직접 반영
+            self.chat_page.append_message(self._irc_current_nick, text, True)
+            return
         self.client.send_cmd({"cmd": "msg", "text": text})
+
+    # ---------------- 실제 IRC 서버 메시지 처리 ----------------
+    def _on_irc_line(self, msg: irc_protocol.IrcMessage):
+        cmd = msg.command
+
+        if cmd == irc_protocol.RPL_WELCOME:
+            self._stop_connecting()
+            self.my_id = self._irc_current_nick
+            self.chat_page.my_id = self.my_id
+            self.channel_page.set_mode("irc")
+            self.stack.setCurrentWidget(self.channel_page)
+            if self._irc_password and not self._irc_identified:
+                self._irc_identified = True
+                self.client.send_irc(irc_protocol.format_privmsg("NickServ", f"IDENTIFY {self._irc_password}"))
+            return
+
+        if cmd in irc_protocol.NICK_COLLISION_NUMERICS:
+            if self.stack.currentWidget() is self.login_page and self._irc_nick_retries < irc_protocol.MAX_NICK_RETRIES:
+                self._irc_nick_retries += 1
+                self._irc_current_nick += "_"
+                self.client.send_irc(irc_protocol.format_nick(self._irc_current_nick))
+            else:
+                self._stop_connecting()
+                self.client.abort()
+                self.login_page.show_status("사용 가능한 닉네임이 없습니다. 다른 닉네임으로 다시 시도하세요.")
+            return
+
+        if cmd in irc_protocol.CHANNEL_JOIN_ERROR_NUMERICS:
+            self.channel_page.show_status(msg.trailing or "채널 입장에 실패했습니다.")
+            return
+
+        if cmd == irc_protocol.RPL_NAMREPLY:
+            self._irc_names_buffer.extend(irc_protocol.parse_names_reply(msg))
+            return
+
+        if cmd == irc_protocol.RPL_ENDOFNAMES:
+            self._irc_members = set(self._irc_names_buffer)
+            self._irc_names_buffer = []
+            self.chat_page.update_userlist(sorted(self._irc_members))
+            return
+
+        if cmd == "JOIN":
+            nick = msg.source_nick
+            channel = msg.trailing or (msg.params[0] if msg.params else "")
+            if nick == self._irc_current_nick:
+                self._irc_channel = channel
+                self._irc_members.add(nick)
+                self.stack.setCurrentWidget(self.chat_page)
+                self.chat_page.append_system(f"{channel}에 입장했습니다.")
+                self.chat_page.focus_input()
+                self.client.send_irc(irc_protocol.format_names(channel))
+            else:
+                self._irc_members.add(nick)
+                self.chat_page.append_system(f"{nick}님이 입장했습니다.")
+                self.chat_page.update_userlist(sorted(self._irc_members))
+            return
+
+        if cmd in ("PART", "QUIT"):
+            nick = msg.source_nick
+            self._irc_members.discard(nick)
+            verb = "나갔습니다" if cmd == "PART" else "접속을 종료했습니다"
+            self.chat_page.append_system(f"{nick}님이 {verb}.")
+            self.chat_page.update_userlist(sorted(self._irc_members))
+            return
+
+        if cmd == "NICK":
+            old_nick = msg.source_nick
+            new_nick = msg.trailing or (msg.params[0] if msg.params else "")
+            self._irc_members.discard(old_nick)
+            self._irc_members.add(new_nick)
+            if old_nick == self._irc_current_nick:
+                self._irc_current_nick = new_nick
+                self.my_id = new_nick
+                self.chat_page.my_id = new_nick
+            self.chat_page.append_system(f"{old_nick}님이 {new_nick}(으)로 닉네임을 변경했습니다.")
+            self.chat_page.update_userlist(sorted(self._irc_members))
+            return
+
+        if cmd == "PRIVMSG":
+            sender = msg.source_nick
+            target = msg.params[0] if msg.params else ""
+            text = msg.trailing
+            if target == self._irc_current_nick:
+                self.chat_page.append_message(f"{sender} (귓속말)", text, False)
+            else:
+                self.chat_page.append_message(sender, text, False)
+            return
+
+        if cmd == "NOTICE":
+            text = msg.trailing
+            if self.stack.currentWidget() is self.login_page:
+                self.login_page.show_status(text)
+            else:
+                self.chat_page.append_system(text)
+            return
+
+        if cmd == "ERROR":
+            self.chat_page.append_system(f"서버 연결이 종료되었습니다: {msg.trailing}")
+            return
 
     # ---------------- 친구 서버 메시지 처리 ----------------
     def _on_message(self, msg: dict):

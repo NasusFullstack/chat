@@ -3,7 +3,7 @@
 친구들끼리만 쓰는 간단한 실시간 채팅 프로그램입니다.
 - **서버**: Python asyncio 기반, 계정 / 채널 / 채널 비밀번호 개념을 JSON 프로토콜로 구현, TLS 암호화 적용
 - **클라이언트**: GUI / CLI 두 가지 버전 제공 (특별한 이유 없으면 GUI 추천)
-- 공용 IRC 네트워크(Libera.Chat 등)는 지원하지 않습니다 — **오직 우리가 켠 친구 서버에만 접속**합니다.
+- 기본은 우리 친구 서버(`server.py`)용 커스텀 프로토콜이지만, 접속 화면에서 "실제 IRC 서버" 모드로 바꾸면 Libera.Chat 같은 표준 IRC 네트워크에도 접속할 수 있습니다 (닉네임만으로 접속, NickServ 비밀번호 지원).
 
 ---
 
@@ -87,11 +87,12 @@ pip install -r requirements.txt
 python gui_client.py
 
 # CLI
-python cli_client.py <서버주소> <포트> [cert.pem 경로] [ssl여부: on/off, 기본 on]
+python cli_client.py <서버주소> <포트> [cert.pem 경로] [ssl여부: on/off, 기본 on] [프로토콜: custom/irc, 기본 custom]
 ```
 
 - GUI/CLI 모두 접속할 때 SSL 사용 여부(포트 6697/6667)와 인증서 사용 여부를 선택할 수 있습니다.
-- 자주 쓰는 서버는 "공용서버 등록"으로 저장해두면 다음부터 목록에서 바로 골라 접속할 수 있습니다 (`servers.json`에 로컬 저장).
+- 접속 화면에서 "친구 채팅 서버(커스텀)" 대신 "실제 IRC 서버"를 선택하면, 아이디/비밀번호 계정 대신 닉네임만으로 접속합니다. 비밀번호를 입력하면 서버 접속 비밀번호(PASS)와 NickServ `IDENTIFY`에 함께 사용됩니다. 닉네임이 이미 쓰이고 있으면 자동으로 `_`를 붙여 재시도합니다.
+- 자주 쓰는 서버는 "공용서버 등록"으로 저장해두면 다음부터 목록에서 바로 골라 접속할 수 있습니다 (`servers.json`에 로컬 저장, 프로토콜 종류도 함께 저장됨).
 - 접속 시도는 최대 10초 후 자동 취소되며, GUI는 '연결 취소' 버튼으로, CLI는 Ctrl+C로 언제든 즉시 중단할 수 있습니다.
 
 ## 현재 구현된 것
@@ -102,9 +103,11 @@ python cli_client.py <서버주소> <포트> [cert.pem 경로] [ssl여부: on/of
 - 실시간 메시지 송수신, 입장/퇴장 알림, 참여자 목록 실시간 갱신
 - 평문 / TLS 암호화 접속 선택 (자체 서명 인증서, `cert.pem`으로 서버 신원 확인 여부도 선택)
 - 공용서버 등록/선택, 접속 타임아웃 및 취소
+- 실제 IRC 서버 접속 모드 (NICK/USER 등록, NickServ IDENTIFY, PING/PONG, JOIN/PART/QUIT/NICK, 참여자 목록)
 
 ## 아직 없는 것
 
 - 이미지/파일 전송
 - 여러 채널 동시 참여 / 채널 전환 UI
 - 메시지 기록 저장 (재접속 시 이전 대화 불러오기)
+- 실제 IRC 모드: SASL, CTCP(`/me` 등), DCC, `MODE`/`WHOIS`/`TOPIC`, CAP 협상은 지원하지 않음
