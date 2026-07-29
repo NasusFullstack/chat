@@ -99,7 +99,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     channels.setdefault(channel, {})[user_id] = writer
                     await send(writer, {"type": "channel_result", "ok": True, "text": text, "channel": channel})
 
-                    # 새로 입장하는 사람에게 기존 멤버들의 아이콘을 알려줌 (아이콘 있는 사람만)
+                    # 새로 입장하는 사람에게 기존 멤버들의 아이콘/닉네임을 알려줌 (설정한 사람만)
                     for other_uid in channels[channel]:
                         if other_uid == user_id:
                             continue
@@ -109,6 +109,12 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                                 "type": "member_avatar", "channel": channel,
                                 "user_id": other_uid, "avatar": other_avatar,
                             })
+                        other_nickname = store.get_nickname(other_uid)
+                        if other_nickname:
+                            await send(writer, {
+                                "type": "member_nickname", "channel": channel,
+                                "user_id": other_uid, "nickname": other_nickname,
+                            })
 
                     await broadcast(
                         channel,
@@ -116,12 +122,19 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         exclude=user_id,
                     )
 
-                    # 기존 멤버들에게 새로 입장한 사람의 아이콘을 알려줌 (내가 아이콘이 있을 때만)
+                    # 기존 멤버들에게 새로 입장한 사람의 아이콘/닉네임을 알려줌 (내가 설정했을 때만)
                     my_avatar = store.get_avatar(user_id)
                     if my_avatar:
                         await broadcast(
                             channel,
                             {"type": "member_avatar", "channel": channel, "user_id": user_id, "avatar": my_avatar},
+                            exclude=user_id,
+                        )
+                    my_nickname = store.get_nickname(user_id)
+                    if my_nickname:
+                        await broadcast(
+                            channel,
+                            {"type": "member_nickname", "channel": channel, "user_id": user_id, "nickname": my_nickname},
                             exclude=user_id,
                         )
 
@@ -169,6 +182,22 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     await broadcast(
                         channel,
                         {"type": "member_avatar", "channel": channel, "user_id": user_id, "avatar": avatar},
+                        exclude=user_id,
+                    )
+
+            elif cmd == "set_nickname":
+                if not user_id:
+                    await send(writer, {"type": "error", "text": "먼저 로그인하세요."})
+                    continue
+                nickname = msg.get("nickname", "")
+                ok, text = store.set_nickname(user_id, nickname)
+                if not ok:
+                    await send(writer, {"type": "error", "text": text})
+                    continue
+                for channel in current_channels:
+                    await broadcast(
+                        channel,
+                        {"type": "member_nickname", "channel": channel, "user_id": user_id, "nickname": nickname},
                         exclude=user_id,
                     )
 

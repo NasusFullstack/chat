@@ -18,6 +18,10 @@ _lock = threading.Lock()
 # 아무리 복잡해도 이론상 최대 약 1400자 정도라 여유를 두고 2000자로 제한)
 AVATAR_MAX_B64_CHARS = 2000
 
+# 계정 ID(로그인 식별자, 불변)와 별개로 채팅에 표시되는 이름. gui_client.py의
+# NICKNAME_MAX_LEN과 값을 맞춰야 함
+NICKNAME_MAX_LEN = 20
+
 
 def _empty_data():
     return {"users": {}, "channels": {}}
@@ -122,3 +126,24 @@ class Store:
         with _lock:
             user = self.data["users"].get(user_id)
             return user.get("avatar") if user else None
+
+    # ---------------- 닉네임(표시 이름) ----------------
+    def set_nickname(self, user_id: str, nickname: str) -> tuple[bool, str]:
+        with _lock:
+            if user_id not in self.data["users"]:
+                return False, "존재하지 않는 사용자입니다."
+            nickname = nickname.strip()
+            if not nickname:
+                self.data["users"][user_id]["nickname"] = None
+                save_data(self.data)
+                return True, "닉네임이 초기화되었습니다."
+            if len(nickname) > NICKNAME_MAX_LEN:
+                return False, f"닉네임은 최대 {NICKNAME_MAX_LEN}자까지 가능합니다."
+            self.data["users"][user_id]["nickname"] = nickname
+            save_data(self.data)
+            return True, "닉네임이 변경되었습니다."
+
+    def get_nickname(self, user_id: str) -> str | None:
+        with _lock:
+            user = self.data["users"].get(user_id)
+            return user.get("nickname") if user else None
