@@ -8,9 +8,15 @@ import os
 import hashlib
 import secrets
 import threading
+import base64
+import binascii
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), "server_data.json")
 _lock = threading.Lock()
+
+# gui_client.py의 AVATAR_MAX_B64_CHARS와 값을 맞춰야 함 (16x16 ARGB32 PNG는
+# 아무리 복잡해도 이론상 최대 약 1400자 정도라 여유를 두고 2000자로 제한)
+AVATAR_MAX_B64_CHARS = 2000
 
 
 def _empty_data():
@@ -92,3 +98,27 @@ class Store:
             if digest != chan["hash"]:
                 return False, "채널 비밀번호가 일치하지 않습니다."
             return True, "입장 성공"
+
+    # ---------------- 아이콘 ----------------
+    def set_avatar(self, user_id: str, avatar_b64: str) -> tuple[bool, str]:
+        with _lock:
+            if user_id not in self.data["users"]:
+                return False, "존재하지 않는 사용자입니다."
+            if not avatar_b64:
+                self.data["users"][user_id]["avatar"] = None
+                save_data(self.data)
+                return True, "아이콘이 삭제되었습니다."
+            if len(avatar_b64) > AVATAR_MAX_B64_CHARS:
+                return False, "아이콘 데이터가 너무 큽니다."
+            try:
+                base64.b64decode(avatar_b64, validate=True)
+            except (binascii.Error, ValueError):
+                return False, "아이콘 데이터 형식이 올바르지 않습니다."
+            self.data["users"][user_id]["avatar"] = avatar_b64
+            save_data(self.data)
+            return True, "아이콘 저장 완료"
+
+    def get_avatar(self, user_id: str) -> str | None:
+        with _lock:
+            user = self.data["users"].get(user_id)
+            return user.get("avatar") if user else None

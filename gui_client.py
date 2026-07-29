@@ -4,19 +4,23 @@
 - 진짜 OS 텍스트 입력창을 쓰기 때문에 한글 조합(쌍자음 등) 문제가 없음
 - QSslSocket으로 TLS 통신 (asyncio 대신 Qt 자체 네트워킹 사용 - 이벤트 루프 충돌 방지)
 """
+import base64
+import binascii
 import datetime
+import hashlib
 import json
 import os
 import sys
 import time
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QTextCursor
+from PySide6.QtCore import Qt, QBuffer, QIODevice, QTimer, Signal
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtNetwork import QSslSocket, QSslCertificate, QSslConfiguration, QSslError
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget, QVBoxLayout,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit, QListWidget,
+    QHBoxLayout, QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem,
     QFileDialog, QMessageBox, QFrame, QComboBox, QInputDialog, QCheckBox,
+    QTabWidget, QScrollArea, QGridLayout, QColorDialog, QDialog, QDialogButtonBox,
 )
 
 import server_registry
@@ -26,6 +30,20 @@ import history_store
 CONNECT_TIMEOUT_MS = 10_000
 DEFAULT_SSL_PORT = "6697"
 DEFAULT_PLAIN_PORT = "6667"
+
+# 말풍선 시간 배지: 지금 기준 폰트(STYLE_SHEET의 14px)의 절반을 고정값으로 씀 -
+# 나중에 앱 기본 폰트 크기가 바뀌어도 이 값 자체는 따라 커지지 않음
+TIMESTAMP_BADGE_FONT_PX = 7
+TIMESTAMP_BADGE_HEIGHT_PX = 14
+
+UNREAD_DOT_PX = 9
+UNREAD_DOT_COLOR = "#ff6b6b"
+
+AVATAR_LIST_PX = 16
+AVATAR_MSG_PX = 32
+AVATAR_GRID_SIZE = 16
+# store.py의 AVATAR_MAX_B64_CHARS와 값을 맞춰야 함
+AVATAR_MAX_B64_CHARS = 2000
 
 APP_TITLE = "친구 채팅"
 
@@ -66,11 +84,10 @@ QPushButton#secondary {
 QPushButton#secondary:hover {
     background-color: #4a4d63;
 }
-QTextEdit {
+QScrollArea {
     background-color: #16171f;
     border: 1px solid #3d3f52;
     border-radius: 8px;
-    padding: 8px;
 }
 QListWidget {
     background-color: #16171f;
@@ -90,6 +107,36 @@ QLabel#hint {
 QLabel#status_err {
     color: #ff6b6b;
 }
+/* font-size 값은 TIMESTAMP_BADGE_FONT_PX 상수와 반드시 일치시킬 것 (QSS는 상수 참조 불가) */
+QLabel#timestampBadge {
+    background-color: rgba(154, 156, 173, 100);
+    color: #cfd0da;
+    font-size: 7px;
+    border-radius: 7px;
+    padding: 0px 7px;
+}
+QTabWidget::pane {
+    border: 1px solid #3d3f52;
+    border-radius: 8px;
+    top: -1px;
+}
+QTabBar::tab {
+    background-color: #2a2b38;
+    color: #cfd0da;
+    padding: 6px 14px;
+    border: 1px solid #3d3f52;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    margin-right: 2px;
+}
+QTabBar::tab:selected {
+    background-color: #16171f;
+    color: #ffffff;
+}
+QTabBar::tab:hover {
+    background-color: #3d3f52;
+}
 """
 
 
@@ -106,6 +153,61 @@ def _find_default_cert() -> str:
 
 def _format_ts(ts: float) -> str:
     return datetime.datetime.fromtimestamp(ts).strftime("%H:%M")
+
+
+def _decode_avatar_pixmap(avatar_b64: str) -> QPixmap | None:
+    """base64 PNG를 QPixmap으로. 형식이 잘못됐거나 비어있으면 None (호출부가 기본 도트로 대체)."""
+    if not avatar_b64:
+        return None
+    try:
+        raw = base64.b64decode(avatar_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    pixmap = QPixmap()
+    if not pixmap.loadFromData(raw, "PNG"):
+        return None
+    return pixmap
+
+
+def _hashed_avatar_pixmap(user_id: str) -> QPixmap:
+    """아이콘을 안 그린 사람용 기본 도트 - 아이디로부터 안정적인 색상을 계산해 사람마다 다르게."""
+    digest = hashlib.md5(user_id.encode("utf-8")).digest()
+    hue = digest[0] / 255 * 359
+    color = QColor.fromHsl(int(hue), 160, 130)
+
+    size = AVATAR_GRID_SIZE
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawEllipse(0, 0, size, size)
+    painter.end()
+    return pixmap
+
+
+def _build_unread_icon() -> QIcon:
+    size = UNREAD_DOT_PX
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(UNREAD_DOT_COLOR))
+    painter.drawEllipse(0, 0, size, size)
+    painter.end()
+    return QIcon(pixmap)
+
+
+_UNREAD_ICON: QIcon | None = None
+
+
+def _unread_icon() -> QIcon:
+    global _UNREAD_ICON
+    if _UNREAD_ICON is None:
+        _UNREAD_ICON = _build_unread_icon()
+    return _UNREAD_ICON
 
 
 class ChatClient(QSslSocket):
@@ -490,44 +592,222 @@ class ChannelPage(QWidget):
         }
 
 
-class ChatPage(QWidget):
-    """여러 채널을 동시에 열어둘 수 있음 - 채널마다 로그 위젯을 따로 유지해 QStackedWidget으로 전환"""
+class MessageWidget(QWidget):
+    """채팅 메시지 한 개 - 왼쪽에 아바타, 오른쪽 아래에 시간 타원 배지"""
 
-    def __init__(self, on_send, on_add_channel, on_leave_channel):
+    def __init__(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 2, 4, 2)
+
+        avatar_label = QLabel()
+        avatar_label.setFixedSize(AVATAR_MSG_PX, AVATAR_MSG_PX)
+        avatar_label.setPixmap(avatar_pixmap.scaled(
+            AVATAR_MSG_PX, AVATAR_MSG_PX,
+            Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation,
+        ))
+        layout.addWidget(avatar_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        body = QVBoxLayout()
+        body.setSpacing(2)
+
+        color = "#7cd0ff" if mine else "#ffd27c"
+        safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
+        text_label = QLabel(f'<span style="color:{color}"><b>{sender}</b></span>: {safe_text}')
+        text_label.setTextFormat(Qt.TextFormat.RichText)
+        text_label.setWordWrap(True)
+        body.addWidget(text_label)
+
+        badge_row = QHBoxLayout()
+        badge_row.addStretch(1)
+        badge = QLabel(_format_ts(ts))
+        badge.setObjectName("timestampBadge")
+        badge.setFixedHeight(TIMESTAMP_BADGE_HEIGHT_PX)
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge_row.addWidget(badge)
+        body.addLayout(badge_row)
+
+        layout.addLayout(body, 1)
+
+
+def _build_system_label(text: str) -> QLabel:
+    label = QLabel(f'<span style="color:#9a9cad"><i>* {text}</i></span>')
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setWordWrap(True)
+    return label
+
+
+class ChannelLogView(QScrollArea):
+    """채널 하나의 메시지 목록 - 메시지마다 개별 위젯으로 쌓음 (QTextEdit HTML 방식 대체)"""
+
+    def __init__(self, channel: str, parent=None):
+        super().__init__(parent)
+        self.channel_name = channel
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+
+        content = QWidget()
+        self._layout = QVBoxLayout(content)
+        self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._layout.setSpacing(4)
+        self.setWidget(content)
+
+    def append_message(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap):
+        self._layout.addWidget(MessageWidget(sender, text, mine, ts, avatar_pixmap))
+        self._scroll_to_bottom_deferred()
+
+    def append_system(self, text: str):
+        self._layout.addWidget(_build_system_label(text))
+        self._scroll_to_bottom_deferred()
+
+    def _scroll_to_bottom_deferred(self):
+        QTimer.singleShot(0, lambda: self.verticalScrollBar().setValue(self.verticalScrollBar().maximum()))
+
+
+class AvatarEditorDialog(QDialog):
+    """16x16 픽셀아트 아이콘 에디터 - 셀 클릭으로 색칠, 지우개, 전체 지우기 지원"""
+
+    def __init__(self, initial_base64: str | None = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("내 아이콘 그리기")
+        self.result_base64 = ""
+        self._current_color = QColor("#7c6cf0")
+        self._eraser = False
+        self._cell_colors: dict[tuple[int, int], QColor | None] = {}
+        self._buttons: dict[tuple[int, int], QPushButton] = {}
+
+        layout = QVBoxLayout(self)
+
+        grid_widget = QWidget()
+        grid = QGridLayout(grid_widget)
+        grid.setSpacing(0)
+        for y in range(AVATAR_GRID_SIZE):
+            for x in range(AVATAR_GRID_SIZE):
+                btn = QPushButton()
+                btn.setFixedSize(20, 20)
+                btn.setStyleSheet("background-color: transparent; border: 1px solid #3d3f52;")
+                btn.clicked.connect(lambda checked=False, x=x, y=y: self._on_cell_clicked(x, y))
+                grid.addWidget(btn, y, x)
+                self._buttons[(x, y)] = btn
+        layout.addWidget(grid_widget)
+
+        tool_row = QHBoxLayout()
+        color_btn = QPushButton("색상 선택")
+        color_btn.setObjectName("secondary")
+        color_btn.clicked.connect(self._choose_color)
+        tool_row.addWidget(color_btn)
+        self._eraser_btn = QPushButton("지우개")
+        self._eraser_btn.setObjectName("secondary")
+        self._eraser_btn.setCheckable(True)
+        self._eraser_btn.toggled.connect(self._toggle_eraser)
+        tool_row.addWidget(self._eraser_btn)
+        clear_btn = QPushButton("전체 지우기")
+        clear_btn.setObjectName("secondary")
+        clear_btn.clicked.connect(self._clear_all)
+        tool_row.addWidget(clear_btn)
+        layout.addLayout(tool_row)
+
+        if initial_base64:
+            self._load_initial(initial_base64)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self._on_save)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _load_initial(self, avatar_b64: str):
+        pixmap = _decode_avatar_pixmap(avatar_b64)
+        if pixmap is None:
+            return
+        image = pixmap.toImage()
+        for y in range(min(AVATAR_GRID_SIZE, image.height())):
+            for x in range(min(AVATAR_GRID_SIZE, image.width())):
+                color = image.pixelColor(x, y)
+                if color.alpha() == 0:
+                    continue
+                self._cell_colors[(x, y)] = color
+                self._buttons[(x, y)].setStyleSheet(f"background-color: {color.name()}; border: 1px solid #3d3f52;")
+
+    def _on_cell_clicked(self, x: int, y: int):
+        if self._eraser:
+            self._cell_colors[(x, y)] = None
+            self._buttons[(x, y)].setStyleSheet("background-color: transparent; border: 1px solid #3d3f52;")
+        else:
+            self._cell_colors[(x, y)] = QColor(self._current_color)
+            self._buttons[(x, y)].setStyleSheet(
+                f"background-color: {self._current_color.name()}; border: 1px solid #3d3f52;"
+            )
+
+    def _choose_color(self):
+        color = QColorDialog.getColor(self._current_color, self, "색상 선택")
+        if color.isValid():
+            self._current_color = color
+            self._eraser_btn.setChecked(False)
+
+    def _toggle_eraser(self, checked: bool):
+        self._eraser = checked
+
+    def _clear_all(self):
+        self._cell_colors.clear()
+        for btn in self._buttons.values():
+            btn.setStyleSheet("background-color: transparent; border: 1px solid #3d3f52;")
+
+    def to_base64_png(self) -> str:
+        image = QImage(AVATAR_GRID_SIZE, AVATAR_GRID_SIZE, QImage.Format.Format_ARGB32)
+        image.fill(0)
+        for (x, y), color in self._cell_colors.items():
+            if color is not None:
+                image.setPixelColor(x, y, color)
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+        image.save(buffer, "PNG")
+        return base64.b64encode(bytes(buffer.data())).decode("ascii")
+
+    def _on_save(self):
+        b64 = self.to_base64_png()
+        if len(b64) > AVATAR_MAX_B64_CHARS:
+            QMessageBox.warning(self, "저장 실패", "아이콘 데이터가 너무 큽니다. 더 단순하게 그려주세요.")
+            return
+        self.result_base64 = b64
+        self.accept()
+
+
+class ChatPage(QWidget):
+    """여러 채널을 탭으로 동시에 열어둘 수 있음"""
+
+    def __init__(self, on_send, on_add_channel, on_leave_channel, on_set_avatar):
         super().__init__()
         self.on_send = on_send
         self.on_add_channel = on_add_channel
         self.on_leave_channel = on_leave_channel
+        self.on_set_avatar = on_set_avatar
         self.my_id = ""
-        self._logs: dict[str, QTextEdit] = {}
+        self._log_views: dict[str, ChannelLogView] = {}
         self._members: dict[str, list[str]] = {}
+        self._avatar_pixmaps: dict[str, QPixmap] = {}
         self._active_channel = ""
+        self._protocol_mode = "custom"
 
         layout = QHBoxLayout()
 
-        nav = QVBoxLayout()
-        nav.addWidget(QLabel("채널"))
-        self.channel_list = QListWidget()
-        self.channel_list.currentTextChanged.connect(self._on_channel_clicked)
-        nav.addWidget(self.channel_list)
-        add_btn = QPushButton("+ 채널 추가")
-        add_btn.setObjectName("secondary")
-        add_btn.clicked.connect(lambda: self.on_add_channel())
-        nav.addWidget(add_btn)
-        leave_btn = QPushButton("채널 나가기")
-        leave_btn.setObjectName("secondary")
-        leave_btn.clicked.connect(self._confirm_leave)
-        nav.addWidget(leave_btn)
-        nav_widget = QWidget()
-        nav_widget.setLayout(nav)
-        nav_widget.setFixedWidth(140)
-
         center = QVBoxLayout()
-        self.log_stack = QStackedWidget()
-        self._empty_label = QLabel("입장한 채널이 없습니다.\n'+ 채널 추가'로 입장하세요.")
+        self._center_stack = QStackedWidget()
+        self._empty_label = QLabel("입장한 채널이 없습니다.\n'+' 버튼으로 입장하세요.")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.log_stack.addWidget(self._empty_label)
-        center.addWidget(self.log_stack)
+        self._center_stack.addWidget(self._empty_label)
+
+        self.tabs = QTabWidget()
+        self.tabs.setTabsClosable(True)
+        self.tabs.tabCloseRequested.connect(self._on_tab_close_requested)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        add_tab_btn = QPushButton("+")
+        add_tab_btn.setObjectName("secondary")
+        add_tab_btn.setFixedWidth(32)
+        add_tab_btn.clicked.connect(lambda: self.on_add_channel())
+        self.tabs.setCornerWidget(add_tab_btn, Qt.Corner.TopRightCorner)
+        self._center_stack.addWidget(self.tabs)
+
+        center.addWidget(self._center_stack)
 
         input_row = QHBoxLayout()
         self.msg_input = QLineEdit()
@@ -545,74 +825,93 @@ class ChatPage(QWidget):
         right.addWidget(QLabel("참여자"))
         self.user_list = QListWidget()
         right.addWidget(self.user_list)
+        self.avatar_btn = QPushButton("내 아이콘 설정")
+        self.avatar_btn.setObjectName("secondary")
+        self.avatar_btn.clicked.connect(lambda: self.on_set_avatar())
+        right.addWidget(self.avatar_btn)
         right_widget = QWidget()
         right_widget.setLayout(right)
         right_widget.setFixedWidth(160)
 
-        layout.addWidget(nav_widget)
         layout.addWidget(center_widget, 3)
         layout.addWidget(right_widget, 1)
         self.setLayout(layout)
         self._update_input_enabled()
 
+    def set_protocol_mode(self, mode: str):
+        self._protocol_mode = mode
+        self.avatar_btn.setVisible(mode != "irc")
+        self._avatar_pixmaps.clear()
+
     def _update_input_enabled(self):
         self.msg_input.setEnabled(bool(self._active_channel))
 
     def add_channel(self, channel: str, activate: bool = True):
-        if channel not in self._logs:
-            log = QTextEdit()
-            log.setReadOnly(True)
-            self._logs[channel] = log
+        if channel not in self._log_views:
+            view = ChannelLogView(channel)
+            self._log_views[channel] = view
             self._members[channel] = []
-            self.log_stack.addWidget(log)
-            self.channel_list.addItem(channel)
+            self.tabs.addTab(view, channel)
+            self._center_stack.setCurrentWidget(self.tabs)
         if activate:
             self.set_active_channel(channel)
 
     def remove_channel(self, channel: str):
-        log = self._logs.pop(channel, None)
-        if log is None:
+        view = self._log_views.pop(channel, None)
+        if view is None:
             return
         self._members.pop(channel, None)
-        self.log_stack.removeWidget(log)
-        log.deleteLater()
-        for item in self.channel_list.findItems(channel, Qt.MatchFlag.MatchExactly):
-            self.channel_list.takeItem(self.channel_list.row(item))
-        if self._active_channel == channel:
-            remaining = list(self._logs.keys())
-            if remaining:
-                self.set_active_channel(remaining[0])
-            else:
-                self._active_channel = ""
-                self.log_stack.setCurrentWidget(self._empty_label)
-                self.user_list.clear()
+        index = self.tabs.indexOf(view)
+        if index >= 0:
+            self.tabs.removeTab(index)  # 남은 탭이 있으면 currentChanged가 자동으로 활성 채널을 갱신함
+        view.deleteLater()
+        if not self._log_views:
+            self._active_channel = ""
+            self._center_stack.setCurrentWidget(self._empty_label)
+            self.user_list.clear()
         self._update_input_enabled()
 
     def set_active_channel(self, channel: str):
-        if channel not in self._logs:
+        view = self._log_views.get(channel)
+        if view is None:
             return
-        self._active_channel = channel
-        self.log_stack.setCurrentWidget(self._logs[channel])
-        self.user_list.clear()
-        self.user_list.addItems(self._members.get(channel, []))
-        items = self.channel_list.findItems(channel, Qt.MatchFlag.MatchExactly)
-        if items:
-            self.channel_list.setCurrentItem(items[0])
-        self._update_input_enabled()
+        index = self.tabs.indexOf(view)
+        if index >= 0:
+            self.tabs.setCurrentIndex(index)
 
     def active_channel(self) -> str:
         return self._active_channel
 
-    def _on_channel_clicked(self, channel: str):
-        if channel and channel != self._active_channel:
-            self.set_active_channel(channel)
-
-    def _confirm_leave(self):
-        if not self._active_channel:
+    def _on_tab_changed(self, index: int):
+        if index < 0:
             return
-        confirm = QMessageBox.question(self, "채널 나가기", f"'{self._active_channel}' 채널에서 나갈까요?")
+        view = self.tabs.widget(index)
+        if view is None:
+            return
+        self._active_channel = view.channel_name
+        self.tabs.setTabIcon(index, QIcon())
+        self.user_list.clear()
+        self._add_userlist_items(self._members.get(self._active_channel, []))
+        self._update_input_enabled()
+
+    def _on_tab_close_requested(self, index: int):
+        view = self.tabs.widget(index)
+        if view is None:
+            return
+        channel = view.channel_name
+        confirm = QMessageBox.question(self, "채널 나가기", f"'{channel}' 채널에서 나갈까요?")
         if confirm == QMessageBox.StandardButton.Yes:
-            self.on_leave_channel(self._active_channel)
+            self.on_leave_channel(channel)
+
+    def _mark_unread(self, channel: str):
+        if channel == self._active_channel:
+            return
+        view = self._log_views.get(channel)
+        if view is None:
+            return
+        index = self.tabs.indexOf(view)
+        if index >= 0:
+            self.tabs.setTabIcon(index, _unread_icon())
 
     def _submit(self):
         text = self.msg_input.text().strip()
@@ -624,23 +923,23 @@ class ChatPage(QWidget):
     def focus_input(self):
         self.msg_input.setFocus()
 
+    def _avatar_for(self, user_id: str, px: int) -> QPixmap:
+        cached = None if self._protocol_mode == "irc" else self._avatar_pixmaps.get(user_id)
+        base = cached if cached is not None else _hashed_avatar_pixmap(user_id)
+        return base.scaled(px, px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+
     def append_message(self, channel: str, sender: str, text: str, mine: bool, ts: float):
-        log = self._logs.get(channel)
-        if log is None:
+        view = self._log_views.get(channel)
+        if view is None:
             return
-        color = "#7cd0ff" if mine else "#ffd27c"
-        safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
-        time_str = _format_ts(ts)
-        log.append(
-            f'<span style="color:#9a9cad">[{time_str}]</span> '
-            f'<span style="color:{color}"><b>{sender}</b></span>: {safe_text}'
-        )
+        view.append_message(sender, text, mine, ts, self._avatar_for(sender, AVATAR_MSG_PX))
+        self._mark_unread(channel)
 
     def append_system(self, channel: str, text: str):
-        log = self._logs.get(channel)
-        if log is None:
+        view = self._log_views.get(channel)
+        if view is None:
             return
-        log.append(f'<span style="color:#9a9cad"><i>* {text}</i></span>')
+        view.append_system(text)
 
     def load_history(self, channel: str, entries: list[dict]):
         if not entries:
@@ -653,11 +952,28 @@ class ChatPage(QWidget):
             )
         self.append_system(channel, "── 여기까지 이전 기록 ──")
 
+    def _add_userlist_items(self, users: list[str]):
+        for uid in users:
+            item = QListWidgetItem(uid)
+            item.setIcon(QIcon(self._avatar_for(uid, AVATAR_LIST_PX)))
+            self.user_list.addItem(item)
+
     def update_userlist(self, channel: str, users: list[str]):
         self._members[channel] = users
         if channel == self._active_channel:
             self.user_list.clear()
-            self.user_list.addItems(users)
+            self._add_userlist_items(users)
+
+    def set_avatar(self, user_id: str, avatar_b64: str | None):
+        if self._protocol_mode == "irc" or not avatar_b64:
+            self._avatar_pixmaps.pop(user_id, None)
+        else:
+            pixmap = _decode_avatar_pixmap(avatar_b64)
+            if pixmap is not None:
+                self._avatar_pixmaps[user_id] = pixmap
+        if self._active_channel:
+            self.user_list.clear()
+            self._add_userlist_items(self._members.get(self._active_channel, []))
 
 
 class MainWindow(QMainWindow):
@@ -682,6 +998,7 @@ class MainWindow(QMainWindow):
         self._port = 0
         self._protocol_mode = "custom"
         self._joined_channels: set[str] = set()
+        self._my_avatar_b64: str | None = None
 
         # 실제 IRC 서버 모드 전용 상태
         self._irc_current_nick = ""
@@ -699,7 +1016,9 @@ class MainWindow(QMainWindow):
 
         self.login_page = LoginPage(self._handle_login_submit, self._handle_cancel_connect)
         self.channel_page = ChannelPage(self._handle_channel_submit)
-        self.chat_page = ChatPage(self._handle_send, self._handle_add_channel, self._handle_leave_channel)
+        self.chat_page = ChatPage(
+            self._handle_send, self._handle_add_channel, self._handle_leave_channel, self._handle_set_avatar
+        )
 
         self.stack.addWidget(self.login_page)
         self.stack.addWidget(self.channel_page)
@@ -725,11 +1044,13 @@ class MainWindow(QMainWindow):
 
         self.pending_mode = mode
         self._protocol_mode = protocol
+        self.chat_page.set_protocol_mode(protocol)
         self._pending_user_id = values["user_id"]
         self._pending_password = values["password"]
         self._host = values["host"]
         self._port = port
         self._joined_channels = set()
+        self._my_avatar_b64 = None
 
         if protocol == "irc":
             self._irc_current_nick = values["user_id"]
@@ -863,6 +1184,20 @@ class MainWindow(QMainWindow):
             self.client.send_irc(irc_protocol.format_part(channel))
         else:
             self.client.send_cmd({"cmd": "leave", "channel": channel})
+
+    def _handle_set_avatar(self):
+        if self._protocol_mode == "irc":
+            return  # 방어적 처리 - IRC 모드에선 버튼 자체가 숨겨져 있음
+        dlg = AvatarEditorDialog(initial_base64=self._my_avatar_b64, parent=self.chat_page)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        b64 = dlg.result_base64
+        if len(b64) > AVATAR_MAX_B64_CHARS:
+            QMessageBox.warning(self, "아이콘 저장 실패", "아이콘 데이터가 너무 큽니다.")
+            return
+        self._my_avatar_b64 = b64
+        self.chat_page.set_avatar(self.my_id, b64)  # 서버가 보낸 사람에게는 다시 안 보내주므로 낙관적으로 먼저 반영
+        self.client.send_cmd({"cmd": "set_avatar", "avatar": b64})
 
     def _on_channel_joined(self, channel: str, text: str):
         """커스텀 프로토콜의 channel_result 성공 / IRC의 자기 자신 JOIN 둘 다 여기로 모임"""
@@ -1069,6 +1404,11 @@ class MainWindow(QMainWindow):
             channel = msg.get("channel") or self.chat_page.active_channel()
             if channel:
                 self.chat_page.update_userlist(channel, msg.get("users", []))
+
+        elif mtype == "member_avatar":
+            user_id = msg.get("user_id", "")
+            if user_id:
+                self.chat_page.set_avatar(user_id, msg.get("avatar"))
 
         elif mtype == "error":
             text = msg.get("text", "오류")
