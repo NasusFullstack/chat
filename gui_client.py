@@ -13,7 +13,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import Qt, QBuffer, QIODevice, QTimer, Signal
+from PySide6.QtCore import Qt, QBuffer, QIODevice, QSize, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtNetwork import QSslSocket, QSslCertificate, QSslConfiguration, QSslError
 from PySide6.QtWidgets import (
@@ -40,7 +40,7 @@ UNREAD_DOT_PX = 9
 UNREAD_DOT_COLOR = "#ff6b6b"
 
 AVATAR_LIST_PX = 16
-AVATAR_MSG_PX = 32
+AVATAR_MSG_PX = 16  # 참여자 목록과 채팅창 아이콘이 항상 같은 크기/이미지로 보이게 통일
 AVATAR_GRID_SIZE = 16
 # store.py의 AVATAR_MAX_B64_CHARS와 값을 맞춰야 함
 AVATAR_MAX_B64_CHARS = 2000
@@ -824,6 +824,7 @@ class ChatPage(QWidget):
         right = QVBoxLayout()
         right.addWidget(QLabel("참여자"))
         self.user_list = QListWidget()
+        self.user_list.setIconSize(QSize(AVATAR_LIST_PX, AVATAR_LIST_PX))
         right.addWidget(self.user_list)
         self.avatar_btn = QPushButton("내 아이콘 설정")
         self.avatar_btn.setObjectName("secondary")
@@ -840,7 +841,6 @@ class ChatPage(QWidget):
 
     def set_protocol_mode(self, mode: str):
         self._protocol_mode = mode
-        self.avatar_btn.setVisible(mode != "irc")
         self._avatar_pixmaps.clear()
 
     def _update_input_enabled(self):
@@ -924,7 +924,7 @@ class ChatPage(QWidget):
         self.msg_input.setFocus()
 
     def _avatar_for(self, user_id: str, px: int) -> QPixmap:
-        cached = None if self._protocol_mode == "irc" else self._avatar_pixmaps.get(user_id)
+        cached = self._avatar_pixmaps.get(user_id)
         base = cached if cached is not None else _hashed_avatar_pixmap(user_id)
         return base.scaled(px, px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
 
@@ -965,7 +965,7 @@ class ChatPage(QWidget):
             self._add_userlist_items(users)
 
     def set_avatar(self, user_id: str, avatar_b64: str | None):
-        if self._protocol_mode == "irc" or not avatar_b64:
+        if not avatar_b64:
             self._avatar_pixmaps.pop(user_id, None)
         else:
             pixmap = _decode_avatar_pixmap(avatar_b64)
@@ -1186,8 +1186,6 @@ class MainWindow(QMainWindow):
             self.client.send_cmd({"cmd": "leave", "channel": channel})
 
     def _handle_set_avatar(self):
-        if self._protocol_mode == "irc":
-            return  # 방어적 처리 - IRC 모드에선 버튼 자체가 숨겨져 있음
         dlg = AvatarEditorDialog(initial_base64=self._my_avatar_b64, parent=self.chat_page)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1196,8 +1194,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "아이콘 저장 실패", "아이콘 데이터가 너무 큽니다.")
             return
         self._my_avatar_b64 = b64
-        self.chat_page.set_avatar(self.my_id, b64)  # 서버가 보낸 사람에게는 다시 안 보내주므로 낙관적으로 먼저 반영
-        self.client.send_cmd({"cmd": "set_avatar", "avatar": b64})
+        self.chat_page.set_avatar(self.my_id, b64)  # 상대에게는 다시 안 돌아오므로 낙관적으로 먼저 반영
+        if self._protocol_mode == "irc":
+            # 실제 IRC 서버는 아이콘 개념이 없으므로, PRIVMSG 안에 CTCP처럼 숨겨서
+            # 우리 클라이언트끼리만 알아보게 보냄 (내가 입장한 모든 채널에)
+            for channel in self._joined_channels:
+                self.client.send_irc(irc_protocol.format_ctcp_avatar(channel, b64))
+        else:
+            self.client.send_cmd({"cmd": "set_avatar", "avatar": b64})
 
     def _on_channel_joined(self, channel: str, text: str):
         """커스텀 프로토콜의 channel_result 성공 / IRC의 자기 자신 JOIN 둘 다 여기로 모임"""
@@ -1275,11 +1279,17 @@ class MainWindow(QMainWindow):
                 self._irc_members.setdefault(channel, set()).add(nick)
                 self._on_channel_joined(channel, f"{channel}에 입장했습니다.")
                 self.client.send_irc(irc_protocol.format_names(channel))
+                if self._my_avatar_b64:
+                    # 내가 방금 입장한 채널의 기존 멤버들에게 내 아이콘을 알려줌
+                    self.client.send_irc(irc_protocol.format_ctcp_avatar(channel, self._my_avatar_b64))
             else:
                 members = self._irc_members.setdefault(channel, set())
                 members.add(nick)
                 self.chat_page.append_system(channel, f"{nick}님이 입장했습니다.")
                 self.chat_page.update_userlist(channel, sorted(members))
+                if self._my_avatar_b64:
+                    # 새로 들어온 사람에게 내 아이콘을 바로 알려줌 (channel 전체에 다시 뿌릴 필요 없이 1:1로)
+                    self.client.send_irc(irc_protocol.format_ctcp_avatar(nick, self._my_avatar_b64))
             return
 
         if cmd == "PART":
@@ -1323,6 +1333,11 @@ class MainWindow(QMainWindow):
             sender = msg.source_nick
             target = msg.params[0] if msg.params else ""
             text = msg.trailing
+            avatar_b64 = irc_protocol.parse_ctcp_avatar(text)
+            if avatar_b64 is not None:
+                # 아이콘 교환용 CTCP - 채팅으로 표시하거나 기록에 남기지 않고 캐시만 갱신
+                self.chat_page.set_avatar(sender, avatar_b64)
+                return
             ts = time.time()
             if target == self._irc_current_nick:
                 active = self.chat_page.active_channel()
