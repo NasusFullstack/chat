@@ -98,11 +98,33 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     current_channels.add(channel)
                     channels.setdefault(channel, {})[user_id] = writer
                     await send(writer, {"type": "channel_result", "ok": True, "text": text, "channel": channel})
+
+                    # 새로 입장하는 사람에게 기존 멤버들의 아이콘을 알려줌 (아이콘 있는 사람만)
+                    for other_uid in channels[channel]:
+                        if other_uid == user_id:
+                            continue
+                        other_avatar = store.get_avatar(other_uid)
+                        if other_avatar:
+                            await send(writer, {
+                                "type": "member_avatar", "channel": channel,
+                                "user_id": other_uid, "avatar": other_avatar,
+                            })
+
                     await broadcast(
                         channel,
                         {"type": "system", "channel": channel, "text": f"{user_id}님이 입장했습니다."},
                         exclude=user_id,
                     )
+
+                    # 기존 멤버들에게 새로 입장한 사람의 아이콘을 알려줌 (내가 아이콘이 있을 때만)
+                    my_avatar = store.get_avatar(user_id)
+                    if my_avatar:
+                        await broadcast(
+                            channel,
+                            {"type": "member_avatar", "channel": channel, "user_id": user_id, "avatar": my_avatar},
+                            exclude=user_id,
+                        )
+
                     await send_userlist(channel)
                 else:
                     await send(writer, {"type": "channel_result", "ok": False, "text": text, "channel": channel})
@@ -133,6 +155,22 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     await send(writer, {"type": "leave_result", "ok": True, "text": "채널에서 나갔습니다.", "channel": channel})
                 else:
                     await send(writer, {"type": "leave_result", "ok": False, "text": "입장하지 않은 채널입니다.", "channel": channel})
+
+            elif cmd == "set_avatar":
+                if not user_id:
+                    await send(writer, {"type": "error", "text": "먼저 로그인하세요."})
+                    continue
+                avatar = msg.get("avatar", "")
+                ok, text = store.set_avatar(user_id, avatar)
+                if not ok:
+                    await send(writer, {"type": "error", "text": text})
+                    continue
+                for channel in current_channels:
+                    await broadcast(
+                        channel,
+                        {"type": "member_avatar", "channel": channel, "user_id": user_id, "avatar": avatar},
+                        exclude=user_id,
+                    )
 
             else:
                 await send(writer, {"type": "error", "text": f"알 수 없는 명령: {cmd}"})
