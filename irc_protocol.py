@@ -15,6 +15,13 @@ CHANNEL_JOIN_ERROR_NUMERICS = {"403", "405", "471", "473", "474", "475"}
 
 MAX_NICK_RETRIES = 3
 
+# 아이콘 동기화: 실제 IRC 서버는 우리가 고칠 수 없으므로, PRIVMSG 안에 CTCP처럼
+# \x01태그 내용\x01 형태로 숨겨 보내는 방식으로 우리 클라이언트끼리만 아이콘을 주고받음
+# (예: /me 명령이 쓰는 ACTION CTCP와 같은 방식). 우리 클라이언트가 아닌 사람에게는
+# 낯선 CTCP 요청으로 보일 뿐 - 대부분의 클라이언트는 조용히 무시/숨김 처리함.
+CTCP_DELIM = "\x01"
+AVATAR_CTCP_TAG = "FCAVATAR"
+
 
 @dataclass
 class IrcMessage:
@@ -119,3 +126,18 @@ def normalize_channel(name: str) -> str:
     if name and name[0] not in "#&+!":
         name = "#" + name
     return name
+
+
+def format_ctcp_avatar(target: str, avatar_b64: str) -> str:
+    return format_privmsg(target, f"{CTCP_DELIM}{AVATAR_CTCP_TAG} {avatar_b64}{CTCP_DELIM}")
+
+
+def parse_ctcp_avatar(text: str) -> str | None:
+    """PRIVMSG의 trailing 텍스트가 우리 아이콘 CTCP 태그면 base64 부분을 반환, 아니면 None"""
+    if len(text) < 2 or not (text.startswith(CTCP_DELIM) and text.endswith(CTCP_DELIM)):
+        return None
+    inner = text[1:-1]
+    prefix = AVATAR_CTCP_TAG + " "
+    if not inner.startswith(prefix):
+        return None
+    return inner[len(prefix):]
