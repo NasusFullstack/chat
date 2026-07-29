@@ -101,13 +101,14 @@ python cli_client.py <서버주소> <포트> [cert.pem 경로] [ssl여부: on/of
 - 채널 생성 + 채널 비밀번호(선택)
 - 채널 입장 시 비밀번호 검증
 - 실시간 메시지 송수신, 입장/퇴장 알림, 참여자 목록 실시간 갱신
+- 메시지 보낸 시간 표시
+- 여러 채널 동시 참여 (GUI는 왼쪽 채널 목록으로 전환, CLI는 `/입장`·`/전환`·`/나가기`·`/채널목록` 명령)
+- 메시지 기록 로컬 저장 (채널당 최근 200개, 재접속/재입장 시 자동으로 이어서 보여줌 - `history.json`)
 - 평문 / TLS 암호화 접속 선택 (자체 서명 인증서, `cert.pem`으로 서버 신원 확인 여부도 선택)
 - 공용서버 등록/선택, 접속 타임아웃 및 취소
-- 실제 IRC 서버 접속 모드 (NICK/USER 등록, NickServ IDENTIFY, PING/PONG, JOIN/PART/QUIT/NICK, 참여자 목록)
+- 실제 IRC 서버 접속 모드 (NICK/USER 등록, NickServ IDENTIFY, PING/PONG, JOIN/PART/QUIT/NICK, 참여자 목록, 다중 채널)
 
 ## 아직 없는 것
 
 - 이미지/파일 전송
-- 여러 채널 동시 참여 / 채널 전환 UI
-- 메시지 기록 저장 (재접속 시 이전 대화 불러오기)
 - 실제 IRC 모드: SASL, CTCP(`/me` 등), DCC, `MODE`/`WHOIS`/`TOPIC`, CAP 협상은 지원하지 않음
