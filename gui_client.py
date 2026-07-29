@@ -4,9 +4,11 @@
 - 진짜 OS 텍스트 입력창을 쓰기 때문에 한글 조합(쌍자음 등) 문제가 없음
 - QSslSocket으로 TLS 통신 (asyncio 대신 Qt 자체 네트워킹 사용 - 이벤트 루프 충돌 방지)
 """
+import datetime
 import json
 import os
 import sys
+import time
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QTextCursor
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import (
 
 import server_registry
 import irc_protocol
+import history_store
 
 CONNECT_TIMEOUT_MS = 10_000
 DEFAULT_SSL_PORT = "6697"
@@ -99,6 +102,10 @@ def _app_dir() -> str:
 def _find_default_cert() -> str:
     candidate = os.path.join(_app_dir(), "cert.pem")
     return candidate if os.path.exists(candidate) else ""
+
+
+def _format_ts(ts: float) -> str:
+    return datetime.datetime.fromtimestamp(ts).strftime("%H:%M")
 
 
 class ChatClient(QSslSocket):
@@ -484,17 +491,43 @@ class ChannelPage(QWidget):
 
 
 class ChatPage(QWidget):
-    def __init__(self, on_send):
+    """여러 채널을 동시에 열어둘 수 있음 - 채널마다 로그 위젯을 따로 유지해 QStackedWidget으로 전환"""
+
+    def __init__(self, on_send, on_add_channel, on_leave_channel):
         super().__init__()
         self.on_send = on_send
+        self.on_add_channel = on_add_channel
+        self.on_leave_channel = on_leave_channel
         self.my_id = ""
+        self._logs: dict[str, QTextEdit] = {}
+        self._members: dict[str, list[str]] = {}
+        self._active_channel = ""
 
         layout = QHBoxLayout()
 
-        left = QVBoxLayout()
-        self.log = QTextEdit()
-        self.log.setReadOnly(True)
-        left.addWidget(self.log)
+        nav = QVBoxLayout()
+        nav.addWidget(QLabel("채널"))
+        self.channel_list = QListWidget()
+        self.channel_list.currentTextChanged.connect(self._on_channel_clicked)
+        nav.addWidget(self.channel_list)
+        add_btn = QPushButton("+ 채널 추가")
+        add_btn.setObjectName("secondary")
+        add_btn.clicked.connect(lambda: self.on_add_channel())
+        nav.addWidget(add_btn)
+        leave_btn = QPushButton("채널 나가기")
+        leave_btn.setObjectName("secondary")
+        leave_btn.clicked.connect(self._confirm_leave)
+        nav.addWidget(leave_btn)
+        nav_widget = QWidget()
+        nav_widget.setLayout(nav)
+        nav_widget.setFixedWidth(140)
+
+        center = QVBoxLayout()
+        self.log_stack = QStackedWidget()
+        self._empty_label = QLabel("입장한 채널이 없습니다.\n'+ 채널 추가'로 입장하세요.")
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.log_stack.addWidget(self._empty_label)
+        center.addWidget(self.log_stack)
 
         input_row = QHBoxLayout()
         self.msg_input = QLineEdit()
@@ -504,44 +537,127 @@ class ChatPage(QWidget):
         send_btn.clicked.connect(self._submit)
         input_row.addWidget(self.msg_input)
         input_row.addWidget(send_btn)
-        left.addLayout(input_row)
+        center.addLayout(input_row)
+        center_widget = QWidget()
+        center_widget.setLayout(center)
 
         right = QVBoxLayout()
         right.addWidget(QLabel("참여자"))
         self.user_list = QListWidget()
         right.addWidget(self.user_list)
-
-        left_widget = QWidget()
-        left_widget.setLayout(left)
         right_widget = QWidget()
         right_widget.setLayout(right)
         right_widget.setFixedWidth(160)
 
-        layout.addWidget(left_widget, 3)
+        layout.addWidget(nav_widget)
+        layout.addWidget(center_widget, 3)
         layout.addWidget(right_widget, 1)
         self.setLayout(layout)
+        self._update_input_enabled()
+
+    def _update_input_enabled(self):
+        self.msg_input.setEnabled(bool(self._active_channel))
+
+    def add_channel(self, channel: str, activate: bool = True):
+        if channel not in self._logs:
+            log = QTextEdit()
+            log.setReadOnly(True)
+            self._logs[channel] = log
+            self._members[channel] = []
+            self.log_stack.addWidget(log)
+            self.channel_list.addItem(channel)
+        if activate:
+            self.set_active_channel(channel)
+
+    def remove_channel(self, channel: str):
+        log = self._logs.pop(channel, None)
+        if log is None:
+            return
+        self._members.pop(channel, None)
+        self.log_stack.removeWidget(log)
+        log.deleteLater()
+        for item in self.channel_list.findItems(channel, Qt.MatchFlag.MatchExactly):
+            self.channel_list.takeItem(self.channel_list.row(item))
+        if self._active_channel == channel:
+            remaining = list(self._logs.keys())
+            if remaining:
+                self.set_active_channel(remaining[0])
+            else:
+                self._active_channel = ""
+                self.log_stack.setCurrentWidget(self._empty_label)
+                self.user_list.clear()
+        self._update_input_enabled()
+
+    def set_active_channel(self, channel: str):
+        if channel not in self._logs:
+            return
+        self._active_channel = channel
+        self.log_stack.setCurrentWidget(self._logs[channel])
+        self.user_list.clear()
+        self.user_list.addItems(self._members.get(channel, []))
+        items = self.channel_list.findItems(channel, Qt.MatchFlag.MatchExactly)
+        if items:
+            self.channel_list.setCurrentItem(items[0])
+        self._update_input_enabled()
+
+    def active_channel(self) -> str:
+        return self._active_channel
+
+    def _on_channel_clicked(self, channel: str):
+        if channel and channel != self._active_channel:
+            self.set_active_channel(channel)
+
+    def _confirm_leave(self):
+        if not self._active_channel:
+            return
+        confirm = QMessageBox.question(self, "채널 나가기", f"'{self._active_channel}' 채널에서 나갈까요?")
+        if confirm == QMessageBox.StandardButton.Yes:
+            self.on_leave_channel(self._active_channel)
 
     def _submit(self):
         text = self.msg_input.text().strip()
-        if not text:
+        if not text or not self._active_channel:
             return
-        self.on_send(text)
+        self.on_send(self._active_channel, text)
         self.msg_input.clear()
 
     def focus_input(self):
         self.msg_input.setFocus()
 
-    def append_message(self, sender: str, text: str, mine: bool):
+    def append_message(self, channel: str, sender: str, text: str, mine: bool, ts: float):
+        log = self._logs.get(channel)
+        if log is None:
+            return
         color = "#7cd0ff" if mine else "#ffd27c"
         safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
-        self.log.append(f'<span style="color:{color}"><b>{sender}</b></span>: {safe_text}')
+        time_str = _format_ts(ts)
+        log.append(
+            f'<span style="color:#9a9cad">[{time_str}]</span> '
+            f'<span style="color:{color}"><b>{sender}</b></span>: {safe_text}'
+        )
 
-    def append_system(self, text: str):
-        self.log.append(f'<span style="color:#9a9cad"><i>* {text}</i></span>')
+    def append_system(self, channel: str, text: str):
+        log = self._logs.get(channel)
+        if log is None:
+            return
+        log.append(f'<span style="color:#9a9cad"><i>* {text}</i></span>')
 
-    def update_userlist(self, users: list[str]):
-        self.user_list.clear()
-        self.user_list.addItems(users)
+    def load_history(self, channel: str, entries: list[dict]):
+        if not entries:
+            return
+        self.append_system(channel, "── 이전 대화 기록 ──")
+        for entry in entries:
+            mine = entry.get("from") == self.my_id
+            self.append_message(
+                channel, entry.get("from", "?"), entry.get("text", ""), mine, entry.get("ts", 0)
+            )
+        self.append_system(channel, "── 여기까지 이전 기록 ──")
+
+    def update_userlist(self, channel: str, users: list[str]):
+        self._members[channel] = users
+        if channel == self._active_channel:
+            self.user_list.clear()
+            self.user_list.addItems(users)
 
 
 class MainWindow(QMainWindow):
@@ -562,15 +678,17 @@ class MainWindow(QMainWindow):
         self._connecting = False
         self._auth_phase = False
         self._pending_ssl = True
+        self._host = ""
+        self._port = 0
         self._protocol_mode = "custom"
+        self._joined_channels: set[str] = set()
 
         # 실제 IRC 서버 모드 전용 상태
         self._irc_current_nick = ""
         self._irc_password = ""
         self._irc_identified = False
-        self._irc_channel = ""
-        self._irc_members: set[str] = set()
-        self._irc_names_buffer: list[str] = []
+        self._irc_members: dict[str, set[str]] = {}
+        self._irc_names_buffer: dict[str, list[str]] = {}
         self._irc_nick_retries = 0
 
         self._connect_timer = QTimer(self)
@@ -581,7 +699,7 @@ class MainWindow(QMainWindow):
 
         self.login_page = LoginPage(self._handle_login_submit, self._handle_cancel_connect)
         self.channel_page = ChannelPage(self._handle_channel_submit)
-        self.chat_page = ChatPage(self._handle_send)
+        self.chat_page = ChatPage(self._handle_send, self._handle_add_channel, self._handle_leave_channel)
 
         self.stack.addWidget(self.login_page)
         self.stack.addWidget(self.channel_page)
@@ -609,14 +727,16 @@ class MainWindow(QMainWindow):
         self._protocol_mode = protocol
         self._pending_user_id = values["user_id"]
         self._pending_password = values["password"]
+        self._host = values["host"]
+        self._port = port
+        self._joined_channels = set()
 
         if protocol == "irc":
             self._irc_current_nick = values["user_id"]
             self._irc_password = values["password"]
             self._irc_identified = False
-            self._irc_channel = ""
-            self._irc_members = set()
-            self._irc_names_buffer = []
+            self._irc_members = {}
+            self._irc_names_buffer = {}
             self._irc_nick_retries = 0
 
         if self.client.state() == QSslSocket.SocketState.ConnectedState:
@@ -722,14 +842,50 @@ class MainWindow(QMainWindow):
         else:
             self.client.send_cmd({"cmd": "join", "channel": values["channel"], "key": values["key"]})
 
-    # ---------------- 채팅 ----------------
-    def _handle_send(self, text: str):
-        if self._protocol_mode == "irc":
-            self.client.send_irc(irc_protocol.format_privmsg(self._irc_channel, text))
-            # IRC 서버는 보낸 메시지를 나에게 다시 돌려주지 않으므로 직접 반영
-            self.chat_page.append_message(self._irc_current_nick, text, True)
+    def _handle_add_channel(self):
+        """채팅 화면 안에서 채널을 추가로 입장 (기존 채널을 떠나지 않음, 새 채널 생성은 지원 안 함)"""
+        channel, ok = QInputDialog.getText(self.chat_page, "채널 추가", "입장할 채널명:")
+        channel = channel.strip()
+        if not ok or not channel:
             return
-        self.client.send_cmd({"cmd": "msg", "text": text})
+        key, ok2 = QInputDialog.getText(
+            self.chat_page, "채널 추가", "채널 비밀번호 (없으면 비워둠):", QLineEdit.EchoMode.Password
+        )
+        key = key if ok2 else ""
+        if self._protocol_mode == "irc":
+            channel = irc_protocol.normalize_channel(channel)
+            self.client.send_irc(irc_protocol.format_join(channel, key or None))
+        else:
+            self.client.send_cmd({"cmd": "join", "channel": channel, "key": key})
+
+    def _handle_leave_channel(self, channel: str):
+        if self._protocol_mode == "irc":
+            self.client.send_irc(irc_protocol.format_part(channel))
+        else:
+            self.client.send_cmd({"cmd": "leave", "channel": channel})
+
+    def _on_channel_joined(self, channel: str, text: str):
+        """커스텀 프로토콜의 channel_result 성공 / IRC의 자기 자신 JOIN 둘 다 여기로 모임"""
+        first_time = self.stack.currentWidget() is self.channel_page
+        self._joined_channels.add(channel)
+        self.chat_page.add_channel(channel, activate=True)
+        if first_time:
+            self.stack.setCurrentWidget(self.chat_page)
+            self.chat_page.focus_input()
+        self.chat_page.append_system(channel, text)
+        entries = history_store.load_history(self._protocol_mode, self._host, self._port, channel)
+        self.chat_page.load_history(channel, entries)
+
+    # ---------------- 채팅 ----------------
+    def _handle_send(self, channel: str, text: str):
+        if self._protocol_mode == "irc":
+            self.client.send_irc(irc_protocol.format_privmsg(channel, text))
+            # IRC 서버는 보낸 메시지를 나에게 다시 돌려주지 않으므로 직접 반영
+            ts = time.time()
+            self.chat_page.append_message(channel, self._irc_current_nick, text, True, ts)
+            history_store.append_message("irc", self._host, self._port, channel, self._irc_current_nick, text, ts)
+            return
+        self.client.send_cmd({"cmd": "msg", "channel": channel, "text": text})
 
     # ---------------- 실제 IRC 서버 메시지 처리 ----------------
     def _on_irc_line(self, msg: irc_protocol.IrcMessage):
@@ -758,64 +914,88 @@ class MainWindow(QMainWindow):
             return
 
         if cmd in irc_protocol.CHANNEL_JOIN_ERROR_NUMERICS:
-            self.channel_page.show_status(msg.trailing or "채널 입장에 실패했습니다.")
+            text = msg.trailing or "채널 입장에 실패했습니다."
+            if self.stack.currentWidget() is self.channel_page:
+                self.channel_page.show_status(text)
+            else:
+                QMessageBox.warning(self, "채널 입장 실패", text)
             return
 
         if cmd == irc_protocol.RPL_NAMREPLY:
-            self._irc_names_buffer.extend(irc_protocol.parse_names_reply(msg))
+            channel = msg.params[2] if len(msg.params) > 2 else ""
+            self._irc_names_buffer.setdefault(channel, []).extend(irc_protocol.parse_names_reply(msg))
             return
 
         if cmd == irc_protocol.RPL_ENDOFNAMES:
-            self._irc_members = set(self._irc_names_buffer)
-            self._irc_names_buffer = []
-            self.chat_page.update_userlist(sorted(self._irc_members))
+            channel = msg.params[1] if len(msg.params) > 1 else ""
+            members = set(self._irc_names_buffer.pop(channel, []))
+            self._irc_members[channel] = members
+            self.chat_page.update_userlist(channel, sorted(members))
             return
 
         if cmd == "JOIN":
             nick = msg.source_nick
             channel = msg.trailing or (msg.params[0] if msg.params else "")
             if nick == self._irc_current_nick:
-                self._irc_channel = channel
-                self._irc_members.add(nick)
-                self.stack.setCurrentWidget(self.chat_page)
-                self.chat_page.append_system(f"{channel}에 입장했습니다.")
-                self.chat_page.focus_input()
+                self._irc_members.setdefault(channel, set()).add(nick)
+                self._on_channel_joined(channel, f"{channel}에 입장했습니다.")
                 self.client.send_irc(irc_protocol.format_names(channel))
             else:
-                self._irc_members.add(nick)
-                self.chat_page.append_system(f"{nick}님이 입장했습니다.")
-                self.chat_page.update_userlist(sorted(self._irc_members))
+                members = self._irc_members.setdefault(channel, set())
+                members.add(nick)
+                self.chat_page.append_system(channel, f"{nick}님이 입장했습니다.")
+                self.chat_page.update_userlist(channel, sorted(members))
             return
 
-        if cmd in ("PART", "QUIT"):
+        if cmd == "PART":
             nick = msg.source_nick
-            self._irc_members.discard(nick)
-            verb = "나갔습니다" if cmd == "PART" else "접속을 종료했습니다"
-            self.chat_page.append_system(f"{nick}님이 {verb}.")
-            self.chat_page.update_userlist(sorted(self._irc_members))
+            channel = msg.params[0] if msg.params else ""
+            members = self._irc_members.setdefault(channel, set())
+            members.discard(nick)
+            self.chat_page.append_system(channel, f"{nick}님이 나갔습니다.")
+            self.chat_page.update_userlist(channel, sorted(members))
+            if nick == self._irc_current_nick:
+                self._joined_channels.discard(channel)
+                self.chat_page.remove_channel(channel)
+            return
+
+        if cmd == "QUIT":
+            # QUIT은 채널 정보가 없으므로 그 닉네임이 있던 모든 채널에 반영
+            nick = msg.source_nick
+            for channel, members in self._irc_members.items():
+                if nick in members:
+                    members.discard(nick)
+                    self.chat_page.append_system(channel, f"{nick}님이 접속을 종료했습니다.")
+                    self.chat_page.update_userlist(channel, sorted(members))
             return
 
         if cmd == "NICK":
             old_nick = msg.source_nick
             new_nick = msg.trailing or (msg.params[0] if msg.params else "")
-            self._irc_members.discard(old_nick)
-            self._irc_members.add(new_nick)
             if old_nick == self._irc_current_nick:
                 self._irc_current_nick = new_nick
                 self.my_id = new_nick
                 self.chat_page.my_id = new_nick
-            self.chat_page.append_system(f"{old_nick}님이 {new_nick}(으)로 닉네임을 변경했습니다.")
-            self.chat_page.update_userlist(sorted(self._irc_members))
+            for channel, members in self._irc_members.items():
+                if old_nick in members:
+                    members.discard(old_nick)
+                    members.add(new_nick)
+                    self.chat_page.append_system(channel, f"{old_nick}님이 {new_nick}(으)로 닉네임을 변경했습니다.")
+                    self.chat_page.update_userlist(channel, sorted(members))
             return
 
         if cmd == "PRIVMSG":
             sender = msg.source_nick
             target = msg.params[0] if msg.params else ""
             text = msg.trailing
+            ts = time.time()
             if target == self._irc_current_nick:
-                self.chat_page.append_message(f"{sender} (귓속말)", text, False)
+                active = self.chat_page.active_channel()
+                if active:
+                    self.chat_page.append_message(active, f"{sender} (귓속말)", text, False, ts)
             else:
-                self.chat_page.append_message(sender, text, False)
+                self.chat_page.append_message(target, sender, text, False, ts)
+                history_store.append_message("irc", self._host, self._port, target, sender, text, ts)
             return
 
         if cmd == "NOTICE":
@@ -823,11 +1003,15 @@ class MainWindow(QMainWindow):
             if self.stack.currentWidget() is self.login_page:
                 self.login_page.show_status(text)
             else:
-                self.chat_page.append_system(text)
+                active = self.chat_page.active_channel()
+                if active:
+                    self.chat_page.append_system(active, text)
             return
 
         if cmd == "ERROR":
-            self.chat_page.append_system(f"서버 연결이 종료되었습니다: {msg.trailing}")
+            active = self.chat_page.active_channel()
+            if active:
+                self.chat_page.append_system(active, f"서버 연결이 종료되었습니다: {msg.trailing}")
             return
 
     # ---------------- 친구 서버 메시지 처리 ----------------
@@ -848,31 +1032,52 @@ class MainWindow(QMainWindow):
                 self.login_page.show_status(msg.get("text", "실패"))
 
         elif mtype == "channel_result":
+            channel = msg.get("channel", "")
             if msg.get("ok"):
                 if "채널 생성" in msg.get("text", ""):
                     self.channel_page.show_status("채널 생성 완료! 입장 버튼을 눌러주세요.")
                 else:
-                    self.stack.setCurrentWidget(self.chat_page)
-                    self.chat_page.append_system(msg.get("text", "입장 성공"))
-                    self.chat_page.focus_input()
+                    self._on_channel_joined(channel, msg.get("text", "입장 성공"))
             else:
-                self.channel_page.show_status(msg.get("text", "실패"))
+                if self.stack.currentWidget() is self.channel_page:
+                    self.channel_page.show_status(msg.get("text", "실패"))
+                else:
+                    QMessageBox.warning(self, "채널 입장 실패", msg.get("text", "실패"))
+
+        elif mtype == "leave_result":
+            channel = msg.get("channel", "")
+            if msg.get("ok"):
+                self._joined_channels.discard(channel)
+                self.chat_page.remove_channel(channel)
+            else:
+                QMessageBox.warning(self, "채널 나가기 실패", msg.get("text", "실패"))
 
         elif mtype == "chat":
             sender = msg.get("from", "?")
-            self.chat_page.append_message(sender, msg.get("text", ""), sender == self.my_id)
+            channel = msg.get("channel", "")
+            text = msg.get("text", "")
+            ts = msg.get("ts", time.time())
+            self.chat_page.append_message(channel, sender, text, sender == self.my_id, ts)
+            history_store.append_message("custom", self._host, self._port, channel, sender, text, ts)
 
         elif mtype == "system":
-            self.chat_page.append_system(msg.get("text", ""))
+            channel = msg.get("channel") or self.chat_page.active_channel()
+            if channel:
+                self.chat_page.append_system(channel, msg.get("text", ""))
 
         elif mtype == "userlist":
-            self.chat_page.update_userlist(msg.get("users", []))
+            channel = msg.get("channel") or self.chat_page.active_channel()
+            if channel:
+                self.chat_page.update_userlist(channel, msg.get("users", []))
 
         elif mtype == "error":
+            text = msg.get("text", "오류")
             if self.stack.currentWidget() is self.login_page:
-                self.login_page.show_status(msg.get("text", "오류"))
+                self.login_page.show_status(text)
             elif self.stack.currentWidget() is self.channel_page:
-                self.channel_page.show_status(msg.get("text", "오류"))
+                self.channel_page.show_status(text)
+            else:
+                QMessageBox.warning(self, "오류", text)
 
 
 def main():

@@ -7,14 +7,17 @@ cert.pem 경로를 안 주면, 실행 파일과 같은 폴더의 cert.pem을 자
 프로토콜을 irc로 지정하면 이 프로젝트의 커스텀 서버(server.py)가 아니라 실제 IRC 서버에 접속합니다.
 """
 import asyncio
+import datetime
 import json
 import os
 import ssl
 import sys
+import time
 from dataclasses import dataclass, field
 
 import server_registry
 import irc_protocol
+import history_store
 
 CONNECT_TIMEOUT_SEC = 10
 
@@ -28,6 +31,20 @@ def _app_dir() -> str:
 def _auto_cert() -> str:
     candidate = os.path.join(_app_dir(), "cert.pem")
     return candidate if os.path.exists(candidate) else ""
+
+
+def _format_ts(ts: float) -> str:
+    return datetime.datetime.fromtimestamp(ts).strftime("%H:%M")
+
+
+def _print_history(protocol: str, host: str, port: int, channel: str):
+    entries = history_store.load_history(protocol, host, port, channel)
+    if not entries:
+        return
+    print("── 이전 대화 기록 ──")
+    for entry in entries:
+        print(f"[{_format_ts(entry['ts'])}] {entry['from']}: {entry['text']}")
+    print("── 여기까지 이전 기록 ──")
 
 
 def _prompt_yes_no(prompt: str, default: bool) -> bool:
@@ -146,6 +163,15 @@ async def recv_one(reader) -> dict:
     return json.loads(line.decode("utf-8").strip())
 
 
+@dataclass
+class CustomSession:
+    my_id: str
+    host: str
+    port: int
+    channels: set = field(default_factory=set)
+    active_channel: str = ""
+
+
 async def auth_flow(reader, writer) -> str:
     while True:
         mode = await ainput("회원가입(r) / 로그인(l)? [r/l]: ")
@@ -162,7 +188,8 @@ async def auth_flow(reader, writer) -> str:
         # 회원가입 성공하면 다시 루프 돌아서 로그인 유도
 
 
-async def channel_flow(reader, writer):
+async def channel_flow(reader, writer, session: CustomSession):
+    """최초 채널 1개 입장 (이후 추가 입장은 /입장 명령으로 listen_loop 안에서 비동기 처리)"""
     while True:
         channel = await ainput("채널명 (예: #친구들): ")
         key = await ainput("채널 비밀번호 (없으면 Enter): ")
@@ -179,10 +206,57 @@ async def channel_flow(reader, writer):
         result = await recv_one(reader)
         print(f"[{result.get('text')}]")
         if result.get("ok"):
-            return channel
+            session.channels.add(channel)
+            session.active_channel = channel
+            return
 
 
-async def listen_loop(reader, my_id):
+def _channel_prefix(channel: str, session) -> str:
+    """참여 채널이 하나뿐이거나 현재 활성 채널이면 접두사 없음 (기존 단일 채널 동작 그대로 유지)"""
+    if channel == session.active_channel or len(session.channels) <= 1:
+        return ""
+    return f"[{channel}] "
+
+
+async def _handle_slash_command(send_join, send_leave, session, command: str, normalize=lambda c: c):
+    parts = command.split(maxsplit=2)
+    cmd = parts[0]
+    if cmd in ("/입장", "/join"):
+        if len(parts) < 2:
+            print("[사용법] /입장 <채널명> [비밀번호]")
+            return
+        channel = normalize(parts[1])
+        key = parts[2] if len(parts) > 2 else ""
+        await send_join(channel, key)
+    elif cmd in ("/전환", "/switch"):
+        if len(parts) < 2:
+            print("[사용법] /전환 <채널명>")
+            return
+        channel = normalize(parts[1])
+        if channel in session.channels:
+            session.active_channel = channel
+            print(f"[활성 채널: {channel}]")
+        else:
+            print(f"[오류] '{channel}' 채널에 입장하지 않았습니다.")
+    elif cmd in ("/나가기", "/leave"):
+        channel = normalize(parts[1]) if len(parts) > 1 else session.active_channel
+        if not channel:
+            print("[오류] 나갈 채널이 없습니다.")
+            return
+        await send_leave(channel)
+    elif cmd in ("/채널목록", "/channels"):
+        if not session.channels:
+            print("[참여 중인 채널이 없습니다]")
+        else:
+            listing = ", ".join(
+                f"*{c}" if c == session.active_channel else c for c in sorted(session.channels)
+            )
+            print(f"[참여 채널: {listing}] (*는 활성 채널)")
+    else:
+        print(f"[오류] 알 수 없는 명령: {cmd}")
+
+
+async def listen_loop(reader, session: CustomSession):
     while True:
         try:
             msg = await recv_one(reader)
@@ -192,25 +266,76 @@ async def listen_loop(reader, my_id):
 
         mtype = msg.get("type")
         if mtype == "chat":
+            channel = msg.get("channel", "")
             sender = msg.get("from")
-            tag = "나" if sender == my_id else sender
-            print(f"\n{tag}: {msg.get('text')}\n> ", end="", flush=True)
+            text = msg.get("text")
+            ts = msg.get("ts", time.time())
+            tag = "나" if sender == session.my_id else sender
+            prefix = _channel_prefix(channel, session)
+            print(f"\n{prefix}[{_format_ts(ts)}] {tag}: {text}\n> ", end="", flush=True)
+            history_store.append_message("custom", session.host, session.port, channel, sender, text, ts)
+
         elif mtype == "system":
-            print(f"\n* {msg.get('text')}\n> ", end="", flush=True)
+            channel = msg.get("channel", "")
+            prefix = _channel_prefix(channel, session)
+            print(f"\n{prefix}* {msg.get('text')}\n> ", end="", flush=True)
+
         elif mtype == "userlist":
+            channel = msg.get("channel", "")
             users = ", ".join(msg.get("users", []))
-            print(f"\n[참여자: {users}]\n> ", end="", flush=True)
+            prefix = _channel_prefix(channel, session)
+            print(f"\n{prefix}[참여자: {users}]\n> ", end="", flush=True)
+
+        elif mtype == "channel_result":
+            channel = msg.get("channel", "")
+            if msg.get("ok"):
+                newly_joined = channel not in session.channels
+                session.channels.add(channel)
+                if newly_joined:
+                    session.active_channel = channel
+                    print(f"\n[{channel} 입장 완료 - 활성 채널로 전환합니다]\n> ", end="", flush=True)
+                    _print_history("custom", session.host, session.port, channel)
+                else:
+                    print(f"\n[{msg.get('text')}]\n> ", end="", flush=True)
+            else:
+                print(f"\n[채널 입장 실패: {msg.get('text')}]\n> ", end="", flush=True)
+
+        elif mtype == "leave_result":
+            channel = msg.get("channel", "")
+            if msg.get("ok"):
+                session.channels.discard(channel)
+                if session.active_channel == channel:
+                    session.active_channel = next(iter(session.channels), "")
+                print(f"\n[{channel} 채널에서 나갔습니다]\n> ", end="", flush=True)
+            else:
+                print(f"\n[나가기 실패: {msg.get('text')}]\n> ", end="", flush=True)
+
+        elif mtype == "error":
+            print(f"\n[오류] {msg.get('text')}\n> ", end="", flush=True)
 
 
-async def send_loop(writer):
+async def send_loop(writer, session: CustomSession):
+    async def do_join(channel, key):
+        await send(writer, {"cmd": "join", "channel": channel, "key": key})
+
+    async def do_leave(channel):
+        await send(writer, {"cmd": "leave", "channel": channel})
+
     while True:
         text = await ainput("> ")
         if not text.strip():
             continue
-        if text.strip() in ("/종료", "/quit", "/exit"):
+        stripped = text.strip()
+        if stripped in ("/종료", "/quit", "/exit"):
             writer.close()
             return
-        await send(writer, {"cmd": "msg", "text": text})
+        if stripped.startswith("/"):
+            await _handle_slash_command(do_join, do_leave, session, stripped)
+            continue
+        if not session.active_channel:
+            print("[오류] 활성 채널이 없습니다. /입장으로 채널에 먼저 입장하세요.")
+            continue
+        await send(writer, {"cmd": "msg", "channel": session.active_channel, "text": text})
 
 
 # ==================== 실제 IRC 서버 모드 ====================
@@ -218,8 +343,11 @@ async def send_loop(writer):
 @dataclass
 class IrcSession:
     nick: str
-    channel: str = ""
-    members: set = field(default_factory=set)
+    host: str = ""
+    port: int = 0
+    channels: set = field(default_factory=set)
+    active_channel: str = ""
+    members: dict = field(default_factory=dict)  # channel -> set(nick)
 
 
 async def send_irc_line(writer, line: str):
@@ -278,6 +406,7 @@ async def irc_register(reader, writer) -> IrcSession:
 
 
 async def irc_channel_flow(reader, writer, session: IrcSession):
+    """최초 채널 1개 입장 (이후 추가 입장은 /입장 명령으로 irc_listen_loop 안에서 비동기 처리)"""
     while True:
         channel = irc_protocol.normalize_channel(await ainput("채널명 (예: #친구들): "))
         key = await ainput("채널 비밀번호 (없으면 Enter): ")
@@ -293,10 +422,12 @@ async def irc_channel_flow(reader, writer, session: IrcSession):
                 print(f"[오류] {msg.trailing or '채널 입장에 실패했습니다.'}")
                 failed = True
             elif msg.command == irc_protocol.RPL_NAMREPLY:
-                session.members.update(irc_protocol.parse_names_reply(msg))
+                names_channel = msg.params[2] if len(msg.params) > 2 else channel
+                session.members.setdefault(names_channel, set()).update(irc_protocol.parse_names_reply(msg))
             elif msg.command == "JOIN" and msg.source_nick == session.nick:
-                session.channel = channel
-                session.members.add(session.nick)
+                session.channels.add(channel)
+                session.active_channel = channel
+                session.members.setdefault(channel, set()).add(session.nick)
                 print(f"[{channel} 입장 완료]")
                 joined = True
             elif msg.command == "NOTICE":
@@ -322,29 +453,70 @@ async def irc_listen_loop(reader, writer, session: IrcSession):
             sender = msg.source_nick
             target = msg.params[0] if msg.params else ""
             text = msg.trailing
-            tag = f"{sender} (귓속말)" if target == session.nick else sender
-            print(f"\n{tag}: {text}\n> ", end="", flush=True)
+            ts = time.time()
+            if target == session.nick:
+                print(f"\n[{_format_ts(ts)}] {sender} (귓속말): {text}\n> ", end="", flush=True)
+            else:
+                prefix = _channel_prefix(target, session)
+                print(f"\n{prefix}[{_format_ts(ts)}] {sender}: {text}\n> ", end="", flush=True)
+                history_store.append_message("irc", session.host, session.port, target, sender, text, ts)
 
         elif cmd == "JOIN":
             nick = msg.source_nick
-            if nick != session.nick:
-                session.members.add(nick)
-                print(f"\n* {nick}님이 입장했습니다.\n> ", end="", flush=True)
+            channel = msg.trailing or (msg.params[0] if msg.params else "")
+            if nick == session.nick:
+                newly_joined = channel not in session.channels
+                session.channels.add(channel)
+                session.members.setdefault(channel, set()).add(nick)
+                if newly_joined:
+                    session.active_channel = channel
+                    print(f"\n[{channel} 입장 완료 - 활성 채널로 전환합니다]\n> ", end="", flush=True)
+                    _print_history("irc", session.host, session.port, channel)
+                await send_irc_line(writer, irc_protocol.format_names(channel))
+            else:
+                session.members.setdefault(channel, set()).add(nick)
+                prefix = _channel_prefix(channel, session)
+                print(f"\n{prefix}* {nick}님이 입장했습니다.\n> ", end="", flush=True)
 
-        elif cmd in ("PART", "QUIT"):
+        elif cmd == "PART":
             nick = msg.source_nick
-            session.members.discard(nick)
-            verb = "나갔습니다" if cmd == "PART" else "접속을 종료했습니다"
-            print(f"\n* {nick}님이 {verb}.\n> ", end="", flush=True)
+            channel = msg.params[0] if msg.params else ""
+            session.members.setdefault(channel, set()).discard(nick)
+            prefix = _channel_prefix(channel, session)
+            print(f"\n{prefix}* {nick}님이 나갔습니다.\n> ", end="", flush=True)
+            if nick == session.nick:
+                session.channels.discard(channel)
+                session.members.pop(channel, None)
+                if session.active_channel == channel:
+                    session.active_channel = next(iter(session.channels), "")
+
+        elif cmd == "QUIT":
+            # QUIT은 채널 정보가 없으므로 그 닉네임이 있던 모든 채널에 반영
+            nick = msg.source_nick
+            for channel, members in session.members.items():
+                if nick in members:
+                    members.discard(nick)
+                    prefix = _channel_prefix(channel, session)
+                    print(f"\n{prefix}* {nick}님이 접속을 종료했습니다.\n> ", end="", flush=True)
 
         elif cmd == "NICK":
             old_nick = msg.source_nick
             new_nick = msg.trailing or (msg.params[0] if msg.params else "")
-            session.members.discard(old_nick)
-            session.members.add(new_nick)
             if old_nick == session.nick:
                 session.nick = new_nick
-            print(f"\n* {old_nick}님이 {new_nick}(으)로 닉네임을 변경했습니다.\n> ", end="", flush=True)
+            for channel, members in session.members.items():
+                if old_nick in members:
+                    members.discard(old_nick)
+                    members.add(new_nick)
+                    prefix = _channel_prefix(channel, session)
+                    print(f"\n{prefix}* {old_nick}님이 {new_nick}(으)로 닉네임을 변경했습니다.\n> ", end="", flush=True)
+
+        elif cmd == irc_protocol.RPL_NAMREPLY:
+            channel = msg.params[2] if len(msg.params) > 2 else ""
+            session.members.setdefault(channel, set()).update(irc_protocol.parse_names_reply(msg))
+
+        elif cmd in irc_protocol.CHANNEL_JOIN_ERROR_NUMERICS:
+            print(f"\n[채널 입장 실패: {msg.trailing or '알 수 없는 오류'}]\n> ", end="", flush=True)
 
         elif cmd == "NOTICE":
             print(f"\n* {msg.trailing}\n> ", end="", flush=True)
@@ -355,16 +527,33 @@ async def irc_listen_loop(reader, writer, session: IrcSession):
 
 
 async def irc_send_loop(writer, session: IrcSession):
+    async def do_join(channel, key):
+        await send_irc_line(writer, irc_protocol.format_join(channel, key or None))
+
+    async def do_leave(channel):
+        await send_irc_line(writer, irc_protocol.format_part(channel))
+
     while True:
         text = await ainput("> ")
         if not text.strip():
             continue
-        if text.strip() in ("/종료", "/quit", "/exit"):
+        stripped = text.strip()
+        if stripped in ("/종료", "/quit", "/exit"):
             await send_irc_line(writer, irc_protocol.format_quit("나감"))
             writer.close()
             return
-        print(f"나: {text}")
-        await send_irc_line(writer, irc_protocol.format_privmsg(session.channel, text))
+        if stripped.startswith("/"):
+            await _handle_slash_command(do_join, do_leave, session, stripped, normalize=irc_protocol.normalize_channel)
+            continue
+        if not session.active_channel:
+            print("[오류] 활성 채널이 없습니다. /입장으로 채널에 먼저 입장하세요.")
+            continue
+        ts = time.time()
+        print(f"[{_format_ts(ts)}] 나: {text}")
+        history_store.append_message(
+            "irc", session.host, session.port, session.active_channel, session.nick, text, ts
+        )
+        await send_irc_line(writer, irc_protocol.format_privmsg(session.active_channel, text))
 
 
 async def main():
@@ -400,9 +589,13 @@ async def main():
     try:
         if protocol == "irc":
             session = await irc_register(reader, writer)
+            session.host = host
+            session.port = port
             await irc_channel_flow(reader, writer, session)
+            _print_history("irc", host, port, session.active_channel)
 
-            print("채팅을 시작합니다. 종료하려면 /종료 입력\n")
+            print("채팅을 시작합니다. 종료하려면 /종료 입력")
+            print("[알림] /입장 <채널명>으로 채널 추가, /전환 <채널명>으로 전환, /나가기, /채널목록\n")
 
             await asyncio.gather(
                 irc_listen_loop(reader, writer, session),
@@ -410,13 +603,16 @@ async def main():
             )
         else:
             my_id = await auth_flow(reader, writer)
-            await channel_flow(reader, writer)
+            session = CustomSession(my_id=my_id, host=host, port=port)
+            await channel_flow(reader, writer, session)
+            _print_history("custom", host, port, session.active_channel)
 
-            print("채팅을 시작합니다. 종료하려면 /종료 입력\n")
+            print("채팅을 시작합니다. 종료하려면 /종료 입력")
+            print("[알림] /입장 <채널명>으로 채널 추가, /전환 <채널명>으로 전환, /나가기, /채널목록\n")
 
             await asyncio.gather(
-                listen_loop(reader, my_id),
-                send_loop(writer),
+                listen_loop(reader, session),
+                send_loop(writer, session),
             )
     except Exception as e:  # noqa: BLE001
         print(f"\n[오류] 예상치 못한 문제가 발생했습니다: {e}")

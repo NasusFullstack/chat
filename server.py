@@ -47,7 +47,7 @@ async def send_userlist(channel: str):
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     addr = writer.get_extra_info("peername")
     user_id = None
-    current_channel = None
+    current_channels: set[str] = set()
 
     print(f"[연결] {addr}")
 
@@ -78,59 +78,61 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                 if not user_id:
                     await send(writer, {"type": "error", "text": "먼저 로그인하세요."})
                     continue
-                ok, text = store.create_channel(
-                    msg.get("channel", ""), msg.get("key", ""), user_id
-                )
-                await send(writer, {"type": "channel_result", "ok": ok, "text": text})
+                channel = msg.get("channel", "")
+                ok, text = store.create_channel(channel, msg.get("key", ""), user_id)
+                await send(writer, {"type": "channel_result", "ok": ok, "text": text, "channel": channel})
 
             elif cmd == "join":
                 if not user_id:
                     await send(writer, {"type": "error", "text": "먼저 로그인하세요."})
                     continue
                 channel = msg.get("channel", "")
+                if channel in current_channels:
+                    await send(writer, {
+                        "type": "channel_result", "ok": True,
+                        "text": "이미 입장한 채널입니다.", "channel": channel,
+                    })
+                    continue
                 ok, text = store.verify_channel(channel, msg.get("key", ""))
                 if ok:
-                    # 이전 채널에서 나가기
-                    if current_channel and user_id in channels.get(current_channel, {}):
-                        del channels[current_channel][user_id]
-                        await send_userlist(current_channel)
-                    current_channel = channel
+                    current_channels.add(channel)
                     channels.setdefault(channel, {})[user_id] = writer
-                    await send(writer, {"type": "channel_result", "ok": True, "text": text})
+                    await send(writer, {"type": "channel_result", "ok": True, "text": text, "channel": channel})
                     await broadcast(
                         channel,
-                        {"type": "system", "text": f"{user_id}님이 입장했습니다."},
+                        {"type": "system", "channel": channel, "text": f"{user_id}님이 입장했습니다."},
                         exclude=user_id,
                     )
                     await send_userlist(channel)
                 else:
-                    await send(writer, {"type": "channel_result", "ok": False, "text": text})
+                    await send(writer, {"type": "channel_result", "ok": False, "text": text, "channel": channel})
 
             elif cmd == "msg":
-                if not user_id or not current_channel:
-                    await send(writer, {"type": "error", "text": "채널에 먼저 입장하세요."})
+                channel = msg.get("channel", "")
+                if not user_id:
+                    await send(writer, {"type": "error", "text": "먼저 로그인하세요."})
+                    continue
+                if channel not in current_channels:
+                    await send(writer, {"type": "error", "text": "채널에 먼저 입장하세요.", "channel": channel})
                     continue
                 text = msg.get("text", "")
                 await broadcast(
-                    current_channel,
-                    {
-                        "type": "chat",
-                        "channel": current_channel,
-                        "from": user_id,
-                        "text": text,
-                        "ts": time.time(),
-                    },
+                    channel,
+                    {"type": "chat", "channel": channel, "from": user_id, "text": text, "ts": time.time()},
                 )
 
             elif cmd == "leave":
-                if current_channel and user_id in channels.get(current_channel, {}):
-                    del channels[current_channel][user_id]
+                channel = msg.get("channel", "")
+                if channel and user_id in channels.get(channel, {}):
+                    del channels[channel][user_id]
+                    current_channels.discard(channel)
                     await broadcast(
-                        current_channel,
-                        {"type": "system", "text": f"{user_id}님이 나갔습니다."},
+                        channel, {"type": "system", "channel": channel, "text": f"{user_id}님이 나갔습니다."}
                     )
-                    await send_userlist(current_channel)
-                current_channel = None
+                    await send_userlist(channel)
+                    await send(writer, {"type": "leave_result", "ok": True, "text": "채널에서 나갔습니다.", "channel": channel})
+                else:
+                    await send(writer, {"type": "leave_result", "ok": False, "text": "입장하지 않은 채널입니다.", "channel": channel})
 
             else:
                 await send(writer, {"type": "error", "text": f"알 수 없는 명령: {cmd}"})
@@ -138,12 +140,13 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     except (ConnectionResetError, asyncio.IncompleteReadError):
         pass
     finally:
-        if current_channel and user_id and user_id in channels.get(current_channel, {}):
-            del channels[current_channel][user_id]
-            await broadcast(
-                current_channel, {"type": "system", "text": f"{user_id}님이 접속을 종료했습니다."}
-            )
-            await send_userlist(current_channel)
+        for channel in list(current_channels):
+            if user_id and user_id in channels.get(channel, {}):
+                del channels[channel][user_id]
+                await broadcast(
+                    channel, {"type": "system", "channel": channel, "text": f"{user_id}님이 접속을 종료했습니다."}
+                )
+                await send_userlist(channel)
         print(f"[연결 종료] {addr} (user={user_id})")
         writer.close()
 
