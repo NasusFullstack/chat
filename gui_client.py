@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem,
     QFileDialog, QMessageBox, QFrame, QComboBox, QInputDialog, QCheckBox,
-    QTabWidget, QScrollArea, QGridLayout, QColorDialog, QDialog, QDialogButtonBox,
+    QTabWidget, QTabBar, QScrollArea, QGridLayout, QDialog, QDialogButtonBox,
 )
 
 import server_registry
@@ -42,8 +42,11 @@ UNREAD_DOT_COLOR = "#ff6b6b"
 AVATAR_LIST_PX = 16
 AVATAR_MSG_PX = 16  # 참여자 목록과 채팅창 아이콘이 항상 같은 크기/이미지로 보이게 통일
 AVATAR_GRID_SIZE = 16
+AVATAR_CELL_PX = 20  # 에디터에서 한 칸을 그리는 픽셀 크기 (실제 저장되는 아이콘 크기와는 무관)
 # store.py의 AVATAR_MAX_B64_CHARS와 값을 맞춰야 함
 AVATAR_MAX_B64_CHARS = 2000
+# store.py의 NICKNAME_MAX_LEN과 값을 맞춰야 함
+NICKNAME_MAX_LEN = 20
 
 APP_TITLE = "친구 채팅"
 
@@ -137,6 +140,48 @@ QTabBar::tab:selected {
 QTabBar::tab:hover {
     background-color: #3d3f52;
 }
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background: #3d3f52;
+    border-radius: 4px;
+    min-height: 24px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #4a4d63;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+    border: none;
+    background: none;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+QScrollBar:horizontal {
+    background: transparent;
+    height: 8px;
+    margin: 0px;
+}
+QScrollBar::handle:horizontal {
+    background: #3d3f52;
+    border-radius: 4px;
+    min-width: 24px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #4a4d63;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+    border: none;
+    background: none;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: none;
+}
 """
 
 
@@ -153,6 +198,27 @@ def _find_default_cert() -> str:
 
 def _format_ts(ts: float) -> str:
     return datetime.datetime.fromtimestamp(ts).strftime("%H:%M")
+
+
+# Qt(Schannel)가 인증서를 신뢰 못 할 때 내는 원본 오류 메시지에 등장하는 키워드들.
+# 개인/소규모 서버는 자체 서명 인증서를 쓰는 경우가 흔해서 이 실패가 가장 잦은
+# SSL 연결 실패 원인이므로, 원인과 해결 방법을 한글로 명확히 안내한다.
+_SSL_TRUST_ERROR_KEYWORDS = (
+    "root ca", "not trusted", "self signed", "self-signed",
+    "certificate", "untrusted", "unable to verify",
+)
+
+
+def _friendly_connection_error(err: str, use_ssl: bool, cert_pinned: bool) -> str:
+    if use_ssl and not cert_pinned and any(k in err.lower() for k in _SSL_TRUST_ERROR_KEYWORDS):
+        return (
+            "SSL 인증서를 신뢰할 수 없어 연결에 실패했습니다. "
+            "개인 서버는 정식 인증기관이 아닌 자체 서명(self-signed) 인증서를 쓰는 경우가 많아요. "
+            "서버 관리자에게 cert.pem 파일을 받아 위 'cert.pem 경로'에 등록하면 해결됩니다. "
+            "그럴 수 없고 서버를 신뢰한다면 SSL을 끄고 평문 포트로 접속해보세요. "
+            f"(원본 오류: {err})"
+        )
+    return f"연결 실패: {err}"
 
 
 def _decode_avatar_pixmap(avatar_b64: str) -> QPixmap | None:
@@ -652,25 +718,134 @@ class ChannelLogView(QScrollArea):
         self._layout.setSpacing(4)
         self.setWidget(content)
 
+        # QTimer.singleShot(0, ...)로 "다음 이벤트 루프 틱에 맨 아래로" 하는 방식은
+        # 레이아웃이 새 위젯의 크기를 아직 계산 전이라 스크롤 범위(maximum)가 갱신되기
+        # 전에 실행될 때가 있어 스크롤이 씹히는 경우가 있었음. rangeChanged는 스크롤
+        # 범위가 실제로 확정된 바로 그 순간에 울리므로 훨씬 안정적으로 맨 아래로 붙음.
+        self.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom)
+
+    def _scroll_to_bottom(self, minimum: int, maximum: int):
+        self.verticalScrollBar().setValue(maximum)
+
     def append_message(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap):
         self._layout.addWidget(MessageWidget(sender, text, mine, ts, avatar_pixmap))
-        self._scroll_to_bottom_deferred()
 
     def append_system(self, text: str):
         self._layout.addWidget(_build_system_label(text))
-        self._scroll_to_bottom_deferred()
-
-    def _scroll_to_bottom_deferred(self):
-        QTimer.singleShot(0, lambda: self.verticalScrollBar().setValue(self.verticalScrollBar().maximum()))
 
 
-class AvatarEditorDialog(QDialog):
-    """16x16 픽셀아트 아이콘 에디터 - 셀 클릭으로 색칠, 지우개, 전체 지우기 지원"""
+class ColorPickerDialog(QDialog):
+    """Qt 기본 QColorDialog는 'HTML' 같은 영어 라벨이 그대로 나와서, 한글 라벨의 간단한 색상 선택창을 직접 만듦"""
 
-    def __init__(self, initial_base64: str | None = None, parent=None):
+    _PALETTE = [
+        "#ff6b6b", "#ffa94d", "#ffd43b", "#69db7c", "#38d9a9",
+        "#4dabf7", "#748ffc", "#9775fa", "#f783ac", "#e6e6e6",
+        "#adb5bd", "#495057", "#16171f", "#7c6cf0", "#ffffff",
+    ]
+
+    def __init__(self, initial: QColor, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("내 아이콘 그리기")
+        self.setWindowTitle("색상 선택")
+        self.selected_color = QColor(initial)
+
+        layout = QVBoxLayout(self)
+
+        grid_widget = QWidget()
+        grid = QGridLayout(grid_widget)
+        grid.setSpacing(4)
+        for i, hex_color in enumerate(self._PALETTE):
+            swatch = QPushButton()
+            swatch.setFixedSize(24, 24)
+            swatch.setStyleSheet(f"background-color: {hex_color}; border: 1px solid #3d3f52;")
+            swatch.clicked.connect(lambda checked=False, c=hex_color: self._pick(QColor(c)))
+            grid.addWidget(swatch, i // 5, i % 5)
+        layout.addWidget(grid_widget)
+
+        code_row = QHBoxLayout()
+        code_row.addWidget(QLabel("색상 코드:"))
+        self.code_input = QLineEdit(self.selected_color.name())
+        self.code_input.setPlaceholderText("#rrggbb")
+        self.code_input.editingFinished.connect(self._on_code_entered)
+        code_row.addWidget(self.code_input)
+        layout.addLayout(code_row)
+
+        self.preview = QLabel()
+        self.preview.setFixedHeight(24)
+        layout.addWidget(self.preview)
+        self._update_preview()
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText("확인")
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _pick(self, color: QColor):
+        self.selected_color = color
+        self.code_input.setText(color.name())
+        self._update_preview()
+
+    def _on_code_entered(self):
+        color = QColor(self.code_input.text().strip())
+        if color.isValid():
+            self.selected_color = color
+        else:
+            self.code_input.setText(self.selected_color.name())
+        self._update_preview()
+
+    def _update_preview(self):
+        self.preview.setStyleSheet(f"background-color: {self.selected_color.name()}; border: 1px solid #3d3f52;")
+
+
+class _AvatarGridWidget(QWidget):
+    """아이콘 그리기 격자 - 마우스를 누른 채로 드래그하면 지나가는 칸을 전부 칠함
+    (QPushButton의 clicked 신호만으로는 한 번에 한 칸씩만 클릭해야 해서, 격자 위젯이
+    직접 마우스 이벤트를 받아 좌표를 계산하는 방식으로 구현. 자식 버튼들은
+    WA_TransparentForMouseEvents로 마우스 이벤트를 무시하게 하고 시각적 표시 용도로만 씀)"""
+
+    def __init__(self, cell_px: int, grid_size: int, on_paint, parent=None):
+        super().__init__(parent)
+        self._cell_px = cell_px
+        self._grid_size = grid_size
+        self._on_paint = on_paint
+        self._painting = False
+
+    def _cell_at(self, pos) -> tuple[int, int] | None:
+        x = int(pos.x()) // self._cell_px
+        y = int(pos.y()) // self._cell_px
+        if 0 <= x < self._grid_size and 0 <= y < self._grid_size:
+            return x, y
+        return None
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        self._painting = True
+        cell = self._cell_at(event.position())
+        if cell:
+            self._on_paint(*cell)
+
+    def mouseMoveEvent(self, event):
+        if not self._painting:
+            return
+        cell = self._cell_at(event.position())
+        if cell:
+            self._on_paint(*cell)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._painting = False
+
+
+class ProfileDialog(QDialog):
+    """프로필(닉네임 + 16x16 픽셀아트 아이콘) 편집 - 드래그로 여러 칸 칠하기, 지우개, 전체 지우기 지원"""
+
+    def __init__(self, initial_base64: str | None = None, initial_nickname: str = "", is_irc: bool = False, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("프로필 변경")
         self.result_base64 = ""
+        self.result_nickname = ""
         self._current_color = QColor("#7c6cf0")
         self._eraser = False
         self._cell_colors: dict[tuple[int, int], QColor | None] = {}
@@ -678,15 +853,34 @@ class AvatarEditorDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        grid_widget = QWidget()
+        nick_row = QHBoxLayout()
+        nick_row.addWidget(QLabel("닉네임"))
+        self._nickname_input = QLineEdit(initial_nickname)
+        self._nickname_input.setMaxLength(NICKNAME_MAX_LEN)
+        placeholder = (
+            "IRC 서버가 정한 접속 닉네임" if is_irc
+            else "표시할 닉네임 (비우면 아이디로 표시)"
+        )
+        self._nickname_input.setPlaceholderText(placeholder)
+        nick_row.addWidget(self._nickname_input)
+        layout.addLayout(nick_row)
+        if is_irc:
+            irc_hint = QLabel("※ 실제 IRC 서버에서는 닉네임이 곧 접속 아이디예요. 다른 사람이 이미 쓰고 있으면 변경이 거부될 수 있어요.")
+            irc_hint.setObjectName("hint")
+            irc_hint.setWordWrap(True)
+            layout.addWidget(irc_hint)
+
+        grid_widget = _AvatarGridWidget(AVATAR_CELL_PX, AVATAR_GRID_SIZE, self._paint_cell)
+        self._grid_widget = grid_widget
         grid = QGridLayout(grid_widget)
         grid.setSpacing(0)
+        grid.setContentsMargins(0, 0, 0, 0)
         for y in range(AVATAR_GRID_SIZE):
             for x in range(AVATAR_GRID_SIZE):
                 btn = QPushButton()
-                btn.setFixedSize(20, 20)
+                btn.setFixedSize(AVATAR_CELL_PX, AVATAR_CELL_PX)
+                btn.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
                 btn.setStyleSheet("background-color: transparent; border: 1px solid #3d3f52;")
-                btn.clicked.connect(lambda checked=False, x=x, y=y: self._on_cell_clicked(x, y))
                 grid.addWidget(btn, y, x)
                 self._buttons[(x, y)] = btn
         layout.addWidget(grid_widget)
@@ -711,6 +905,8 @@ class AvatarEditorDialog(QDialog):
             self._load_initial(initial_base64)
 
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        button_box.button(QDialogButtonBox.StandardButton.Save).setText("저장")
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
         button_box.accepted.connect(self._on_save)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
@@ -728,7 +924,7 @@ class AvatarEditorDialog(QDialog):
                 self._cell_colors[(x, y)] = color
                 self._buttons[(x, y)].setStyleSheet(f"background-color: {color.name()}; border: 1px solid #3d3f52;")
 
-    def _on_cell_clicked(self, x: int, y: int):
+    def _paint_cell(self, x: int, y: int):
         if self._eraser:
             self._cell_colors[(x, y)] = None
             self._buttons[(x, y)].setStyleSheet("background-color: transparent; border: 1px solid #3d3f52;")
@@ -739,9 +935,9 @@ class AvatarEditorDialog(QDialog):
             )
 
     def _choose_color(self):
-        color = QColorDialog.getColor(self._current_color, self, "색상 선택")
-        if color.isValid():
-            self._current_color = color
+        dlg = ColorPickerDialog(self._current_color, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._current_color = dlg.selected_color
             self._eraser_btn.setChecked(False)
 
     def _toggle_eraser(self, checked: bool):
@@ -769,6 +965,7 @@ class AvatarEditorDialog(QDialog):
             QMessageBox.warning(self, "저장 실패", "아이콘 데이터가 너무 큽니다. 더 단순하게 그려주세요.")
             return
         self.result_base64 = b64
+        self.result_nickname = self._nickname_input.text().strip()
         self.accept()
 
 
@@ -785,6 +982,7 @@ class ChatPage(QWidget):
         self._log_views: dict[str, ChannelLogView] = {}
         self._members: dict[str, list[str]] = {}
         self._avatar_pixmaps: dict[str, QPixmap] = {}
+        self._nicknames: dict[str, str] = {}
         self._active_channel = ""
         self._protocol_mode = "custom"
 
@@ -792,17 +990,15 @@ class ChatPage(QWidget):
 
         center = QVBoxLayout()
         self._center_stack = QStackedWidget()
-        self._empty_label = QLabel("입장한 채널이 없습니다.\n'+' 버튼으로 입장하세요.")
+        self._empty_label = QLabel("입장한 채널이 없습니다.\n'+ 채널 추가' 버튼으로 입장하세요.")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._center_stack.addWidget(self._empty_label)
 
         self.tabs = QTabWidget()
-        self.tabs.setTabsClosable(True)
-        self.tabs.tabCloseRequested.connect(self._on_tab_close_requested)
         self.tabs.currentChanged.connect(self._on_tab_changed)
-        add_tab_btn = QPushButton("+")
+        add_tab_btn = QPushButton("+ 채널 추가")
         add_tab_btn.setObjectName("secondary")
-        add_tab_btn.setFixedWidth(32)
+        add_tab_btn.setToolTip("새 채널에 입장합니다")
         add_tab_btn.clicked.connect(lambda: self.on_add_channel())
         self.tabs.setCornerWidget(add_tab_btn, Qt.Corner.TopRightCorner)
         self._center_stack.addWidget(self.tabs)
@@ -826,7 +1022,7 @@ class ChatPage(QWidget):
         self.user_list = QListWidget()
         self.user_list.setIconSize(QSize(AVATAR_LIST_PX, AVATAR_LIST_PX))
         right.addWidget(self.user_list)
-        self.avatar_btn = QPushButton("내 아이콘 설정")
+        self.avatar_btn = QPushButton("프로필 변경")
         self.avatar_btn.setObjectName("secondary")
         self.avatar_btn.clicked.connect(lambda: self.on_set_avatar())
         right.addWidget(self.avatar_btn)
@@ -842,16 +1038,38 @@ class ChatPage(QWidget):
     def set_protocol_mode(self, mode: str):
         self._protocol_mode = mode
         self._avatar_pixmaps.clear()
+        self._nicknames.clear()
+
+    def _display_name_for(self, user_id: str) -> str:
+        return self._nicknames.get(user_id, user_id)
 
     def _update_input_enabled(self):
         self.msg_input.setEnabled(bool(self._active_channel))
+
+    def _make_close_button(self, channel: str) -> QPushButton:
+        """빨간 X 대신 테마에 맞는 수수한 × 기호 - 기본 탭 닫기 아이콘 대신 직접 그림"""
+        btn = QPushButton("×")
+        btn.setFlat(True)
+        btn.setFixedSize(16, 16)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #9a9cad; border: none;"
+            " font-weight: bold; padding: 0px; }"
+            "QPushButton:hover { color: #ffffff; }"
+        )
+        btn.setToolTip(f"'{channel}' 채널 나가기")
+        btn.clicked.connect(lambda: self._request_close_channel(channel))
+        return btn
 
     def add_channel(self, channel: str, activate: bool = True):
         if channel not in self._log_views:
             view = ChannelLogView(channel)
             self._log_views[channel] = view
             self._members[channel] = []
-            self.tabs.addTab(view, channel)
+            index = self.tabs.addTab(view, channel)
+            self.tabs.tabBar().setTabButton(
+                index, QTabBar.ButtonPosition.RightSide, self._make_close_button(channel)
+            )
             self._center_stack.setCurrentWidget(self.tabs)
         if activate:
             self.set_active_channel(channel)
@@ -894,11 +1112,7 @@ class ChatPage(QWidget):
         self._add_userlist_items(self._members.get(self._active_channel, []))
         self._update_input_enabled()
 
-    def _on_tab_close_requested(self, index: int):
-        view = self.tabs.widget(index)
-        if view is None:
-            return
-        channel = view.channel_name
+    def _request_close_channel(self, channel: str):
         confirm = QMessageBox.question(self, "채널 나가기", f"'{channel}' 채널에서 나갈까요?")
         if confirm == QMessageBox.StandardButton.Yes:
             self.on_leave_channel(channel)
@@ -911,7 +1125,24 @@ class ChatPage(QWidget):
             return
         index = self.tabs.indexOf(view)
         if index >= 0:
-            self.tabs.setTabIcon(index, _unread_icon())
+            self._blink_tab(view)
+
+    def _blink_tab(self, view: "ChannelLogView"):
+        """두 번 깜빡인 뒤 안읽음 표시가 계속 켜진 상태로 남음"""
+        sequence = [True, False, True, False, True]
+
+        def step(i: int):
+            index = self.tabs.indexOf(view)
+            if index < 0:
+                return  # 그 사이에 채널을 나갔으면 중단
+            if view.channel_name == self._active_channel:
+                self.tabs.setTabIcon(index, QIcon())
+                return  # 깜빡이는 도중 사용자가 이미 그 탭을 보고 있으면 중단
+            self.tabs.setTabIcon(index, _unread_icon() if sequence[i] else QIcon())
+            if i + 1 < len(sequence):
+                QTimer.singleShot(150, lambda: step(i + 1))
+
+        step(0)
 
     def _submit(self):
         text = self.msg_input.text().strip()
@@ -932,7 +1163,7 @@ class ChatPage(QWidget):
         view = self._log_views.get(channel)
         if view is None:
             return
-        view.append_message(sender, text, mine, ts, self._avatar_for(sender, AVATAR_MSG_PX))
+        view.append_message(self._display_name_for(sender), text, mine, ts, self._avatar_for(sender, AVATAR_MSG_PX))
         self._mark_unread(channel)
 
     def append_system(self, channel: str, text: str):
@@ -954,7 +1185,10 @@ class ChatPage(QWidget):
 
     def _add_userlist_items(self, users: list[str]):
         for uid in users:
-            item = QListWidgetItem(uid)
+            display = self._display_name_for(uid)
+            item = QListWidgetItem(display)
+            if display != uid:
+                item.setToolTip(uid)  # 닉네임은 고유성이 보장되지 않으므로 원래 아이디를 툴팁으로 확인 가능하게
             item.setIcon(QIcon(self._avatar_for(uid, AVATAR_LIST_PX)))
             self.user_list.addItem(item)
 
@@ -971,6 +1205,15 @@ class ChatPage(QWidget):
             pixmap = _decode_avatar_pixmap(avatar_b64)
             if pixmap is not None:
                 self._avatar_pixmaps[user_id] = pixmap
+        if self._active_channel:
+            self.user_list.clear()
+            self._add_userlist_items(self._members.get(self._active_channel, []))
+
+    def set_nickname(self, user_id: str, nickname: str | None):
+        if not nickname:
+            self._nicknames.pop(user_id, None)
+        else:
+            self._nicknames[user_id] = nickname
         if self._active_channel:
             self.user_list.clear()
             self._add_userlist_items(self._members.get(self._active_channel, []))
@@ -1007,6 +1250,7 @@ class MainWindow(QMainWindow):
         self._irc_members: dict[str, set[str]] = {}
         self._irc_names_buffer: dict[str, list[str]] = {}
         self._irc_nick_retries = 0
+        self._nick_change_pending = False  # 프로필 화면에서 직접 요청한 닉네임 변경 처리 중인지
 
         self._connect_timer = QTimer(self)
         self._connect_timer.setSingleShot(True)
@@ -1059,6 +1303,7 @@ class MainWindow(QMainWindow):
             self._irc_members = {}
             self._irc_names_buffer = {}
             self._irc_nick_retries = 0
+            self._nick_change_pending = False
 
         if self.client.state() == QSslSocket.SocketState.ConnectedState:
             # 이미 연결돼 있으면 (예: 회원가입 후 바로 로그인) 재연결하지 않고 바로 전송
@@ -1146,7 +1391,8 @@ class MainWindow(QMainWindow):
             return
         self._stop_connecting()
         if self.stack.currentWidget() is self.login_page:
-            self.login_page.show_status(f"연결 실패: {err}")
+            friendly = _friendly_connection_error(err, self._pending_ssl, self.client._pinned_cert)
+            self.login_page.show_status(friendly)
 
     # ---------------- 채널 ----------------
     def _handle_channel_submit(self, action: str):
@@ -1186,7 +1432,11 @@ class MainWindow(QMainWindow):
             self.client.send_cmd({"cmd": "leave", "channel": channel})
 
     def _handle_set_avatar(self):
-        dlg = AvatarEditorDialog(initial_base64=self._my_avatar_b64, parent=self.chat_page)
+        is_irc = self._protocol_mode == "irc"
+        current_nickname = self._irc_current_nick if is_irc else self.chat_page._nicknames.get(self.my_id, "")
+        dlg = ProfileDialog(
+            initial_base64=self._my_avatar_b64, initial_nickname=current_nickname, is_irc=is_irc, parent=self.chat_page
+        )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         b64 = dlg.result_base64
@@ -1195,13 +1445,26 @@ class MainWindow(QMainWindow):
             return
         self._my_avatar_b64 = b64
         self.chat_page.set_avatar(self.my_id, b64)  # 상대에게는 다시 안 돌아오므로 낙관적으로 먼저 반영
-        if self._protocol_mode == "irc":
+        if is_irc:
             # 실제 IRC 서버는 아이콘 개념이 없으므로, PRIVMSG 안에 CTCP처럼 숨겨서
             # 우리 클라이언트끼리만 알아보게 보냄 (내가 입장한 모든 채널에)
             for channel in self._joined_channels:
                 self.client.send_irc(irc_protocol.format_ctcp_avatar(channel, b64))
         else:
             self.client.send_cmd({"cmd": "set_avatar", "avatar": b64})
+
+        new_nickname = dlg.result_nickname
+        if new_nickname == current_nickname:
+            return
+        if is_irc:
+            if new_nickname:
+                # 실제 IRC 서버는 닉네임이 곧 접속 식별자라 서버가 승인해야 확정됨 -
+                # 낙관적으로 먼저 바꾸지 않고 NICK 요청 후 서버 응답(NICK 반영/충돌 오류)을 기다림
+                self._nick_change_pending = True
+                self.client.send_irc(irc_protocol.format_nick(new_nickname))
+        else:
+            self.chat_page.set_nickname(self.my_id, new_nickname)  # 낙관적으로 먼저 반영
+            self.client.send_cmd({"cmd": "set_nickname", "nickname": new_nickname})
 
     def _on_channel_joined(self, channel: str, text: str):
         """커스텀 프로토콜의 channel_result 성공 / IRC의 자기 자신 JOIN 둘 다 여기로 모임"""
@@ -1232,7 +1495,12 @@ class MainWindow(QMainWindow):
 
         if cmd == irc_protocol.RPL_WELCOME:
             self._stop_connecting()
-            self.my_id = self._irc_current_nick
+            # 서버가 001 응답 첫 파라미터로 실제로 확정된 닉네임을 알려줌 - 우리가 보낸
+            # 닉네임과 다를 수 있음(글자 제한/치환 등으로 서버가 바꿨을 수 있어서, 이걸
+            # 안 읽고 우리가 보낸 값을 그대로 쓰면 화면에는 엉뚱한 이름이 남을 수 있음)
+            confirmed_nick = msg.params[0] if msg.params else self._irc_current_nick
+            self._irc_current_nick = confirmed_nick
+            self.my_id = confirmed_nick
             self.chat_page.my_id = self.my_id
             self.channel_page.set_mode("irc")
             self.stack.setCurrentWidget(self.channel_page)
@@ -1242,6 +1510,14 @@ class MainWindow(QMainWindow):
             return
 
         if cmd in irc_protocol.NICK_COLLISION_NUMERICS:
+            if self._nick_change_pending:
+                # 로그인 후 프로필 화면에서 직접 요청한 닉네임 변경이 거부된 경우 -
+                # 이미 접속된 세션이므로 연결을 끊지 않고 실패만 알림
+                self._nick_change_pending = False
+                QMessageBox.warning(
+                    self, "닉네임 변경 실패", msg.trailing or "이미 사용 중인 닉네임입니다."
+                )
+                return
             if self.stack.currentWidget() is self.login_page and self._irc_nick_retries < irc_protocol.MAX_NICK_RETRIES:
                 self._irc_nick_retries += 1
                 self._irc_current_nick += "_"
@@ -1321,6 +1597,7 @@ class MainWindow(QMainWindow):
                 self._irc_current_nick = new_nick
                 self.my_id = new_nick
                 self.chat_page.my_id = new_nick
+                self._nick_change_pending = False
             for channel, members in self._irc_members.items():
                 if old_nick in members:
                     members.discard(old_nick)
@@ -1424,6 +1701,11 @@ class MainWindow(QMainWindow):
             user_id = msg.get("user_id", "")
             if user_id:
                 self.chat_page.set_avatar(user_id, msg.get("avatar"))
+
+        elif mtype == "member_nickname":
+            user_id = msg.get("user_id", "")
+            if user_id:
+                self.chat_page.set_nickname(user_id, msg.get("nickname"))
 
         elif mtype == "error":
             text = msg.get("text", "오류")
