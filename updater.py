@@ -124,6 +124,10 @@ if errorlevel 1 (
         goto retry_move
     )
 )
+rem 백신 실시간 검사가 방금 옮긴 exe(수십MB)를 스캔하는 도중에 바로 실행하면
+rem 스캔 중인 DLL이 잠깨/격리되어 LoadLibrary 오류로 죽는 경우가 있어, 검사가
+rem 끝날 시간을 잠깐 벌어줌
+timeout /t 2 /nobreak >nul
 start "" "{current_exe}"
 del "%~f0"
 """

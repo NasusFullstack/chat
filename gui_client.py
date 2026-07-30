@@ -19,9 +19,9 @@ from PySide6.QtNetwork import QSslSocket, QSslCertificate, QSslConfiguration, QS
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem,
-    QFileDialog, QMessageBox, QFrame, QComboBox, QInputDialog, QCheckBox,
+    QFileDialog, QFrame, QComboBox, QInputDialog, QCheckBox,
     QTabWidget, QTabBar, QScrollArea, QGridLayout, QDialog, QDialogButtonBox,
-    QProgressDialog,
+    QProgressDialog, QSizePolicy,
 )
 
 import server_registry
@@ -44,6 +44,7 @@ TIMESTAMP_BADGE_HEIGHT_PX = 14
 
 UNREAD_BLINK_COLOR = "#ffcc4d"
 UNREAD_BLINK_INTERVAL_MS = 350
+UNREAD_BLINK_COUNT = 4  # 안 보는 채널에 새 메시지가 오면 이 횟수만큼 반짝인 뒤 밝은 색으로 고정됨
 
 AVATAR_LIST_PX = 16
 AVATAR_MSG_PX = 16  # 참여자 목록과 채팅창 아이콘이 항상 같은 크기/이미지로 보이게 통일
@@ -449,16 +450,16 @@ class LoginPage(QWidget):
         server_btn_row.addWidget(delete_server_btn)
         box.addLayout(server_btn_row)
 
-        self.host_input = QLineEdit("127.0.0.1")
+        self.host_input = QLineEdit("home.pdlab.kr")
         self.host_input.setPlaceholderText("서버 주소")
         box.addWidget(self.host_input)
 
-        self.port_input = QLineEdit(DEFAULT_SSL_PORT)
+        self.port_input = QLineEdit(DEFAULT_PLAIN_PORT)
         self.port_input.setPlaceholderText("포트")
         box.addWidget(self.port_input)
 
         self.ssl_checkbox = QCheckBox("SSL 암호화 사용 (권장, 포트 6697)")
-        self.ssl_checkbox.setChecked(True)
+        self.ssl_checkbox.setChecked(False)
         self.ssl_checkbox.toggled.connect(self._on_ssl_toggled)
         box.addWidget(self.ssl_checkbox)
 
@@ -516,6 +517,10 @@ class LoginPage(QWidget):
         self.setLayout(layout)
 
         self._reload_servers()
+        # 이 시점엔 user_input/pw_input 등 관련 위젯이 전부 만들어져 있어야
+        # _on_protocol_changed가 안전하게 실행됨 (그래서 protocol_combo 생성 시점이
+        # 아니라 __init__ 맨 마지막에서 기본값을 IRC로 바꿈)
+        self.protocol_combo.setCurrentIndex(self.protocol_combo.findData("irc"))
 
     def _reload_servers(self, select_name: str | None = None):
         self.server_combo.blockSignals(True)
@@ -585,10 +590,7 @@ class LoginPage(QWidget):
         if not data:
             self.show_status("삭제할 서버를 목록에서 선택하세요.")
             return
-        confirm = QMessageBox.question(
-            self, "서버 삭제", f"'{data['name']}' 서버를 목록에서 삭제할까요?",
-        )
-        if confirm != QMessageBox.StandardButton.Yes:
+        if not themed_question(self, "서버 삭제", f"'{data['name']}' 서버를 목록에서 삭제할까요?"):
             return
         server_registry.remove_server(data["name"])
         self._reload_servers()
@@ -691,23 +693,32 @@ class MessageWidget(QWidget):
         ))
         layout.addWidget(avatar_label, 0, Qt.AlignmentFlag.AlignTop)
 
-        row = QHBoxLayout()
-        row.setSpacing(6)
+        # 텍스트를 시간 배지와 같은 QHBoxLayout에 나란히 넣으면 word-wrap 라벨의
+        # sizeHint()가 줄바꿈 전(한 줄) 너비를 그대로 요구해버려서 채팅창 폭을 넘어서는
+        # 메시지가 오른쪽으로 잘리고, 그 여파로 스크롤 영역 크기 계산도 꼬여 아래쪽에
+        # 빈 공간이 생기는 문제가 있었음. 텍스트를 세로 레이아웃에서 혼자 전체 폭을
+        # 쓰게 하면 Qt가 heightForWidth를 제대로 적용해 창 크기에 맞춰 줄바꿈됨.
+        body = QVBoxLayout()
+        body.setSpacing(1)
 
         color = "#7cd0ff" if mine else "#ffd27c"
         safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
         text_label = QLabel(f'<span style="color:{color}"><b>{sender}</b></span>: {safe_text}')
         text_label.setTextFormat(Qt.TextFormat.RichText)
         text_label.setWordWrap(True)
-        row.addWidget(text_label, 1)
+        text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        body.addWidget(text_label)
 
+        badge_row = QHBoxLayout()
+        badge_row.addStretch(1)
         badge = QLabel(_format_ts(ts))
         badge.setObjectName("timestampBadge")
         badge.setFixedHeight(TIMESTAMP_BADGE_HEIGHT_PX)
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        row.addWidget(badge, 0, Qt.AlignmentFlag.AlignBottom)
+        badge_row.addWidget(badge)
+        body.addLayout(badge_row)
 
-        layout.addLayout(row, 1)
+        layout.addLayout(body, 1)
 
 
 def _build_system_label(text: str) -> QLabel:
@@ -976,7 +987,7 @@ class ProfileDialog(QDialog):
     def _on_save(self):
         b64 = self.to_base64_png()
         if len(b64) > AVATAR_MAX_B64_CHARS:
-            QMessageBox.warning(self, "저장 실패", "아이콘 데이터가 너무 큽니다. 더 단순하게 그려주세요.")
+            themed_warning(self, "저장 실패", "아이콘 데이터가 너무 큽니다. 더 단순하게 그려주세요.")
             return
         self.result_base64 = b64
         self.result_nickname = self._nickname_input.text().strip()
@@ -1001,6 +1012,7 @@ class ChatPage(QWidget):
         self._protocol_mode = "custom"
         self._unread_timers: dict[str, QTimer] = {}
         self._unread_blink_on: dict[str, bool] = {}
+        self._unread_blink_step: dict[str, int] = {}
 
         layout = QHBoxLayout()
 
@@ -1130,12 +1142,12 @@ class ChatPage(QWidget):
         self._update_input_enabled()
 
     def _request_close_channel(self, channel: str):
-        confirm = QMessageBox.question(self, "채널 나가기", f"'{channel}' 채널에서 나갈까요?")
-        if confirm == QMessageBox.StandardButton.Yes:
+        if themed_question(self, "채널 나가기", f"'{channel}' 채널에서 나갈까요?"):
             self.on_leave_channel(channel)
 
     def _mark_unread(self, channel: str):
-        """빨간 점 대신 탭 글자색 자체가 밝은 색으로 빠르게 깜빡이게 함 (탭을 보기 전까지 계속)"""
+        """빨간 점 대신 탭 글자색 자체가 밝은 색으로 UNREAD_BLINK_COUNT번 깜빡인 뒤,
+        탭을 보기 전까지는 밝은 색을 그대로 유지함"""
         if channel == self._active_channel:
             return
         view = self._log_views.get(channel)
@@ -1149,6 +1161,7 @@ class ChatPage(QWidget):
         timer.timeout.connect(lambda ch=channel: self._toggle_blink(ch))
         self._unread_timers[channel] = timer
         self._unread_blink_on[channel] = False
+        self._unread_blink_step[channel] = 0
         timer.start(UNREAD_BLINK_INTERVAL_MS)
         self._toggle_blink(channel)  # 바로 한 번 켜서 즉각 반응하는 느낌을 줌
 
@@ -1158,10 +1171,19 @@ class ChatPage(QWidget):
         if view is None or index < 0 or channel == self._active_channel:
             self._stop_blink(channel)
             return
+        step = self._unread_blink_step.get(channel, 0) + 1
+        self._unread_blink_step[channel] = step
         on = not self._unread_blink_on.get(channel, False)
         self._unread_blink_on[channel] = on
         color = QColor(UNREAD_BLINK_COLOR) if on else QColor()
         self.tabs.tabBar().setTabTextColor(index, color)
+        if on and step >= 2 * UNREAD_BLINK_COUNT - 1:
+            # 지정된 횟수만큼 깜빡였으니 타이머만 멈추고 밝은 색은 그대로 유지
+            # (실제로 탭을 봐야만 _stop_blink에서 기본 색으로 되돌아감)
+            timer = self._unread_timers.pop(channel, None)
+            if timer is not None:
+                timer.stop()
+                timer.deleteLater()
 
     def _stop_blink(self, channel: str):
         timer = self._unread_timers.pop(channel, None)
@@ -1169,6 +1191,7 @@ class ChatPage(QWidget):
             timer.stop()
             timer.deleteLater()
         self._unread_blink_on.pop(channel, None)
+        self._unread_blink_step.pop(channel, None)
         view = self._log_views.get(channel)
         if view is not None:
             index = self.tabs.indexOf(view)
@@ -1355,6 +1378,95 @@ class TitleBar(QWidget):
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
+
+
+class _MiniTitleBar(QWidget):
+    """확인/경고 팝업용 - 최소화/최대화 없이 제목과 닫기만 있는 얇은 타이틀바
+    (QMessageBox 기본 창틀이 OS 기본 흰색이라 앱 테마와 안 맞아서 대체용으로 만듦)"""
+
+    def __init__(self, dialog: QDialog, title: str, parent=None):
+        super().__init__(parent)
+        self._dialog = dialog
+        self.setObjectName("titleBar")
+        self.setFixedHeight(32)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 0, 0, 0)
+        layout.setSpacing(8)
+
+        label = QLabel(title)
+        label.setObjectName("titleBarText")
+        layout.addWidget(label)
+        layout.addStretch(1)
+
+        close_btn = QPushButton()
+        close_btn.setObjectName("titleBarCloseBtn")
+        close_btn.setIcon(_titlebar_icon("close"))
+        close_btn.setIconSize(QSize(10, 10))
+        close_btn.setFixedSize(40, 32)
+        close_btn.setCursor(Qt.CursorShape.ArrowCursor)
+        close_btn.clicked.connect(dialog.reject)
+        layout.addWidget(close_btn)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            handle = self._dialog.windowHandle()
+            if handle is not None:
+                handle.startSystemMove()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
+class ThemedDialog(QDialog):
+    """QMessageBox.question()/warning() 대신 쓰는, 앱 테마와 일치하는 프레임 없는
+    확인/경고 팝업. buttons는 (버튼 글자, 반환값) 목록 - 예: [("아니오", False), ("예", True)]"""
+
+    def __init__(self, title: str, text: str, buttons: list[tuple[str, object]], default_value=None, parent=None):
+        super().__init__(parent)
+        self.result_value = default_value
+        if IS_WINDOWS:
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(1, 1, 1, 1)
+        outer.setSpacing(0)
+        outer.addWidget(_MiniTitleBar(self, title))
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(16, 14, 16, 14)
+        text_label = QLabel(text)
+        text_label.setWordWrap(True)
+        body_layout.addWidget(text_label)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        for label, value in buttons:
+            btn = QPushButton(label)
+            if value in (False, None):
+                btn.setObjectName("secondary")
+            btn.clicked.connect(lambda checked=False, v=value: self._finish(v))
+            btn_row.addWidget(btn)
+        body_layout.addLayout(btn_row)
+        outer.addWidget(body)
+
+        self.setMinimumWidth(340)
+
+    def _finish(self, value):
+        self.result_value = value
+        self.accept()
+
+
+def themed_question(parent, title: str, text: str) -> bool:
+    dlg = ThemedDialog(title, text, [("아니오", False), ("예", True)], default_value=False, parent=parent)
+    dlg.exec()
+    return bool(dlg.result_value)
+
+
+def themed_warning(parent, title: str, text: str):
+    dlg = ThemedDialog(title, text, [("확인", None)], parent=parent)
+    dlg.exec()
 
 
 _RESIZE_EDGE_CURSORS = {
@@ -1662,7 +1774,7 @@ class MainWindow(QMainWindow):
             return
         b64 = dlg.result_base64
         if len(b64) > AVATAR_MAX_B64_CHARS:
-            QMessageBox.warning(self, "아이콘 저장 실패", "아이콘 데이터가 너무 큽니다.")
+            themed_warning(self, "아이콘 저장 실패", "아이콘 데이터가 너무 큽니다.")
             return
         self._my_avatar_b64 = b64
         self.chat_page.set_avatar(self.my_id, b64)  # 상대에게는 다시 안 돌아오므로 낙관적으로 먼저 반영
@@ -1735,7 +1847,7 @@ class MainWindow(QMainWindow):
                 # 로그인 후 프로필 화면에서 직접 요청한 닉네임 변경이 거부된 경우 -
                 # 이미 접속된 세션이므로 연결을 끊지 않고 실패만 알림
                 self._nick_change_pending = False
-                QMessageBox.warning(
+                themed_warning(
                     self, "닉네임 변경 실패", msg.trailing or "이미 사용 중인 닉네임입니다."
                 )
                 return
@@ -1754,7 +1866,7 @@ class MainWindow(QMainWindow):
             if self.stack.currentWidget() is self.channel_page:
                 self.channel_page.show_status(text)
             else:
-                QMessageBox.warning(self, "채널 입장 실패", text)
+                themed_warning(self, "채널 입장 실패", text)
             return
 
         if cmd == irc_protocol.RPL_NAMREPLY:
@@ -1890,7 +2002,7 @@ class MainWindow(QMainWindow):
                 if self.stack.currentWidget() is self.channel_page:
                     self.channel_page.show_status(msg.get("text", "실패"))
                 else:
-                    QMessageBox.warning(self, "채널 입장 실패", msg.get("text", "실패"))
+                    themed_warning(self, "채널 입장 실패", msg.get("text", "실패"))
 
         elif mtype == "leave_result":
             channel = msg.get("channel", "")
@@ -1898,7 +2010,7 @@ class MainWindow(QMainWindow):
                 self._joined_channels.discard(channel)
                 self.chat_page.remove_channel(channel)
             else:
-                QMessageBox.warning(self, "채널 나가기 실패", msg.get("text", "실패"))
+                themed_warning(self, "채널 나가기 실패", msg.get("text", "실패"))
 
         elif mtype == "chat":
             sender = msg.get("from", "?")
@@ -1935,7 +2047,7 @@ class MainWindow(QMainWindow):
             elif self.stack.currentWidget() is self.channel_page:
                 self.channel_page.show_status(text)
             else:
-                QMessageBox.warning(self, "오류", text)
+                themed_warning(self, "오류", text)
 
 
 def _find_app_icon() -> str:
