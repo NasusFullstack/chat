@@ -1375,8 +1375,11 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_TITLE} v{APP_VERSION}")
-        self.resize(720, 480)
-        self.setMinimumSize(480, 360)
+        # 로그인 화면이 위젯을 세로로 많이 쌓아둔 편이라(항목이 가장 많은 화면),
+        # 커스텀 타이틀바(36px)까지 감안해도 그 화면이 찌그러지지 않을 만큼
+        # 넉넉하게 시작 크기/최소 크기를 잡음 (타이틀바 높이는 TitleBar.TITLEBAR_HEIGHT)
+        self.resize(720, 600)
+        self.setMinimumSize(480, 540)
 
         self._title_bar: TitleBar | None = None
         if IS_WINDOWS:
