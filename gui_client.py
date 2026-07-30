@@ -691,26 +691,23 @@ class MessageWidget(QWidget):
         ))
         layout.addWidget(avatar_label, 0, Qt.AlignmentFlag.AlignTop)
 
-        body = QVBoxLayout()
-        body.setSpacing(2)
+        row = QHBoxLayout()
+        row.setSpacing(6)
 
         color = "#7cd0ff" if mine else "#ffd27c"
         safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
         text_label = QLabel(f'<span style="color:{color}"><b>{sender}</b></span>: {safe_text}')
         text_label.setTextFormat(Qt.TextFormat.RichText)
         text_label.setWordWrap(True)
-        body.addWidget(text_label)
+        row.addWidget(text_label, 1)
 
-        badge_row = QHBoxLayout()
-        badge_row.addStretch(1)
         badge = QLabel(_format_ts(ts))
         badge.setObjectName("timestampBadge")
         badge.setFixedHeight(TIMESTAMP_BADGE_HEIGHT_PX)
         badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        badge_row.addWidget(badge)
-        body.addLayout(badge_row)
+        row.addWidget(badge, 0, Qt.AlignmentFlag.AlignBottom)
 
-        layout.addLayout(body, 1)
+        layout.addLayout(row, 1)
 
 
 def _build_system_label(text: str) -> QLabel:
@@ -1939,10 +1936,19 @@ class MainWindow(QMainWindow):
 
 
 def _find_app_icon() -> str:
-    for name in ("icon.ico", "icon.png"):
-        candidate = os.path.join(_app_dir(), name)
-        if os.path.exists(candidate):
-            return candidate
+    # exe에 내장된 아이콘 리소스는 탐색기 파일 아이콘에는 반영되지만, 실행 중인 창의
+    # 타이틀바/작업표시줄 아이콘은 Qt가 setWindowIcon()을 직접 호출해야 반영됨 - 그래서
+    # exe 옆에 icon.ico가 없어도 항상 찾을 수 있도록 PyInstaller onefile 번들이 풀리는
+    # 임시 폴더(sys._MEIPASS)도 함께 찾아봄 (빌드 스크립트가 --add-data로 그 안에 넣어둠)
+    search_dirs = [_app_dir()]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        search_dirs.append(meipass)
+    for directory in search_dirs:
+        for name in ("icon.ico", "icon.png"):
+            candidate = os.path.join(directory, name)
+            if os.path.exists(candidate):
+                return candidate
     return ""
 
 

@@ -22,7 +22,7 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - run: pyinstaller --noconfirm --clean --onefile --windowed --icon=icon.ico --name FriendChat_GUI gui_client.py
+      - run: pyinstaller --noconfirm --clean --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." --name FriendChat_GUI gui_client.py
 
       - name: Create GitHub Release
         env:
