@@ -23,13 +23,13 @@ pip install -q -r requirements.txt
 pip install -q pyinstaller
 
 echo [2/4] Building GUI client (recommended, for friends)...
-pyinstaller --noconfirm --onefile --windowed --icon=icon.ico --name FriendChat_GUI gui_client.py
+pyinstaller --noconfirm --clean --onefile --windowed --icon=icon.ico --name FriendChat_GUI gui_client.py
 
 echo [3/4] Building CLI client (lightweight, for friends)...
-pyinstaller --noconfirm --onefile --console --name FriendChat_CLI cli_client.py
+pyinstaller --noconfirm --clean --onefile --console --name FriendChat_CLI cli_client.py
 
 echo [4/4] Building server program (for the host)...
-pyinstaller --noconfirm --onefile --console --name FriendChat_Server server.py
+pyinstaller --noconfirm --clean --onefile --console --name FriendChat_Server server.py
 
 echo.
 echo ============================================
