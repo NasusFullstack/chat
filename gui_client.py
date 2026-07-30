@@ -13,7 +13,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import Qt, QBuffer, QIODevice, QPoint, QSize, QTimer, Signal
+from PySide6.QtCore import Qt, QBuffer, QEvent, QIODevice, QPoint, QSize, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtNetwork import QSslSocket, QSslCertificate, QSslConfiguration, QSslError
 from PySide6.QtWidgets import (
@@ -21,29 +21,17 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem,
     QFileDialog, QMessageBox, QFrame, QComboBox, QInputDialog, QCheckBox,
     QTabWidget, QTabBar, QScrollArea, QGridLayout, QDialog, QDialogButtonBox,
+    QProgressDialog,
 )
 
 import server_registry
 import irc_protocol
 import history_store
+from version import APP_VERSION
 
 IS_WINDOWS = sys.platform == "win32"
 if IS_WINDOWS:
-    # 프레임 없는 창에서 커스텀 타이틀바를 쓰면서도 네이티브 크기조절/드래그이동/에어로 스냅을
-    # 그대로 살리기 위해 WM_NCHITTEST를 직접 가로채 응답함 (Windows 전용 API)
-    import ctypes
-    from ctypes import wintypes
-
-    _WM_NCHITTEST = 0x0084
-    _HTCAPTION = 2
-    _HTLEFT = 10
-    _HTRIGHT = 11
-    _HTTOP = 12
-    _HTTOPLEFT = 13
-    _HTTOPRIGHT = 14
-    _HTBOTTOM = 15
-    _HTBOTTOMLEFT = 16
-    _HTBOTTOMRIGHT = 17
+    import ctypes  # 작업표시줄 아이콘 그룹핑(AppUserModelID)에만 사용
 
 CONNECT_TIMEOUT_MS = 10_000
 DEFAULT_SSL_PORT = "6697"
@@ -1292,9 +1280,10 @@ def _titlebar_icon(kind: str, color: str = "#cfd0da") -> QIcon:
 
 class TitleBar(QWidget):
     """OS 기본 타이틀바 대신 쓰는 커스텀 타이틀바 - 프로그램 아이콘/이름과
-    테마에 맞춘 최소화/최대화/닫기 버튼을 보여줌. 실제 드래그 이동/크기조절/더블클릭
-    최대화는 MainWindow.nativeEvent(WM_NCHITTEST)에서 이 위젯 영역을 캡션으로
-    응답해서 처리하므로(에어로 스냅도 그대로 됨), 이 위젯 자체는 순수 표시/버튼 클릭만 담당"""
+    테마에 맞춘 최소화/최대화/닫기 버튼을 보여줌. 드래그 이동/더블클릭 최대화는
+    QWindow.startSystemMove()로 OS의 네이티브 이동 루프를 그대로 넘겨받아 처리하므로
+    에어로 스냅 등 기본 동작이 자연히 따라옴. 버튼 위 클릭은 자식 위젯(버튼)이 먼저
+    가로채므로 이 위젯의 mousePressEvent까지 안 내려와 별도 예외 처리가 필요 없음"""
 
     TITLEBAR_HEIGHT = 36
 
@@ -1354,20 +1343,49 @@ class TitleBar(QWidget):
         else:
             self._window.showMaximized()
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            handle = self._window.windowHandle()
+            if handle is not None:
+                handle.startSystemMove()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._toggle_maximize()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
+_RESIZE_EDGE_CURSORS = {
+    frozenset({Qt.Edge.TopEdge}): Qt.CursorShape.SizeVerCursor,
+    frozenset({Qt.Edge.BottomEdge}): Qt.CursorShape.SizeVerCursor,
+    frozenset({Qt.Edge.LeftEdge}): Qt.CursorShape.SizeHorCursor,
+    frozenset({Qt.Edge.RightEdge}): Qt.CursorShape.SizeHorCursor,
+    frozenset({Qt.Edge.TopEdge, Qt.Edge.LeftEdge}): Qt.CursorShape.SizeFDiagCursor,
+    frozenset({Qt.Edge.BottomEdge, Qt.Edge.RightEdge}): Qt.CursorShape.SizeFDiagCursor,
+    frozenset({Qt.Edge.TopEdge, Qt.Edge.RightEdge}): Qt.CursorShape.SizeBDiagCursor,
+    frozenset({Qt.Edge.BottomEdge, Qt.Edge.LeftEdge}): Qt.CursorShape.SizeBDiagCursor,
+}
+
 
 class MainWindow(QMainWindow):
     _RESIZE_BORDER = 6  # 프레임 없는 창에서 이 두께(px)만큼을 크기조절 손잡이로 취급
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_TITLE)
+        self.setWindowTitle(f"{APP_TITLE} v{APP_VERSION}")
         self.resize(720, 480)
         self.setMinimumSize(480, 360)
 
         self._title_bar: TitleBar | None = None
-        self._resize_edge: str | None = None
         if IS_WINDOWS:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+            self.setMouseTracking(True)
+            QApplication.instance().installEventFilter(self)
 
         self.client = ChatClient()
         self.client.connected.connect(self._on_tcp_connected)
@@ -1436,49 +1454,41 @@ class MainWindow(QMainWindow):
             self._title_bar.set_maximized(self.isMaximized())
         super().changeEvent(event)
 
-    def nativeEvent(self, event_type, message):
-        if IS_WINDOWS and self._title_bar is not None and event_type in (
-            b"windows_generic_MSG", b"windows_dispatcher_MSG",
-        ):
-            msg = wintypes.MSG.from_address(int(message))
-            if msg.message == _WM_NCHITTEST:
-                gx = ctypes.c_short(msg.lParam & 0xFFFF).value
-                gy = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
-                global_pos = QPoint(gx, gy)
-                local_pos = self.mapFromGlobal(global_pos)
-                w, h = self.width(), self.height()
-                bw = self._RESIZE_BORDER
-                if not self.isMaximized():
-                    on_left = local_pos.x() < bw
-                    on_right = local_pos.x() > w - bw
-                    on_top = local_pos.y() < bw
-                    on_bottom = local_pos.y() > h - bw
-                    hit = None
-                    if on_top and on_left:
-                        hit = _HTTOPLEFT
-                    elif on_top and on_right:
-                        hit = _HTTOPRIGHT
-                    elif on_bottom and on_left:
-                        hit = _HTBOTTOMLEFT
-                    elif on_bottom and on_right:
-                        hit = _HTBOTTOMRIGHT
-                    elif on_left:
-                        hit = _HTLEFT
-                    elif on_right:
-                        hit = _HTRIGHT
-                    elif on_top:
-                        hit = _HTTOP
-                    elif on_bottom:
-                        hit = _HTBOTTOM
-                    if hit is not None:
-                        return True, hit
-                title_local = self._title_bar.mapFromGlobal(global_pos)
-                if self._title_bar.rect().contains(title_local):
-                    for btn in (self._title_bar.min_btn, self._title_bar.max_btn, self._title_bar.close_btn):
-                        if btn.geometry().contains(title_local):
-                            return False, 0  # 버튼 위는 일반 클릭으로 처리되게 그냥 통과
-                    return True, _HTCAPTION  # 나머지 타이틀바 영역은 캡션 취급 -> 드래그 이동/에어로 스냅/더블클릭 최대화가 공짜로 됨
-        return super().nativeEvent(event_type, message)
+    def _resize_edges_at(self, local_pos: QPoint) -> Qt.Edges:
+        if self.isMaximized():
+            return Qt.Edges()
+        w, h = self.width(), self.height()
+        bw = self._RESIZE_BORDER
+        edges = Qt.Edges()
+        if local_pos.x() < bw:
+            edges |= Qt.Edge.LeftEdge
+        elif local_pos.x() > w - bw:
+            edges |= Qt.Edge.RightEdge
+        if local_pos.y() < bw:
+            edges |= Qt.Edge.TopEdge
+        elif local_pos.y() > h - bw:
+            edges |= Qt.Edge.BottomEdge
+        return edges
+
+    def eventFilter(self, obj, event):
+        # 프레임 없는 창은 OS가 알아서 해주던 가장자리 크기조절이 사라지므로,
+        # 자식 위젯이 마우스 이벤트를 먼저 가로채기 전에(앱 전역 이벤트 필터라 위젯
+        # 디스패치보다 먼저 통과함) 창 가장자리 근처인지 직접 확인해서
+        # QWindow.startSystemResize()로 OS의 네이티브 크기조절 루프를 그대로 넘김
+        et = event.type()
+        if et in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress) and isinstance(obj, QWidget):
+            if obj.window() is self:
+                local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
+                edges = self._resize_edges_at(local_pos)
+                if et == QEvent.Type.MouseMove:
+                    key = frozenset(e for e in (Qt.Edge.TopEdge, Qt.Edge.BottomEdge, Qt.Edge.LeftEdge, Qt.Edge.RightEdge) if edges & e)
+                    self.setCursor(_RESIZE_EDGE_CURSORS.get(key, Qt.CursorShape.ArrowCursor))
+                elif edges and event.button() == Qt.MouseButton.LeftButton:
+                    handle = self.windowHandle()
+                    if handle is not None:
+                        handle.startSystemResize(edges)
+                        return True
+        return super().eventFilter(obj, event)
 
     # ---------------- 로그인 ----------------
     def _handle_login_submit(self, mode: str):
@@ -1936,6 +1946,47 @@ def _find_app_icon() -> str:
     return ""
 
 
+def _try_auto_update() -> bool:
+    """exe로 빌드되어 실행 중일 때만 새 버전을 확인해서 있으면 적용하고 True를 반환함
+    (True면 apply_update_and_relaunch()가 이미 현재 프로세스를 종료시켰거나 곧 종료시킴).
+    소스 실행 중이거나, 확인/다운로드에 실패하면 아무 것도 안 하고 조용히 False를 반환해서
+    평소처럼 앱이 계속 뜨게 함 - 업데이트 기능 때문에 실행 자체가 막히면 안 되므로."""
+    if not getattr(sys, "frozen", False):
+        return False
+
+    import updater
+    info = updater.check_for_update()
+    if info is None:
+        return False
+
+    dlg = QProgressDialog(f"새 버전({info['version']})을 받는 중입니다...", None, 0, 100)
+    dlg.setWindowTitle("업데이트")
+    dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+    dlg.setMinimumDuration(0)
+    dlg.setValue(0)
+    dlg.show()
+
+    def on_progress(read: int, total: int):
+        dlg.setValue(int(read / total * 100) if total else 0)
+        QApplication.processEvents()
+
+    try:
+        new_exe_path = updater.download_update(info["download_url"], progress_cb=on_progress)
+    except Exception:  # noqa: BLE001
+        dlg.close()
+        return False
+
+    dlg.setLabelText("적용 중입니다... 곧 다시 시작됩니다.")
+    dlg.setValue(100)
+    QApplication.processEvents()
+    try:
+        updater.apply_update_and_relaunch(new_exe_path)  # 성공하면 여기서 프로세스가 끝남
+    except Exception:  # noqa: BLE001
+        dlg.close()
+        return False
+    return True
+
+
 def main():
     if IS_WINDOWS:
         # 작업표시줄이 python.exe 기본 아이콘 대신 우리 아이콘/앱 이름으로 묶이게 함
@@ -1946,6 +1997,9 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE_SHEET)
+
+    if _try_auto_update():
+        return
 
     icon_path = _find_app_icon()
     if icon_path:

@@ -1,0 +1,30 @@
+name: Release GUI exe
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - run: pyinstaller --noconfirm --clean --onefile --windowed --icon=icon.ico --name FriendChat_GUI gui_client.py
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" "dist/FriendChat_GUI.exe" --title "${{ github.ref_name }}" --generate-notes
