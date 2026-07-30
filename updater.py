@@ -116,13 +116,19 @@ def apply_update_and_relaunch(new_exe_path: str):
     # chcp 65001(UTF-8)을 안 하면 cmd.exe가 시스템 기본 코드페이지(한국어 Windows는
     # CP949)로 이 배치 파일을 읽어서, 폴더/파일 경로에 한글이 있으면 깨진 경로로
     # move/start를 실행해 "파일을 찾을 수 없음" 오류가 남 - UTF-8 BOM으로 저장하고
-    # chcp 65001로 맞춰야 한글 경로가 안전하게 처리됨
+    # chcp 65001로 맞춰야 한글 경로가 안전하게 처리됨.
+    #
+    # timeout /t 는 콘솔이 없는 상태로 실행되면(우리 GUI exe 자체가 --windowed라
+    # 콘솔이 없고, 거기서 띄운 이 배치도 콘솔이 없음) "Input redirection is not
+    # supported"라며 그 자리에서 바로 실패해서 실제로는 전혀 안 기다려짐 - 그래서
+    # 백신 스캔을 피하려던 지연시간이 사실 하나도 작동을 안 하고 있었음. 콘솔 여부와
+    # 무관하게 항상 동작하는 ping을 딜레이 용도로 대신 씀(ping -n N은 대략 N-1초 걸림).
     script = f"""@echo off
 chcp 65001 >nul
 :wait
 tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
 if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
+    ping -n 2 127.0.0.1 >nul
     goto wait
 )
 
@@ -132,8 +138,8 @@ set RETRY=0
 move /y "{current_exe}" "{backup_exe}" >nul 2>nul
 if not exist "{backup_exe}" (
     set /a RETRY+=1
-    if %RETRY% LSS 5 (
-        timeout /t 1 /nobreak >nul
+    if %RETRY% LSS 8 (
+        ping -n 2 127.0.0.1 >nul
         goto retry_backup
     )
 )
@@ -143,8 +149,8 @@ set RETRY=0
 move /y "{new_exe_path}" "{current_exe}" >nul 2>nul
 if errorlevel 1 (
     set /a RETRY+=1
-    if %RETRY% LSS 5 (
-        timeout /t 1 /nobreak >nul
+    if %RETRY% LSS 8 (
+        ping -n 2 127.0.0.1 >nul
         goto retry_move
     )
 )
@@ -160,14 +166,23 @@ rem DLL이 잠기거나 격리되어 LoadLibrary 오류 창이 뜸(그 창을 �
 rem 되는 걸 보면 스캔이 끝나면 저절로 해결되는 일시적인 문제). 이 오류 창 자체가 떠 있는
 rem 동안에도 프로세스는 "실행 중"으로 잡히기 때문에 떠 있는지 여부로는 성공/실패를 구분할
 rem 수 없어서, 재시도 대신 처음부터 스캔이 넉넉히 끝날 시간을 확보해 아예 안 뜨게 함
-timeout /t 8 /nobreak >nul
+ping -n 9 127.0.0.1 >nul
 start "" "{current_exe}"
 del "%~f0"
 exit /b
 
 :rollback
+set RETRY=0
+:retry_rollback
 del /f /q "{current_exe}" >nul 2>nul
 move /y "{backup_exe}" "{current_exe}" >nul 2>nul
+if not exist "{current_exe}" (
+    set /a RETRY+=1
+    if %RETRY% LSS 8 (
+        ping -n 2 127.0.0.1 >nul
+        goto retry_rollback
+    )
+)
 start "" "{current_exe}"
 del "%~f0"
 """
