@@ -57,7 +57,7 @@ AVATAR_MAX_B64_CHARS = 2000
 # store.py의 NICKNAME_MAX_LEN과 값을 맞춰야 함
 NICKNAME_MAX_LEN = 20
 
-APP_TITLE = "쥽채팅"
+APP_TITLE = "춥채팅"
 
 STYLE_SHEET = """
 QWidget {
@@ -222,6 +222,10 @@ QPushButton#titleBarMinBtn:hover, QPushButton#titleBarMaxBtn:hover {
 QPushButton#titleBarCloseBtn:hover {
     background-color: #e0454b;
     color: #ffffff;
+}
+QDialog {
+    border: 1px solid #7c6cf0;
+    border-radius: 8px;
 }
 """
 
@@ -822,7 +826,18 @@ class ColorPickerDialog(QDialog):
         self.setWindowTitle("색상 선택")
         self.selected_color = QColor(initial)
 
-        layout = QVBoxLayout(self)
+        if IS_WINDOWS:
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(1, 1, 1, 1)
+        outer.setSpacing(0)
+        outer.addWidget(_MiniTitleBar(self, "색상 선택"))
+
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(16, 14, 16, 14)
+        outer.addWidget(body)
 
         grid_widget = QWidget()
         grid = QGridLayout(grid_widget)
