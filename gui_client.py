@@ -13,8 +13,8 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import Qt, QBuffer, QIODevice, QSize, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
+from PySide6.QtCore import Qt, QBuffer, QIODevice, QPoint, QSize, QTimer, Signal
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtNetwork import QSslSocket, QSslCertificate, QSslConfiguration, QSslError
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget, QVBoxLayout,
@@ -27,6 +27,24 @@ import server_registry
 import irc_protocol
 import history_store
 
+IS_WINDOWS = sys.platform == "win32"
+if IS_WINDOWS:
+    # 프레임 없는 창에서 커스텀 타이틀바를 쓰면서도 네이티브 크기조절/드래그이동/에어로 스냅을
+    # 그대로 살리기 위해 WM_NCHITTEST를 직접 가로채 응답함 (Windows 전용 API)
+    import ctypes
+    from ctypes import wintypes
+
+    _WM_NCHITTEST = 0x0084
+    _HTCAPTION = 2
+    _HTLEFT = 10
+    _HTRIGHT = 11
+    _HTTOP = 12
+    _HTTOPLEFT = 13
+    _HTTOPRIGHT = 14
+    _HTBOTTOM = 15
+    _HTBOTTOMLEFT = 16
+    _HTBOTTOMRIGHT = 17
+
 CONNECT_TIMEOUT_MS = 10_000
 DEFAULT_SSL_PORT = "6697"
 DEFAULT_PLAIN_PORT = "6667"
@@ -36,8 +54,8 @@ DEFAULT_PLAIN_PORT = "6667"
 TIMESTAMP_BADGE_FONT_PX = 7
 TIMESTAMP_BADGE_HEIGHT_PX = 14
 
-UNREAD_DOT_PX = 9
-UNREAD_DOT_COLOR = "#ff6b6b"
+UNREAD_BLINK_COLOR = "#ffcc4d"
+UNREAD_BLINK_INTERVAL_MS = 350
 
 AVATAR_LIST_PX = 16
 AVATAR_MSG_PX = 16  # 참여자 목록과 채팅창 아이콘이 항상 같은 크기/이미지로 보이게 통일
@@ -85,6 +103,13 @@ QPushButton#secondary {
     background-color: #3d3f52;
 }
 QPushButton#secondary:hover {
+    background-color: #4a4d63;
+}
+QPushButton#addChannelBtn {
+    background-color: #3d3f52;
+    padding: 4px 10px;
+}
+QPushButton#addChannelBtn:hover {
     background-color: #4a4d63;
 }
 QScrollArea {
@@ -182,6 +207,31 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
     background: none;
 }
+QWidget#titleBar {
+    background-color: #16171f;
+    border-bottom: 1px solid #3d3f52;
+}
+QLabel#titleBarText {
+    color: #cfd0da;
+    font-weight: bold;
+    font-size: 13px;
+}
+QPushButton#titleBarMinBtn, QPushButton#titleBarMaxBtn, QPushButton#titleBarCloseBtn {
+    background-color: transparent;
+    border: none;
+    border-radius: 0px;
+    color: #cfd0da;
+    font-weight: normal;
+    font-size: 14px;
+    padding: 0px;
+}
+QPushButton#titleBarMinBtn:hover, QPushButton#titleBarMaxBtn:hover {
+    background-color: #3d3f52;
+}
+QPushButton#titleBarCloseBtn:hover {
+    background-color: #e0454b;
+    color: #ffffff;
+}
 """
 
 
@@ -253,27 +303,6 @@ def _hashed_avatar_pixmap(user_id: str) -> QPixmap:
     return pixmap
 
 
-def _build_unread_icon() -> QIcon:
-    size = UNREAD_DOT_PX
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(UNREAD_DOT_COLOR))
-    painter.drawEllipse(0, 0, size, size)
-    painter.end()
-    return QIcon(pixmap)
-
-
-_UNREAD_ICON: QIcon | None = None
-
-
-def _unread_icon() -> QIcon:
-    global _UNREAD_ICON
-    if _UNREAD_ICON is None:
-        _UNREAD_ICON = _build_unread_icon()
-    return _UNREAD_ICON
 
 
 class ChatClient(QSslSocket):
@@ -664,7 +693,7 @@ class MessageWidget(QWidget):
     def __init__(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setContentsMargins(4, 1, 4, 1)
 
         avatar_label = QLabel()
         avatar_label.setFixedSize(AVATAR_MSG_PX, AVATAR_MSG_PX)
@@ -715,7 +744,7 @@ class ChannelLogView(QScrollArea):
         content = QWidget()
         self._layout = QVBoxLayout(content)
         self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._layout.setSpacing(4)
+        self._layout.setSpacing(2)
         self.setWidget(content)
 
         # QTimer.singleShot(0, ...)로 "다음 이벤트 루프 틱에 맨 아래로" 하는 방식은
@@ -985,6 +1014,8 @@ class ChatPage(QWidget):
         self._nicknames: dict[str, str] = {}
         self._active_channel = ""
         self._protocol_mode = "custom"
+        self._unread_timers: dict[str, QTimer] = {}
+        self._unread_blink_on: dict[str, bool] = {}
 
         layout = QHBoxLayout()
 
@@ -997,7 +1028,7 @@ class ChatPage(QWidget):
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self._on_tab_changed)
         add_tab_btn = QPushButton("+ 채널 추가")
-        add_tab_btn.setObjectName("secondary")
+        add_tab_btn.setObjectName("addChannelBtn")
         add_tab_btn.setToolTip("새 채널에 입장합니다")
         add_tab_btn.clicked.connect(lambda: self.on_add_channel())
         self.tabs.setCornerWidget(add_tab_btn, Qt.Corner.TopRightCorner)
@@ -1078,6 +1109,7 @@ class ChatPage(QWidget):
         view = self._log_views.pop(channel, None)
         if view is None:
             return
+        self._stop_blink(channel)
         self._members.pop(channel, None)
         index = self.tabs.indexOf(view)
         if index >= 0:
@@ -1107,7 +1139,7 @@ class ChatPage(QWidget):
         if view is None:
             return
         self._active_channel = view.channel_name
-        self.tabs.setTabIcon(index, QIcon())
+        self._stop_blink(view.channel_name)
         self.user_list.clear()
         self._add_userlist_items(self._members.get(self._active_channel, []))
         self._update_input_enabled()
@@ -1118,31 +1150,45 @@ class ChatPage(QWidget):
             self.on_leave_channel(channel)
 
     def _mark_unread(self, channel: str):
+        """빨간 점 대신 탭 글자색 자체가 밝은 색으로 빠르게 깜빡이게 함 (탭을 보기 전까지 계속)"""
         if channel == self._active_channel:
             return
         view = self._log_views.get(channel)
         if view is None:
             return
-        index = self.tabs.indexOf(view)
-        if index >= 0:
-            self._blink_tab(view)
+        if self.tabs.indexOf(view) < 0:
+            return
+        if channel in self._unread_timers:
+            return  # 이미 깜빡이는 중
+        timer = QTimer(self)
+        timer.timeout.connect(lambda ch=channel: self._toggle_blink(ch))
+        self._unread_timers[channel] = timer
+        self._unread_blink_on[channel] = False
+        timer.start(UNREAD_BLINK_INTERVAL_MS)
+        self._toggle_blink(channel)  # 바로 한 번 켜서 즉각 반응하는 느낌을 줌
 
-    def _blink_tab(self, view: "ChannelLogView"):
-        """두 번 깜빡인 뒤 안읽음 표시가 계속 켜진 상태로 남음"""
-        sequence = [True, False, True, False, True]
+    def _toggle_blink(self, channel: str):
+        view = self._log_views.get(channel)
+        index = self.tabs.indexOf(view) if view is not None else -1
+        if view is None or index < 0 or channel == self._active_channel:
+            self._stop_blink(channel)
+            return
+        on = not self._unread_blink_on.get(channel, False)
+        self._unread_blink_on[channel] = on
+        color = QColor(UNREAD_BLINK_COLOR) if on else QColor()
+        self.tabs.tabBar().setTabTextColor(index, color)
 
-        def step(i: int):
+    def _stop_blink(self, channel: str):
+        timer = self._unread_timers.pop(channel, None)
+        if timer is not None:
+            timer.stop()
+            timer.deleteLater()
+        self._unread_blink_on.pop(channel, None)
+        view = self._log_views.get(channel)
+        if view is not None:
             index = self.tabs.indexOf(view)
-            if index < 0:
-                return  # 그 사이에 채널을 나갔으면 중단
-            if view.channel_name == self._active_channel:
-                self.tabs.setTabIcon(index, QIcon())
-                return  # 깜빡이는 도중 사용자가 이미 그 탭을 보고 있으면 중단
-            self.tabs.setTabIcon(index, _unread_icon() if sequence[i] else QIcon())
-            if i + 1 < len(sequence):
-                QTimer.singleShot(150, lambda: step(i + 1))
-
-        step(0)
+            if index >= 0:
+                self.tabs.tabBar().setTabTextColor(index, QColor())
 
     def _submit(self):
         text = self.msg_input.text().strip()
@@ -1219,11 +1265,109 @@ class ChatPage(QWidget):
             self._add_userlist_items(self._members.get(self._active_channel, []))
 
 
+def _titlebar_icon(kind: str, color: str = "#cfd0da") -> QIcon:
+    """타이틀바 버튼 아이콘을 직접 그림 - 글꼴에 따라 유니코드 기호가 없거나 다르게
+    보이는 걸 피하려고 최소화/최대화/복원/닫기 아이콘을 전부 벡터 선으로 그림"""
+    size = 10
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    pen = QPen(QColor(color))
+    pen.setWidth(1)
+    painter.setPen(pen)
+    if kind == "minimize":
+        painter.drawLine(0, size - 1, size - 1, size - 1)
+    elif kind == "maximize":
+        painter.drawRect(0, 0, size - 1, size - 1)
+    elif kind == "restore":
+        painter.drawRect(2, 0, size - 3, size - 3)
+        painter.drawRect(0, 2, size - 3, size - 3)
+    elif kind == "close":
+        painter.drawLine(0, 0, size - 1, size - 1)
+        painter.drawLine(0, size - 1, size - 1, 0)
+    painter.end()
+    return QIcon(pixmap)
+
+
+class TitleBar(QWidget):
+    """OS 기본 타이틀바 대신 쓰는 커스텀 타이틀바 - 프로그램 아이콘/이름과
+    테마에 맞춘 최소화/최대화/닫기 버튼을 보여줌. 실제 드래그 이동/크기조절/더블클릭
+    최대화는 MainWindow.nativeEvent(WM_NCHITTEST)에서 이 위젯 영역을 캡션으로
+    응답해서 처리하므로(에어로 스냅도 그대로 됨), 이 위젯 자체는 순수 표시/버튼 클릭만 담당"""
+
+    TITLEBAR_HEIGHT = 36
+
+    def __init__(self, window: QMainWindow, parent=None):
+        super().__init__(parent)
+        self._window = window
+        self.setObjectName("titleBar")
+        self.setFixedHeight(self.TITLEBAR_HEIGHT)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 0, 0, 0)
+        layout.setSpacing(8)
+
+        self.icon_label = QLabel()
+        self.icon_label.setFixedSize(18, 18)
+        self.icon_label.setScaledContents(True)
+        layout.addWidget(self.icon_label)
+
+        self.title_label = QLabel(APP_TITLE)
+        self.title_label.setObjectName("titleBarText")
+        layout.addWidget(self.title_label)
+
+        layout.addStretch(1)
+
+        self.min_btn = self._make_button("titleBarMinBtn", _titlebar_icon("minimize"), "최소화")
+        self.min_btn.clicked.connect(window.showMinimized)
+        layout.addWidget(self.min_btn)
+
+        self.max_btn = self._make_button("titleBarMaxBtn", _titlebar_icon("maximize"), "최대화")
+        self.max_btn.clicked.connect(self._toggle_maximize)
+        layout.addWidget(self.max_btn)
+
+        self.close_btn = self._make_button("titleBarCloseBtn", _titlebar_icon("close"), "닫기")
+        self.close_btn.clicked.connect(window.close)
+        layout.addWidget(self.close_btn)
+
+    def _make_button(self, object_name: str, icon: QIcon, tooltip: str) -> QPushButton:
+        btn = QPushButton()
+        btn.setObjectName(object_name)
+        btn.setIcon(icon)
+        btn.setIconSize(QSize(10, 10))
+        btn.setFixedSize(44, self.TITLEBAR_HEIGHT)
+        btn.setToolTip(tooltip)
+        btn.setCursor(Qt.CursorShape.ArrowCursor)
+        return btn
+
+    def set_icon(self, icon: QIcon):
+        self.icon_label.setPixmap(icon.pixmap(18, 18))
+
+    def set_maximized(self, is_maximized: bool):
+        self.max_btn.setIcon(_titlebar_icon("restore" if is_maximized else "maximize"))
+        self.max_btn.setToolTip("이전 크기로" if is_maximized else "최대화")
+
+    def _toggle_maximize(self):
+        if self._window.isMaximized():
+            self._window.showNormal()
+        else:
+            self._window.showMaximized()
+
+
 class MainWindow(QMainWindow):
+    _RESIZE_BORDER = 6  # 프레임 없는 창에서 이 두께(px)만큼을 크기조절 손잡이로 취급
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
         self.resize(720, 480)
+        self.setMinimumSize(480, 360)
+
+        self._title_bar: TitleBar | None = None
+        self._resize_edge: str | None = None
+        if IS_WINDOWS:
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
 
         self.client = ChatClient()
         self.client.connected.connect(self._on_tcp_connected)
@@ -1267,7 +1411,74 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.login_page)
         self.stack.addWidget(self.channel_page)
         self.stack.addWidget(self.chat_page)
-        self.setCentralWidget(self.stack)
+
+        if IS_WINDOWS:
+            container = QWidget()
+            outer = QVBoxLayout(container)
+            outer.setContentsMargins(0, 0, 0, 0)
+            outer.setSpacing(0)
+            self._title_bar = TitleBar(self)
+            outer.addWidget(self._title_bar)
+            outer.addWidget(self.stack)
+            self.setCentralWidget(container)
+        else:
+            self.setCentralWidget(self.stack)
+
+    def set_window_icon(self, icon: QIcon):
+        self.setWindowIcon(icon)
+        if self._title_bar is not None:
+            self._title_bar.set_icon(icon)
+
+    def changeEvent(self, event):
+        # 버튼 클릭이 아니라 더블클릭/에어로 스냅 등 다른 경로로 최대화 상태가
+        # 바뀌어도 타이틀바의 최대화<->복원 아이콘이 항상 실제 상태와 맞도록 동기화
+        if event.type() == event.Type.WindowStateChange and self._title_bar is not None:
+            self._title_bar.set_maximized(self.isMaximized())
+        super().changeEvent(event)
+
+    def nativeEvent(self, event_type, message):
+        if IS_WINDOWS and self._title_bar is not None and event_type in (
+            b"windows_generic_MSG", b"windows_dispatcher_MSG",
+        ):
+            msg = wintypes.MSG.from_address(int(message))
+            if msg.message == _WM_NCHITTEST:
+                gx = ctypes.c_short(msg.lParam & 0xFFFF).value
+                gy = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
+                global_pos = QPoint(gx, gy)
+                local_pos = self.mapFromGlobal(global_pos)
+                w, h = self.width(), self.height()
+                bw = self._RESIZE_BORDER
+                if not self.isMaximized():
+                    on_left = local_pos.x() < bw
+                    on_right = local_pos.x() > w - bw
+                    on_top = local_pos.y() < bw
+                    on_bottom = local_pos.y() > h - bw
+                    hit = None
+                    if on_top and on_left:
+                        hit = _HTTOPLEFT
+                    elif on_top and on_right:
+                        hit = _HTTOPRIGHT
+                    elif on_bottom and on_left:
+                        hit = _HTBOTTOMLEFT
+                    elif on_bottom and on_right:
+                        hit = _HTBOTTOMRIGHT
+                    elif on_left:
+                        hit = _HTLEFT
+                    elif on_right:
+                        hit = _HTRIGHT
+                    elif on_top:
+                        hit = _HTTOP
+                    elif on_bottom:
+                        hit = _HTBOTTOM
+                    if hit is not None:
+                        return True, hit
+                title_local = self._title_bar.mapFromGlobal(global_pos)
+                if self._title_bar.rect().contains(title_local):
+                    for btn in (self._title_bar.min_btn, self._title_bar.max_btn, self._title_bar.close_btn):
+                        if btn.geometry().contains(title_local):
+                            return False, 0  # 버튼 위는 일반 클릭으로 처리되게 그냥 통과
+                    return True, _HTCAPTION  # 나머지 타이틀바 영역은 캡션 취급 -> 드래그 이동/에어로 스냅/더블클릭 최대화가 공짜로 됨
+        return super().nativeEvent(event_type, message)
 
     # ---------------- 로그인 ----------------
     def _handle_login_submit(self, mode: str):
@@ -1717,10 +1928,32 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "오류", text)
 
 
+def _find_app_icon() -> str:
+    for name in ("icon.ico", "icon.png"):
+        candidate = os.path.join(_app_dir(), name)
+        if os.path.exists(candidate):
+            return candidate
+    return ""
+
+
 def main():
+    if IS_WINDOWS:
+        # 작업표시줄이 python.exe 기본 아이콘 대신 우리 아이콘/앱 이름으로 묶이게 함
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("FriendChat.GuiClient")
+        except Exception:  # noqa: BLE001
+            pass
+
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE_SHEET)
+
+    icon_path = _find_app_icon()
+    if icon_path:
+        app.setWindowIcon(QIcon(icon_path))
+
     window = MainWindow()
+    if icon_path:
+        window.set_window_icon(QIcon(icon_path))
     window.show()
     sys.exit(app.exec())
 
