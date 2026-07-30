@@ -20,7 +20,7 @@ from PySide6.QtNetwork import QSslSocket, QSslCertificate, QSslConfiguration, QS
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QWidget, QVBoxLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem,
-    QFileDialog, QFrame, QComboBox, QInputDialog, QCheckBox,
+    QFileDialog, QFrame, QComboBox, QCheckBox,
     QTabWidget, QTabBar, QScrollArea, QGridLayout, QDialog, QDialogButtonBox,
     QProgressDialog, QSizePolicy,
 )
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 import server_registry
 import irc_protocol
 import history_store
+import avatar_store
 from version import APP_VERSION
 
 IS_WINDOWS = sys.platform == "win32"
@@ -56,7 +57,7 @@ AVATAR_MAX_B64_CHARS = 2000
 # store.py의 NICKNAME_MAX_LEN과 값을 맞춰야 함
 NICKNAME_MAX_LEN = 20
 
-APP_TITLE = "친구 채팅"
+APP_TITLE = "쥽채팅"
 
 STYLE_SHEET = """
 QWidget {
@@ -595,7 +596,7 @@ class LoginPage(QWidget):
         except ValueError:
             self.show_status("포트는 숫자여야 합니다.")
             return
-        name, ok = QInputDialog.getText(self, "공용서버 등록", "서버 이름:")
+        name, ok = themed_get_text(self, "공용서버 등록", "서버 이름:")
         name = name.strip()
         if not ok or not name:
             return
@@ -735,6 +736,7 @@ class MessageWidget(QWidget):
         text_label.setOpenExternalLinks(True)
         text_label.setCursor(Qt.CursorShape.IBeamCursor)
         body.addWidget(text_label)
+        self._text_label = text_label
 
         badge_row = QHBoxLayout()
         badge_row.addStretch(1)
@@ -746,6 +748,16 @@ class MessageWidget(QWidget):
         body.addLayout(badge_row)
 
         layout.addLayout(body, 1)
+
+    def set_wrap_width(self, view_width: int):
+        """네트워크로 비동기로 도착한 메시지는 QScrollArea 레이아웃이 아직 완전히
+        안정되기 전에 위젯이 추가될 때가 있어, word-wrap 라벨의 자동 heightForWidth
+        계산이 화면 폭을 반영 못 하고 줄바꿈이 안 풀린 채로 굳어버리는 경우가 있었음
+        (내가 직접 보낸 메시지는 항상 창이 안정된 상태에서 추가돼서 이 문제가 안 드러남).
+        Qt의 자동 계산에 기대는 대신 뷰포트 폭을 직접 계산해서 넘겨주면 타이밍과
+        무관하게 항상 정확히 줄바꿈됨."""
+        inner_width = max(40, view_width - AVATAR_MSG_PX - 24)
+        self._text_label.setMaximumWidth(inner_width)
 
 
 def _build_system_label(text: str) -> QLabel:
@@ -769,6 +781,7 @@ class ChannelLogView(QScrollArea):
         self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._layout.setSpacing(2)
         self.setWidget(content)
+        self._messages: list[MessageWidget] = []
 
         # QTimer.singleShot(0, ...)로 "다음 이벤트 루프 틱에 맨 아래로" 하는 방식은
         # 레이아웃이 새 위젯의 크기를 아직 계산 전이라 스크롤 범위(maximum)가 갱신되기
@@ -780,10 +793,19 @@ class ChannelLogView(QScrollArea):
         self.verticalScrollBar().setValue(maximum)
 
     def append_message(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap):
-        self._layout.addWidget(MessageWidget(sender, text, mine, ts, avatar_pixmap))
+        widget = MessageWidget(sender, text, mine, ts, avatar_pixmap)
+        widget.set_wrap_width(self.viewport().width())
+        self._layout.addWidget(widget)
+        self._messages.append(widget)
 
     def append_system(self, text: str):
         self._layout.addWidget(_build_system_label(text))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        width = self.viewport().width()
+        for widget in self._messages:
+            widget.set_wrap_width(width)
 
 
 class ColorPickerDialog(QDialog):
@@ -903,7 +925,18 @@ class ProfileDialog(QDialog):
         self._cell_colors: dict[tuple[int, int], QColor | None] = {}
         self._buttons: dict[tuple[int, int], QPushButton] = {}
 
-        layout = QVBoxLayout(self)
+        if IS_WINDOWS:
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(1, 1, 1, 1)
+        outer.setSpacing(0)
+        outer.addWidget(_MiniTitleBar(self, "프로필 변경"))
+
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(16, 14, 16, 14)
+        outer.addWidget(body)
 
         nick_row = QHBoxLayout()
         nick_row.addWidget(QLabel("닉네임"))
@@ -1034,6 +1067,10 @@ class ChatPage(QWidget):
         self._log_views: dict[str, ChannelLogView] = {}
         self._members: dict[str, list[str]] = {}
         self._avatar_pixmaps: dict[str, QPixmap] = {}
+        for uid, avatar_b64 in avatar_store.load_avatars().items():
+            pixmap = _decode_avatar_pixmap(avatar_b64)
+            if pixmap is not None:
+                self._avatar_pixmaps[uid] = pixmap
         self._nicknames: dict[str, str] = {}
         self._active_channel = ""
         self._protocol_mode = "custom"
@@ -1286,6 +1323,9 @@ class ChatPage(QWidget):
             pixmap = _decode_avatar_pixmap(avatar_b64)
             if pixmap is not None:
                 self._avatar_pixmaps[user_id] = pixmap
+                # 실제 IRC 서버는 아이콘을 서버가 저장해주지 않으므로, 로컬에도 남겨둬서
+                # 다음에 앱을 다시 켰을 때 상대가 다시 보내주기 전까지도 곧바로 보이게 함
+                avatar_store.save_avatar(user_id, avatar_b64)
         if self._active_channel:
             self.user_list.clear()
             self._add_userlist_items(self._members.get(self._active_channel, []))
@@ -1494,6 +1534,60 @@ def themed_question(parent, title: str, text: str) -> bool:
 def themed_warning(parent, title: str, text: str):
     dlg = ThemedDialog(title, text, [("확인", None)], parent=parent)
     dlg.exec()
+
+
+class ThemedInputDialog(QDialog):
+    """QInputDialog.getText() 대신 쓰는, 앱 테마와 일치하는 프레임 없는 한 줄 입력창"""
+
+    def __init__(self, title: str, label: str, echo_mode=QLineEdit.EchoMode.Normal, parent=None):
+        super().__init__(parent)
+        self.result_text = ""
+        self.accepted_value = False
+        if IS_WINDOWS:
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(1, 1, 1, 1)
+        outer.setSpacing(0)
+        outer.addWidget(_MiniTitleBar(self, title))
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(16, 14, 16, 14)
+        label_widget = QLabel(label)
+        label_widget.setWordWrap(True)
+        body_layout.addWidget(label_widget)
+
+        self._input = QLineEdit()
+        self._input.setEchoMode(echo_mode)
+        self._input.returnPressed.connect(self._on_ok)
+        body_layout.addWidget(self._input)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        cancel_btn = QPushButton("취소")
+        cancel_btn.setObjectName("secondary")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        ok_btn = QPushButton("확인")
+        ok_btn.clicked.connect(self._on_ok)
+        btn_row.addWidget(ok_btn)
+        body_layout.addLayout(btn_row)
+        outer.addWidget(body)
+
+        self.setMinimumWidth(320)
+        self._input.setFocus()
+
+    def _on_ok(self):
+        self.result_text = self._input.text()
+        self.accepted_value = True
+        self.accept()
+
+
+def themed_get_text(parent, title: str, label: str, echo_mode=QLineEdit.EchoMode.Normal) -> tuple[str, bool]:
+    dlg = ThemedInputDialog(title, label, echo_mode, parent=parent)
+    dlg.exec()
+    return dlg.result_text, dlg.accepted_value
 
 
 _RESIZE_EDGE_CURSORS = {
@@ -1771,11 +1865,11 @@ class MainWindow(QMainWindow):
 
     def _handle_add_channel(self):
         """채팅 화면 안에서 채널을 추가로 입장 (기존 채널을 떠나지 않음, 새 채널 생성은 지원 안 함)"""
-        channel, ok = QInputDialog.getText(self.chat_page, "채널 추가", "입장할 채널명:")
+        channel, ok = themed_get_text(self.chat_page, "채널 추가", "입장할 채널명:")
         channel = channel.strip()
         if not ok or not channel:
             return
-        key, ok2 = QInputDialog.getText(
+        key, ok2 = themed_get_text(
             self.chat_page, "채널 추가", "채널 비밀번호 (없으면 비워둠):", QLineEdit.EchoMode.Password
         )
         key = key if ok2 else ""

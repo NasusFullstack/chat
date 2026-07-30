@@ -155,10 +155,12 @@ if not exist "{current_exe}" goto rollback
 for %%A in ("{current_exe}") do if %%~zA LSS {MIN_VALID_EXE_BYTES} goto rollback
 
 del /f /q "{backup_exe}" >nul 2>nul
-rem 백신 실시간 검사가 방금 옮긴 exe(수십MB)를 스캔하는 도중에 바로 실행하면
-rem 스캔 중인 DLL이 잠기거나 격리되어 LoadLibrary 오류로 죽는 경우가 있어, 검사가
-rem 끝날 시간을 잠깐 벌어줌
-timeout /t 2 /nobreak >nul
+rem 백신 실시간 검사가 방금 옮긴 exe(수십MB)를 스캔하는 도중에 바로 실행하면 스캔 중인
+rem DLL이 잠기거나 격리되어 LoadLibrary 오류 창이 뜸(그 창을 닫고 수동으로 다시 실행하면
+rem 되는 걸 보면 스캔이 끝나면 저절로 해결되는 일시적인 문제). 이 오류 창 자체가 떠 있는
+rem 동안에도 프로세스는 "실행 중"으로 잡히기 때문에 떠 있는지 여부로는 성공/실패를 구분할
+rem 수 없어서, 재시도 대신 처음부터 스캔이 넉넉히 끝날 시간을 확보해 아예 안 뜨게 함
+timeout /t 8 /nobreak >nul
 start "" "{current_exe}"
 del "%~f0"
 exit /b
