@@ -33,7 +33,18 @@ from version import APP_VERSION
 
 IS_WINDOWS = sys.platform == "win32"
 if IS_WINDOWS:
-    import ctypes  # 작업표시줄 아이콘 그룹핑(AppUserModelID)에만 사용
+    import ctypes  # 작업표시줄 아이콘 그룹핑(AppUserModelID) + @호출 시 작업표시줄 깜빡임에 사용
+
+    class _FLASHWINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", ctypes.c_uint),
+            ("hwnd", ctypes.c_void_p),
+            ("dwFlags", ctypes.c_uint),
+            ("uCount", ctypes.c_uint),
+            ("dwTimeout", ctypes.c_uint),
+        ]
+
+    _FLASHW_TRAY = 0x00000002
 
 CONNECT_TIMEOUT_MS = 10_000
 DEFAULT_SSL_PORT = "6697"
@@ -47,6 +58,13 @@ TIMESTAMP_BADGE_HEIGHT_PX = 14
 UNREAD_BLINK_COLOR = "#ffcc4d"
 UNREAD_BLINK_INTERVAL_MS = 350
 UNREAD_BLINK_COUNT = 4  # 안 보는 채널에 새 메시지가 오면 이 횟수만큼 반짝인 뒤 밝은 색으로 고정됨
+UNREAD_DOT_PX = 9
+
+CHANNEL_TAB_FIXED_WIDTH = 110  # 채널 탭은 글자 수와 무관하게 항상 이 폭으로 고정
+ADD_TAB_LABEL = "+"
+
+MENTION_COOLDOWN_SEC = 60  # 같은 채널에서 같은 사람을 다시 @호출하려면 이만큼 기다려야 함
+_MENTION_TOKEN_RE = re.compile(r"@([^\s@]+)")
 
 AVATAR_LIST_PX = 16
 AVATAR_MSG_PX = 16  # 참여자 목록과 채팅창 아이콘이 항상 같은 크기/이미지로 보이게 통일
@@ -94,13 +112,6 @@ QPushButton#secondary {
     background-color: #3d3f52;
 }
 QPushButton#secondary:hover {
-    background-color: #4a4d63;
-}
-QPushButton#addChannelBtn {
-    background-color: #3d3f52;
-    padding: 4px 10px;
-}
-QPushButton#addChannelBtn:hover {
     background-color: #4a4d63;
 }
 QScrollArea {
@@ -155,6 +166,12 @@ QTabBar::tab:selected {
 }
 QTabBar::tab:hover {
     background-color: #3d3f52;
+}
+/* '+' 채널 추가 탭 - 유일하게 disabled로 두는 탭이라 이 규칙이 다른 탭에는 안 걸림 */
+QTabBar::tab:disabled {
+    background-color: #22232e;
+    color: #9a9cad;
+    font-weight: bold;
 }
 QScrollBar:vertical {
     background: transparent;
@@ -318,6 +335,56 @@ def _hashed_avatar_pixmap(user_id: str) -> QPixmap:
     return pixmap
 
 
+def _build_unread_dot_icon(color: str) -> QIcon:
+    """탭 안 읽음 표시용 점 아이콘. QTabBar::tab { color: ... }를 QSS에 못박아둬서
+    QTabBar.setTabTextColor()로는 글자색이 절대 안 바뀌길래(스타일시트가 항상 우선함),
+    스타일시트 영향을 안 받는 아이콘으로 깜빡이게 함"""
+    pixmap = QPixmap(UNREAD_DOT_PX, UNREAD_DOT_PX)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(color))
+    painter.drawEllipse(0, 0, UNREAD_DOT_PX, UNREAD_DOT_PX)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _flash_taskbar_icon(window: QWidget, count: int = 6):
+    """@호출을 받으면 작업표시줄 아이콘을 깜빡임. Windows 전용 API라 다른 OS에서는 아무것도 안 함"""
+    if not IS_WINDOWS:
+        return
+    info = _FLASHWINFO(
+        cbSize=ctypes.sizeof(_FLASHWINFO),
+        hwnd=int(window.winId()),
+        dwFlags=_FLASHW_TRAY,
+        uCount=count,
+        dwTimeout=0,
+    )
+    ctypes.windll.user32.FlashWindowEx(ctypes.byref(info))
+
+
+def _shake_window(window: QWidget, duration_ms: int = 1000, amplitude: int = 6, interval_ms: int = 40):
+    """@호출을 받으면 채팅창 전체를 1초간 좌우로 흔듦"""
+    if window.isMinimized():
+        return  # 최소화 상태면 흔들어도 안 보이므로 생략 - 작업표시줄 깜빡임만으로 충분
+    origin = window.pos()
+    steps = max(1, duration_ms // interval_ms)
+    state = {"i": 0}
+    timer = QTimer(window)
+
+    def tick():
+        state["i"] += 1
+        if state["i"] > steps:
+            window.move(origin)
+            timer.stop()
+            timer.deleteLater()
+            return
+        dx = amplitude if state["i"] % 2 == 0 else -amplitude
+        window.move(origin.x() + dx, origin.y())
+
+    timer.timeout.connect(tick)
+    timer.start(interval_ms)
 
 
 class ChatClient(QSslSocket):
@@ -786,6 +853,11 @@ class ChannelLogView(QScrollArea):
         self._layout.setSpacing(2)
         self.setWidget(content)
         self._messages: list[MessageWidget] = []
+        # 숨겨진(비활성) 탭은 자기 자신의 viewport().width()가 실제 화면 폭과 다르게
+        # 나올 수 있어서(레이아웃이 아직 그 탭을 기준으로 확정되지 않았으므로), ChatPage가
+        # 항상 보이는 self.tabs 위젯 기준으로 계산한 폭을 미리 알려주는 값. 0이면 아직
+        # 못 받은 상태라 자기 viewport 값으로 대체함
+        self._container_width = 0
 
         # QTimer.singleShot(0, ...)로 "다음 이벤트 루프 틱에 맨 아래로" 하는 방식은
         # 레이아웃이 새 위젯의 크기를 아직 계산 전이라 스크롤 범위(maximum)가 갱신되기
@@ -796,30 +868,35 @@ class ChannelLogView(QScrollArea):
     def _scroll_to_bottom(self, minimum: int, maximum: int):
         self.verticalScrollBar().setValue(maximum)
 
+    def _effective_width(self) -> int:
+        return self._container_width or self.viewport().width()
+
     def append_message(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap):
         widget = MessageWidget(sender, text, mine, ts, avatar_pixmap)
-        widget.set_wrap_width(self.viewport().width())
+        widget.set_wrap_width(self._effective_width())
         self._layout.addWidget(widget)
         self._messages.append(widget)
 
     def append_system(self, text: str):
         self._layout.addWidget(_build_system_label(text))
 
+    def set_container_width(self, width: int):
+        """ChatPage가 (항상 보이는 self.tabs 기준으로) 미리 계산해서 알려주는 폭.
+        탭을 실제로 보게 될 때가 아니라 채널 추가/창 리사이즈 시점에 미리 반영해두므로,
+        탭을 전환하는 순간에 메시지들이 눈앞에서 다시 줄바꿈되며 스크롤이 출렁이는 게 없어짐."""
+        if width <= 0 or width == self._container_width:
+            return
+        self._container_width = width
+        self.refresh_wrap_widths()
+
     def refresh_wrap_widths(self):
-        """비활성(숨겨진) 탭에 쌓인 메시지는 append 시점에 뷰포트가 아직 최종 크기로
-        자리잡기 전이라 폭이 0이거나 부정확할 수 있음(탭이 실제로 화면에 보인 적이
-        없으면 리사이즈 이벤트도 안 옴). 그 채널 탭을 실제로 열어볼 때 한 번 더
-        강제로 맞춰줘서, 안 보이는 동안 온 메시지도 확실히 화면 폭에 맞게 줄바꿈되게 함."""
-        width = self.viewport().width()
+        width = self._effective_width()
         for widget in self._messages:
             widget.set_wrap_width(width)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.refresh_wrap_widths()
-
-    def showEvent(self, event):
-        super().showEvent(event)
+        # 사용자가 실제로 창 크기를 바꿀 때는 지금 보이는 탭 기준 실측값으로 보정
         self.refresh_wrap_widths()
 
 
@@ -1080,6 +1157,16 @@ class ProfileDialog(QDialog):
         self.accept()
 
 
+class _ChannelTabBar(QTabBar):
+    """채널 탭은 글자 수와 무관하게 항상 고정폭, 맨 끝의 '+' 탭만 그 절반 크기로 그림"""
+
+    def tabSizeHint(self, index: int) -> QSize:
+        size = super().tabSizeHint(index)
+        if self.tabText(index) == ADD_TAB_LABEL:
+            return QSize(CHANNEL_TAB_FIXED_WIDTH // 2, size.height())
+        return QSize(CHANNEL_TAB_FIXED_WIDTH, size.height())
+
+
 class ChatPage(QWidget):
     """여러 채널을 탭으로 동시에 열어둘 수 있음"""
 
@@ -1103,6 +1190,10 @@ class ChatPage(QWidget):
         self._unread_timers: dict[str, QTimer] = {}
         self._unread_blink_on: dict[str, bool] = {}
         self._unread_blink_step: dict[str, int] = {}
+        # (채널, 호출 대상 user_id) -> 마지막으로 그 사람을 @호출해서 실제로 전송한 시각.
+        # 내가 같은 사람을 다시 호출할 때만 쿨타임이 적용되고, 다른 사람을 부르는 건 무관함
+        self._mention_cooldowns: dict[tuple[str, str], float] = {}
+        self._mention_notice_timer: QTimer | None = None
 
         layout = QHBoxLayout()
 
@@ -1113,19 +1204,30 @@ class ChatPage(QWidget):
         self._center_stack.addWidget(self._empty_label)
 
         self.tabs = QTabWidget()
+        self.tabs.setTabBar(_ChannelTabBar())
         self.tabs.currentChanged.connect(self._on_tab_changed)
-        add_tab_btn = QPushButton("+ 채널 추가")
-        add_tab_btn.setObjectName("addChannelBtn")
-        add_tab_btn.setToolTip("새 채널에 입장합니다")
-        add_tab_btn.clicked.connect(lambda: self.on_add_channel())
-        self.tabs.setCornerWidget(add_tab_btn, Qt.Corner.TopRightCorner)
+        self.tabs.tabBarClicked.connect(self._on_tab_bar_clicked)
+        # '+' 채널 추가 버튼을 코너에 따로 두는 대신, 항상 맨 오른쪽에 붙어있는 '+' 탭
+        # 자체로 구현 - 마지막 채널 탭 바로 뒤에 절반 크기로 붙어서 자연스럽게 이어짐.
+        # disabled로 둬서 클릭해도 실제로 "선택"되지는 않고(currentChanged 안 씀),
+        # tabBarClicked만으로 클릭을 감지해서 채널 추가 콜백을 호출함
+        self._add_tab_placeholder = QWidget()
+        self.tabs.addTab(self._add_tab_placeholder, ADD_TAB_LABEL)
+        self.tabs.setTabEnabled(0, False)
+        self.tabs.setTabToolTip(0, "새 채널에 입장합니다")
         self._center_stack.addWidget(self.tabs)
 
         center.addWidget(self._center_stack)
 
+        # @호출이 쿨타임 중일 때만 나(보낸 사람)한테만 잠깐 보이는 안내문 - 채팅창에는 안 남음
+        self._mention_notice = QLabel("")
+        self._mention_notice.setObjectName("status_err")
+        self._mention_notice.setVisible(False)
+        center.addWidget(self._mention_notice)
+
         input_row = QHBoxLayout()
         self.msg_input = QLineEdit()
-        self.msg_input.setPlaceholderText("메시지 입력 후 Enter")
+        self.msg_input.setPlaceholderText("메시지 입력 후 Enter (@닉네임으로 호출 가능)")
         self.msg_input.returnPressed.connect(self._submit)
         send_btn = QPushButton("전송")
         send_btn.clicked.connect(self._submit)
@@ -1158,6 +1260,21 @@ class ChatPage(QWidget):
         self._avatar_pixmaps.clear()
         self._nicknames.clear()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._push_wrap_width()
+
+    def _push_wrap_width(self):
+        """self.tabs는 어떤 채널 탭이 떠 있든 항상 실제로 보이는 위젯이라 폭이 정확함.
+        이 값을 모든 채널(비활성 탭 포함)에 미리 알려주면, 탭을 실제로 클릭해서 볼 때
+        그제서야 폭을 다시 계산하며 메시지가 눈앞에서 재배치되는 것(스크롤 출렁임의
+        원인)을 막을 수 있음."""
+        width = self.tabs.width()
+        if width <= 0:
+            return
+        for view in self._log_views.values():
+            view.set_container_width(width)
+
     def _display_name_for(self, user_id: str) -> str:
         return self._nicknames.get(user_id, user_id)
 
@@ -1182,15 +1299,21 @@ class ChatPage(QWidget):
     def add_channel(self, channel: str, activate: bool = True):
         if channel not in self._log_views:
             view = ChannelLogView(channel)
+            view.set_container_width(self.tabs.width())
             self._log_views[channel] = view
             self._members[channel] = []
-            index = self.tabs.addTab(view, channel)
+            insert_at = self.tabs.count() - 1  # 맨 끝의 '+' 탭 바로 앞에 끼워넣음
+            index = self.tabs.insertTab(insert_at, view, channel)
             self.tabs.tabBar().setTabButton(
                 index, QTabBar.ButtonPosition.RightSide, self._make_close_button(channel)
             )
             self._center_stack.setCurrentWidget(self.tabs)
         if activate:
             self.set_active_channel(channel)
+
+    def _on_tab_bar_clicked(self, index: int):
+        if self.tabs.widget(index) is self._add_tab_placeholder:
+            self.on_add_channel()
 
     def remove_channel(self, channel: str):
         view = self._log_views.pop(channel, None)
@@ -1223,24 +1346,26 @@ class ChatPage(QWidget):
         if index < 0:
             return
         view = self.tabs.widget(index)
-        if view is None:
+        if view is None or view is self._add_tab_placeholder:
             return
         self._active_channel = view.channel_name
         self._stop_blink(view.channel_name)
         self.user_list.clear()
         self._add_userlist_items(self._members.get(self._active_channel, []))
         self._update_input_enabled()
-        # 비활성 상태로 있는 동안 온 메시지는 뷰포트 폭이 아직 안 잡힌 채로
-        # 추가됐을 수 있어서, 실제로 보게 되는 이 시점에 다시 한번 맞춰줌
-        view.refresh_wrap_widths()
+        # 폭은 ChatPage._push_wrap_width()가 채널 추가/창 리사이즈 시점에 이미 모든 탭에
+        # (비활성 탭 포함) 미리 반영해두므로, 탭을 볼 때 다시 재계산할 필요가 없음 -
+        # 예전에는 여기서 매번 재계산했는데, 그게 메시지들이 눈앞에서 다시 배치되며
+        # 스크롤이 출렁이는(위로 튀는) 원인이었음
 
     def _request_close_channel(self, channel: str):
         if themed_question(self, "채널 나가기", f"'{channel}' 채널에서 나갈까요?"):
             self.on_leave_channel(channel)
 
     def _mark_unread(self, channel: str):
-        """빨간 점 대신 탭 글자색 자체가 밝은 색으로 UNREAD_BLINK_COUNT번 깜빡인 뒤,
-        탭을 보기 전까지는 밝은 색을 그대로 유지함"""
+        """탭에 작은 점 아이콘이 UNREAD_BLINK_COUNT번 깜빡인 뒤, 탭을 보기 전까지는
+        점을 그대로 유지함 (글자색 깜빡임은 QTabBar::tab { color: ... } 스타일시트가
+        항상 우선 적용돼서 안 먹혔음 - 아이콘은 스타일시트 영향을 안 받아 확실히 보임)"""
         if channel == self._active_channel:
             return
         view = self._log_views.get(channel)
@@ -1268,8 +1393,8 @@ class ChatPage(QWidget):
         self._unread_blink_step[channel] = step
         on = not self._unread_blink_on.get(channel, False)
         self._unread_blink_on[channel] = on
-        color = QColor(UNREAD_BLINK_COLOR) if on else QColor()
-        self.tabs.tabBar().setTabTextColor(index, color)
+        icon = _build_unread_dot_icon(UNREAD_BLINK_COLOR) if on else QIcon()
+        self.tabs.tabBar().setTabIcon(index, icon)
         if on and step >= 2 * UNREAD_BLINK_COUNT - 1:
             # 지정된 횟수만큼 깜빡였으니 타이머만 멈추고 밝은 색은 그대로 유지
             # (실제로 탭을 봐야만 _stop_blink에서 기본 색으로 되돌아감)
@@ -1289,14 +1414,62 @@ class ChatPage(QWidget):
         if view is not None:
             index = self.tabs.indexOf(view)
             if index >= 0:
-                self.tabs.tabBar().setTabTextColor(index, QColor())
+                self.tabs.tabBar().setTabIcon(index, QIcon())
 
     def _submit(self):
         text = self.msg_input.text().strip()
         if not text or not self._active_channel:
             return
-        self.on_send(self._active_channel, text)
+        channel = self._active_channel
+        blocked_target, remaining = self._check_mention_cooldown(channel, text)
+        if blocked_target is not None:
+            # 쿨타임 중이면 메시지 자체를 아예 보내지 않음(채팅창에 안 남음) -
+            # 입력한 내용은 그대로 두고, 보낸 사람한테만 잠깐 안내문을 보여줌
+            self._show_mention_notice(f"@{blocked_target} 호출은 {remaining}초 후에 다시 가능합니다.")
+            return
+        self._record_mention_cooldowns(channel, text)
+        self.on_send(channel, text)
         self.msg_input.clear()
+
+    def _mentioned_targets(self, channel: str, text: str) -> list[str]:
+        """text에 있는 @토큰들을 그 채널의 실제 참여자(닉네임 또는 아이디)로 해석"""
+        tokens = _MENTION_TOKEN_RE.findall(text)
+        if not tokens:
+            return []
+        members = self._members.get(channel, [])
+        by_display = {self._display_name_for(uid): uid for uid in members}
+        by_id = {uid: uid for uid in members}
+        resolved = []
+        for token in tokens:
+            target = by_display.get(token) or by_id.get(token)
+            if target and target not in resolved:
+                resolved.append(target)
+        return resolved
+
+    def _check_mention_cooldown(self, channel: str, text: str) -> tuple[str | None, int]:
+        now = time.time()
+        for target in self._mentioned_targets(channel, text):
+            last = self._mention_cooldowns.get((channel, target))
+            if last is not None and now - last < MENTION_COOLDOWN_SEC:
+                remaining = int(MENTION_COOLDOWN_SEC - (now - last)) + 1
+                return self._display_name_for(target), remaining
+        return None, 0
+
+    def _record_mention_cooldowns(self, channel: str, text: str):
+        now = time.time()
+        for target in self._mentioned_targets(channel, text):
+            self._mention_cooldowns[(channel, target)] = now
+
+    def _show_mention_notice(self, text: str):
+        self._mention_notice.setText(text)
+        self._mention_notice.setVisible(True)
+        if self._mention_notice_timer is not None:
+            self._mention_notice_timer.stop()
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: self._mention_notice.setVisible(False))
+        timer.start(3000)
+        self._mention_notice_timer = timer
 
     def focus_input(self):
         self.msg_input.setFocus()
@@ -1312,6 +1485,20 @@ class ChatPage(QWidget):
             return
         view.append_message(self._display_name_for(sender), text, mine, ts, self._avatar_for(sender, AVATAR_MSG_PX))
         self._mark_unread(channel)
+        if not mine and self._is_mentioned(text):
+            self._trigger_mention_alert()
+
+    def _is_mentioned(self, text: str) -> bool:
+        if not self.my_id:
+            return False
+        my_names = {self.my_id, self._display_name_for(self.my_id)}
+        return any(token in my_names for token in _MENTION_TOKEN_RE.findall(text))
+
+    def _trigger_mention_alert(self):
+        """지금 그 채널을 보고 있는지와 무관하게 항상 작업표시줄 깜빡임 + 창 흔들림"""
+        top = self.window()
+        _flash_taskbar_icon(top)
+        _shake_window(top)
 
     def append_system(self, channel: str, text: str):
         view = self._log_views.get(channel)
