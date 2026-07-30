@@ -102,7 +102,12 @@ def apply_update_and_relaunch(new_exe_path: str):
     os.close(bat_fd)
     # tasklist로 원래 프로세스(pid)가 완전히 끝날 때까지 기다린 뒤 파일을 바꿔치기함.
     # move가 안티바이러스 검사 등으로 곧바로 안 먹힐 수 있어 몇 번 재시도함.
+    # chcp 65001(UTF-8)을 안 하면 cmd.exe가 시스템 기본 코드페이지(한국어 Windows는
+    # CP949)로 이 배치 파일을 읽어서, 폴더/파일 경로에 한글이 있으면 깨진 경로로
+    # move/start를 실행해 "파일을 찾을 수 없음" 오류가 남 - UTF-8 BOM으로 저장하고
+    # chcp 65001로 맞춰야 한글 경로가 안전하게 처리됨
     script = f"""@echo off
+chcp 65001 >nul
 :wait
 tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
 if not errorlevel 1 (
@@ -122,7 +127,7 @@ if errorlevel 1 (
 start "" "{current_exe}"
 del "%~f0"
 """
-    with open(bat_path, "w", encoding="utf-8") as f:
+    with open(bat_path, "w", encoding="utf-8-sig") as f:
         f.write(script)
     subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
     sys.exit(0)
