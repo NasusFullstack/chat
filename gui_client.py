@@ -167,8 +167,10 @@ QTabBar::tab:selected {
 QTabBar::tab:hover {
     background-color: #3d3f52;
 }
-/* '+' 채널 추가 탭 - 유일하게 disabled로 두는 탭이라 이 규칙이 다른 탭에는 안 걸림 */
-QTabBar::tab:disabled {
+/* '+' 채널 추가 탭 - 항상 마지막 탭이라는 설계상의 불변조건을 이용해 :last로 구분함
+   (disabled로 구분하려 했으나 disabled 탭은 마우스 이벤트 자체를 못 받아 클릭이 아예
+   안 먹혔던 문제가 있어서 enabled로 바꿈) */
+QTabBar::tab:last {
     background-color: #22232e;
     color: #9a9cad;
     font-weight: bold;
@@ -1209,11 +1211,13 @@ class ChatPage(QWidget):
         self.tabs.tabBarClicked.connect(self._on_tab_bar_clicked)
         # '+' 채널 추가 버튼을 코너에 따로 두는 대신, 항상 맨 오른쪽에 붙어있는 '+' 탭
         # 자체로 구현 - 마지막 채널 탭 바로 뒤에 절반 크기로 붙어서 자연스럽게 이어짐.
-        # disabled로 둬서 클릭해도 실제로 "선택"되지는 않고(currentChanged 안 씀),
-        # tabBarClicked만으로 클릭을 감지해서 채널 추가 콜백을 호출함
+        # 처음에는 setTabEnabled(False)로 막아뒀었는데, disabled 탭은 Qt에서 마우스
+        # 이벤트 자체를 안 받아서(진짜 클릭으로 검증하고서야 발견함 - 핸들러를 직접
+        # 호출하는 테스트로는 이 문제가 안 잡혔음) 실제로는 눌러도 아무 반응이 없었음.
+        # 그래서 그냥 enabled로 두고, 클릭으로 "선택"되는 순간 곧바로 원래 활성 채널로
+        # 되돌리는 방식으로 바꿈 - 같은 이벤트 처리 안에서 되돌아가므로 화면 깜빡임 없음
         self._add_tab_placeholder = QWidget()
         self.tabs.addTab(self._add_tab_placeholder, ADD_TAB_LABEL)
-        self.tabs.setTabEnabled(0, False)
         self.tabs.setTabToolTip(0, "새 채널에 입장합니다")
         self._center_stack.addWidget(self.tabs)
 
@@ -1314,6 +1318,24 @@ class ChatPage(QWidget):
     def _on_tab_bar_clicked(self, index: int):
         if self.tabs.widget(index) is self._add_tab_placeholder:
             self.on_add_channel()
+            # tabBarClicked 신호는 Qt 내부의 QTabBar::mouseReleaseEvent가 끝나기 "전에"
+            # 방출되는데, 그 신호 처리 직후 Qt가 자체적으로 한 번 더 setCurrentIndex를
+            # 호출해서 우리가 여기서 바로 되돌려도 곧바로 다시 덮어써버림(실측으로 확인함
+            # - 되돌린 직후엔 값이 맞다가 mouseClick이 완전히 리턴된 뒤엔 다시 '+' 탭으로
+            # 돌아가 있었음). 다음 이벤트 루프 틱으로 미뤄서 Qt의 내부 처리가 완전히
+            # 끝난 뒤에 되돌리면 확실히 반영됨
+            QTimer.singleShot(0, self._restore_active_tab)
+
+    def _restore_active_tab(self):
+        """'+' 탭이 클릭되면서 currentChanged로 잠깐 선택된 상태를 원래 활성 채널로
+        되돌려서 버튼처럼 동작하게 함. 아직 입장한 채널이 하나도 없으면(활성 채널 없음)
+        되돌릴 곳이 없으니 그냥 '+' 탭에 그대로 둠"""
+        view = self._log_views.get(self._active_channel)
+        if view is None:
+            return
+        index = self.tabs.indexOf(view)
+        if index >= 0:
+            self.tabs.setCurrentIndex(index)
 
     def remove_channel(self, channel: str):
         view = self._log_views.pop(channel, None)

@@ -5,4 +5,4 @@
 태그를 푸시하면 GitHub Actions가 자동으로 exe를 빌드해 릴리즈에 올리고,
 updater.py는 그 릴리즈 태그와 이 값을 비교해서 새 버전인지 판단함.
 """
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
