@@ -18,25 +18,44 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [1/4] Installing required libraries...
+echo [1/6] Installing required libraries...
 pip install -q -r requirements.txt
 pip install -q pyinstaller
 
-echo [2/4] Building GUI client (recommended, for friends)...
-pyinstaller --noconfirm --clean --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." --name FriendChat_GUI gui_client.py
+echo [2/6] Building GUI client (recommended, for friends)...
+rem --onedir: 실행할 때마다 임시폴더에 압축을 새로 푸는 --onefile 방식은 그 타이밍에
+rem 백신이 끼어들면 "Failed to load Python DLL" 오류가 나는 경우가 있어서, 미리 풀린
+rem 상태로 배포하는 --onedir로 바꿈 (대신 파일 하나가 아니라 폴더로 나눠줘야 함 -
+rem installer.iss로 만든 설치 프로그램을 같이 배포하면 사용자는 그래도 파일 하나만 받음)
+pyinstaller --noconfirm --clean --onedir --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." --name FriendChat_GUI gui_client.py
 
-echo [3/4] Building CLI client (lightweight, for friends)...
+echo [3/6] Building CLI client (lightweight, for friends)...
 pyinstaller --noconfirm --clean --onefile --console --name FriendChat_CLI cli_client.py
 
-echo [4/4] Building server program (for the host)...
+echo [4/6] Building server program (for the host)...
 pyinstaller --noconfirm --clean --onefile --console --name FriendChat_Server server.py
+
+echo [5/6] Packaging GUI update archive (dist\FriendChat_GUI.zip)...
+powershell -Command "Compress-Archive -Path 'dist\FriendChat_GUI\*' -DestinationPath 'dist\FriendChat_GUI.zip' -Force"
+
+echo [6/6] Building installer (FriendChat_Setup.exe)...
+set ISCC=
+if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe
+if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe
+if "%ISCC%"=="" (
+    echo   [Skipped] Inno Setup not found. Install it from https://jrsoftware.org/isdl.php
+    echo   to also build FriendChat_Setup.exe ^(the installer to share with friends^).
+) else (
+    "%ISCC%" /DAppVersion=0.0.0-local installer.iss
+)
 
 echo.
 echo ============================================
-echo  Files created inside the 'dist' folder:
-echo   - FriendChat_GUI.exe    (share this with friends - recommended)
-echo   - FriendChat_CLI.exe    (lightweight alternative)
-echo   - FriendChat_Server.exe (host runs this one)
+echo  Files created:
+echo   - installer_output\FriendChat_Setup.exe (share this with friends - recommended)
+echo   - dist\FriendChat_GUI.zip                (used by the app's own auto-updater)
+echo   - dist\FriendChat_CLI.exe                (lightweight alternative)
+echo   - dist\FriendChat_Server.exe             (host runs this one)
 echo.
 echo  These exe files run without Python installed.
 echo ============================================
