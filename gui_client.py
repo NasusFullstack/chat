@@ -10,6 +10,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 
@@ -237,6 +238,26 @@ def _find_default_cert() -> str:
 
 def _format_ts(ts: float) -> str:
     return datetime.datetime.fromtimestamp(ts).strftime("%H:%M")
+
+
+_URL_PATTERN = re.compile(r'((?:https?://|www\.)[^\s<>"]+)')
+
+
+def _linkify(escaped_text: str) -> str:
+    """이미 &lt;/&gt;로 이스케이프된 텍스트 안의 URL을 클릭 가능한 링크로 감쌈."""
+
+    def repl(match: re.Match) -> str:
+        raw = match.group(1)
+        trailing = ""
+        while raw and raw[-1] in ".,!?)]}'\"":
+            trailing = raw[-1] + trailing
+            raw = raw[:-1]
+        if not raw:
+            return match.group(0)
+        href = raw if raw.startswith("http") else f"http://{raw}"
+        return f'<a href="{href}" style="color:#7ec8ff; text-decoration:underline;">{raw}</a>{trailing}'
+
+    return _URL_PATTERN.sub(repl, escaped_text)
 
 
 # Qt(Schannel)가 인증서를 신뢰 못 할 때 내는 원본 오류 메시지에 등장하는 키워드들.
@@ -703,10 +724,16 @@ class MessageWidget(QWidget):
 
         color = "#7cd0ff" if mine else "#ffd27c"
         safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
+        safe_text = _linkify(safe_text)
         text_label = QLabel(f'<span style="color:{color}"><b>{sender}</b></span>: {safe_text}')
         text_label.setTextFormat(Qt.TextFormat.RichText)
         text_label.setWordWrap(True)
         text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        text_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        text_label.setOpenExternalLinks(True)
+        text_label.setCursor(Qt.CursorShape.IBeamCursor)
         body.addWidget(text_label)
 
         badge_row = QHBoxLayout()
