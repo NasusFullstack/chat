@@ -170,6 +170,13 @@ if not exist "{backup_dir}" (
     )
 )
 
+rem 백업(원래 설치 폴더를 .bak로 옮기는 것) 자체가 끝내 실패했다면, 그건 install_dir가
+rem 아직 잠겨있다는 뜻임 - 이 상태에서 그냥 다음 단계로 넘어가 rmdir로 install_dir를
+rem 지워버리면, 백업도 없고 새 파일 이동도 실패할 경우 원본이 통째로 사라짐(실제로
+rem 이렇게 GUI.exe가 사라지는 사고가 났음). 백업이 안 됐으면 절대 원본을 건드리지 않고
+rem 이번 업데이트만 포기함 - 다음 실행 때 다시 시도됨
+if not exist "{backup_dir}" goto abort_keep_current
+
 set RETRY=0
 :retry_move
 rmdir /s /q "{install_dir}" >nul 2>nul
@@ -208,6 +215,11 @@ if not exist "{new_exe_path}" (
         goto retry_rollback
     )
 )
+start "" "{current_exe}"
+del "%~f0"
+exit /b
+
+:abort_keep_current
 start "" "{current_exe}"
 del "%~f0"
 """
