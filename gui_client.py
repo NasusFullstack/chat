@@ -805,11 +805,22 @@ class ChannelLogView(QScrollArea):
     def append_system(self, text: str):
         self._layout.addWidget(_build_system_label(text))
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
+    def refresh_wrap_widths(self):
+        """비활성(숨겨진) 탭에 쌓인 메시지는 append 시점에 뷰포트가 아직 최종 크기로
+        자리잡기 전이라 폭이 0이거나 부정확할 수 있음(탭이 실제로 화면에 보인 적이
+        없으면 리사이즈 이벤트도 안 옴). 그 채널 탭을 실제로 열어볼 때 한 번 더
+        강제로 맞춰줘서, 안 보이는 동안 온 메시지도 확실히 화면 폭에 맞게 줄바꿈되게 함."""
         width = self.viewport().width()
         for widget in self._messages:
             widget.set_wrap_width(width)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.refresh_wrap_widths()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh_wrap_widths()
 
 
 class ColorPickerDialog(QDialog):
@@ -1219,6 +1230,9 @@ class ChatPage(QWidget):
         self.user_list.clear()
         self._add_userlist_items(self._members.get(self._active_channel, []))
         self._update_input_enabled()
+        # 비활성 상태로 있는 동안 온 메시지는 뷰포트 폭이 아직 안 잡힌 채로
+        # 추가됐을 수 있어서, 실제로 보게 되는 이 시점에 다시 한번 맞춰줌
+        view.refresh_wrap_widths()
 
     def _request_close_channel(self, channel: str):
         if themed_question(self, "채널 나가기", f"'{channel}' 채널에서 나갈까요?"):
@@ -2228,7 +2242,7 @@ def _try_auto_update() -> bool:
         QApplication.processEvents()
 
     try:
-        new_exe_path = updater.download_update(info["download_url"], progress_cb=on_progress)
+        new_package_path = updater.download_update(info["download_url"], progress_cb=on_progress)
     except Exception:  # noqa: BLE001
         dlg.close()
         return False
@@ -2237,7 +2251,7 @@ def _try_auto_update() -> bool:
     dlg.setValue(100)
     QApplication.processEvents()
     try:
-        updater.apply_update_and_relaunch(new_exe_path)  # 성공하면 여기서 프로세스가 끝남
+        updater.apply_update_and_relaunch(new_package_path)  # 성공하면 여기서 프로세스가 끝남
     except Exception:  # noqa: BLE001
         dlg.close()
         return False

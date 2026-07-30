@@ -22,9 +22,26 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - run: pyinstaller --noconfirm --clean --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." --name FriendChat_GUI gui_client.py
+      # --onedir: --onefile은 실행할 때마다 임시폴더에 압축을 새로 푸는데, 그 타이밍에
+      # 백신이 끼어들면 "Failed to load Python DLL" 오류가 나는 경우가 있어서(자동 업데이트
+      # 직후뿐 아니라 평소 실행에서도 재현됨), 미리 풀린 상태로 배포하는 --onedir로 바꿈
+      - run: pyinstaller --noconfirm --clean --onedir --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." --name FriendChat_GUI gui_client.py
+
+      # 앱 내부 자동 업데이트가 받는 패키지 - 설치 폴더 내용물을 통째로 교체하는 용도
+      - name: Package update archive
+        shell: pwsh
+        run: Compress-Archive -Path "dist/FriendChat_GUI/*" -DestinationPath "dist/FriendChat_GUI.zip" -Force
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer.iss
 
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" "dist/FriendChat_GUI.exe" --title "${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" "installer_output/FriendChat_Setup.exe" "dist/FriendChat_GUI.zip" --title "${{ github.ref_name }}" --generate-notes
