@@ -82,8 +82,13 @@ def download_update(download_url: str, progress_cb=None) -> str:
                     read += len(chunk)
                     if progress_cb is not None:
                         progress_cb(read, total)
-        if os.path.getsize(tmp_path) < MIN_VALID_EXE_BYTES:
+        actual_size = os.path.getsize(tmp_path)
+        if actual_size < MIN_VALID_EXE_BYTES:
             raise ValueError("다운로드된 파일 크기가 비정상적으로 작습니다 (잘렸거나 오류 페이지를 받았을 수 있음)")
+        # Content-Length를 서버가 알려준 경우, 실제로 받은 바이트 수가 정확히 일치하는지도
+        # 확인함 - 5MB 최소 기준만으로는 "충분히 크지만 중간에 끊긴" 다운로드를 못 걸러냄
+        if total and actual_size != total:
+            raise ValueError(f"다운로드가 중간에 끊겼습니다 (받은 크기 {actual_size} != 예상 크기 {total})")
     except Exception:
         try:
             os.remove(tmp_path)
@@ -95,8 +100,14 @@ def download_update(download_url: str, progress_cb=None) -> str:
 
 def apply_update_and_relaunch(new_exe_path: str):
     """현재 실행 파일을 새 exe로 교체하고 재시작함. 호출 즉시 현재 프로세스를 종료시키므로
-    이 함수 리턴 이후 코드는 실행되지 않는다고 가정하고 호출해야 함."""
+    이 함수 리턴 이후 코드는 실행되지 않는다고 가정하고 호출해야 함.
+
+    교체 전에 기존 exe를 백업해뒀다가, 교체 후 새 파일 크기가 이상하면(안티바이러스가
+    옮기는 도중 내용을 건드렸거나 손상된 경우) 백업으로 롤백함 - 그냥 덮어쓰기만 하면
+    실패했을 때 앱 자체가 완전히 망가진 채로 남기 때문에, 실패해도 최소한 원래 쓰던
+    버전으로는 계속 실행되도록 안전망을 둠."""
     current_exe = sys.executable
+    backup_exe = current_exe + ".bak"
     pid = os.getpid()
     bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="friendchat_update_")
     os.close(bat_fd)
@@ -114,6 +125,19 @@ if not errorlevel 1 (
     timeout /t 1 /nobreak >nul
     goto wait
 )
+
+del /f /q "{backup_exe}" >nul 2>nul
+set RETRY=0
+:retry_backup
+move /y "{current_exe}" "{backup_exe}" >nul 2>nul
+if not exist "{backup_exe}" (
+    set /a RETRY+=1
+    if %RETRY% LSS 5 (
+        timeout /t 1 /nobreak >nul
+        goto retry_backup
+    )
+)
+
 set RETRY=0
 :retry_move
 move /y "{new_exe_path}" "{current_exe}" >nul 2>nul
@@ -124,10 +148,24 @@ if errorlevel 1 (
         goto retry_move
     )
 )
+
+rem 새로 옮긴 파일이 정상 크기인지 확인 - 백신 등이 옮기는 도중 내용을 손상시켰으면
+rem 너무 작게 나오므로, 그 경우 방금 만든 백업으로 되돌려서 최소한 예전 버전은 계속 쓰게 함
+if not exist "{current_exe}" goto rollback
+for %%A in ("{current_exe}") do if %%~zA LSS {MIN_VALID_EXE_BYTES} goto rollback
+
+del /f /q "{backup_exe}" >nul 2>nul
 rem 백신 실시간 검사가 방금 옮긴 exe(수십MB)를 스캔하는 도중에 바로 실행하면
-rem 스캔 중인 DLL이 잠깨/격리되어 LoadLibrary 오류로 죽는 경우가 있어, 검사가
+rem 스캔 중인 DLL이 잠기거나 격리되어 LoadLibrary 오류로 죽는 경우가 있어, 검사가
 rem 끝날 시간을 잠깐 벌어줌
 timeout /t 2 /nobreak >nul
+start "" "{current_exe}"
+del "%~f0"
+exit /b
+
+:rollback
+del /f /q "{current_exe}" >nul 2>nul
+move /y "{backup_exe}" "{current_exe}" >nul 2>nul
 start "" "{current_exe}"
 del "%~f0"
 """
