@@ -9,14 +9,29 @@ from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QTabBar, QVBoxLayout, QWidget,
 )
 
+from chat_core.commands import KIND_ACTION, KIND_CHAT, KIND_NOTICE
 from gui.helpers import _format_ts, _linkify
 from gui.theme import ADD_TAB_LABEL, AVATAR_MSG_PX, CHANNEL_TAB_FIXED_WIDTH, TIMESTAMP_BADGE_HEIGHT_PX
+
+
+def _message_html(sender: str, safe_text: str, mine: bool, kind: str) -> str:
+    """메시지 종류별 표시 형식 - IRC 클라이언트들의 관행을 그대로 따름.
+
+    /me(행동)는 "* 닉 행동", /notice(공지)는 "-닉- 내용"으로 보통 채팅과 눈에 띄게 구분한다.
+    """
+    if kind == KIND_ACTION:
+        return f'<span style="color:#b39ddb"><i>* <b>{sender}</b> {safe_text}</i></span>'
+    if kind == KIND_NOTICE:
+        return f'<span style="color:#7fd6a8">-<b>{sender}</b>- {safe_text}</span>'
+    color = "#7cd0ff" if mine else "#ffd27c"
+    return f'<span style="color:{color}"><b>{sender}</b></span>: {safe_text}'
 
 
 class MessageWidget(QWidget):
     """채팅 메시지 한 개 - 왼쪽에 아바타, 오른쪽 아래에 시간 타원 배지"""
 
-    def __init__(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap, parent=None):
+    def __init__(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap,
+                 parent=None, kind: str = KIND_CHAT):
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 1, 4, 1)
@@ -37,10 +52,9 @@ class MessageWidget(QWidget):
         body = QVBoxLayout()
         body.setSpacing(1)
 
-        color = "#7cd0ff" if mine else "#ffd27c"
         safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
         safe_text = _linkify(safe_text)
-        text_label = QLabel(f'<span style="color:{color}"><b>{sender}</b></span>: {safe_text}')
+        text_label = QLabel(_message_html(sender, safe_text, mine, kind))
         text_label.setTextFormat(Qt.TextFormat.RichText)
         text_label.setWordWrap(True)
         text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -88,6 +102,9 @@ class ChannelLogView(QScrollArea):
         super().__init__(parent)
         self.channel_name = channel
         self.setWidgetResizable(True)
+        # 테두리는 QSS(QScrollArea#chatLog)에서 참여자 목록과 똑같은 모양으로 그림 -
+        # 예전엔 탭 pane 쪽 테두리와 겹쳐서 선이 끊겨 보였음
+        self.setObjectName("chatLog")
         self.setFrameShape(QFrame.Shape.NoFrame)
 
         content = QWidget()
@@ -114,8 +131,9 @@ class ChannelLogView(QScrollArea):
     def _effective_width(self) -> int:
         return self._container_width or self.viewport().width()
 
-    def append_message(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap):
-        widget = MessageWidget(sender, text, mine, ts, avatar_pixmap)
+    def append_message(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap,
+                       kind: str = KIND_CHAT):
+        widget = MessageWidget(sender, text, mine, ts, avatar_pixmap, kind=kind)
         widget.set_wrap_width(self._effective_width())
         self._layout.addWidget(widget)
         self._messages.append(widget)

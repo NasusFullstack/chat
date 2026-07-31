@@ -17,7 +17,18 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
       - run: pyinstaller --noconfirm --onefile --console --name FriendChat_CLI cli_client.py
-      - run: pyinstaller --noconfirm --onedir --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." --name FriendChat_GUI gui_client.py
+      # 치트 연출용 이미지는 저장소에 있으면 같이 넣고 없으면 건너뜀(release.yml과 같은 규칙)
+      - name: Build GUI
+        shell: pwsh
+        run: |
+          $data = @("icon.ico", "icon.png")
+          foreach ($name in @("battlecruiser.png", "mineral.png", "gas.png")) {
+            if (Test-Path $name) { $data += $name }
+          }
+          # $args는 PowerShell 자동 변수라 덮어쓰면 안 됨 - 다른 이름을 씀
+          $dataArgs = @()
+          foreach ($name in $data) { $dataArgs += @("--add-data", "$name;.") }
+          pyinstaller --noconfirm --onedir --windowed --icon=icon.ico @dataArgs --name FriendChat_GUI gui_client.py
       - run: pyinstaller --noconfirm --onefile --console --name FriendChat_Server server.py
       - uses: actions/upload-artifact@v4
         with:

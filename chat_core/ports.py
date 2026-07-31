@@ -69,6 +69,18 @@ class ProtocolPort(Protocol):
     def normalize_channel(self, channel: str) -> str:
         ...
 
+    def command_specs(self) -> Any:
+        """이 프로토콜이 지원하는 슬래시 명령 명세 목록(chat_core.commands.CommandSpec).
+
+        자동완성 목록과 /help가 같은 출처를 쓰게 하려고 포트에 둠 - 프로토콜마다
+        실제로 할 수 있는 명령이 다르므로(예: /whois는 IRC만) 목록도 프로토콜이 정함.
+        """
+        ...
+
+    def run_command(self, session: Any, channel: str, name: str, args: str) -> bool:
+        """슬래시 명령 실행. 이 프로토콜이 모르는 명령이면 False를 반환(세션이 안내함)."""
+        ...
+
 
 # 전송 포트: 프로토콜 구현체가 만든 페이로드를 실제로 소켓에 내보내는 콜러블.
 # 커스텀 프로토콜은 dict를, IRC는 문자열 라인을 넘김 - 어느 쪽이든 어댑터(GUI/CLI)가

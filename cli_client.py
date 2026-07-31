@@ -20,7 +20,7 @@ import sys
 
 import irc_protocol
 import server_registry
-from chat_core import events
+from chat_core import commands, events
 from chat_core.session import build_session
 
 CONNECT_TIMEOUT_SEC = 10
@@ -250,7 +250,13 @@ class CliAdapter:
             tag = "나" if event.mine else event.sender
             display = s.nicknames.get(event.sender, event.sender) if not event.mine else tag
             prefix = self._channel_prefix(event.channel)
-            line = f"{prefix}[{_format_ts(event.ts)}] {display}: {event.text}"
+            # /me(행동)와 /notice(공지)는 "닉: 내용" 형식이 아니라 IRC 관행대로 따로 그림
+            if event.kind == commands.KIND_ACTION:
+                line = f"{prefix}[{_format_ts(event.ts)}] * {display} {event.text}"
+            elif event.kind == commands.KIND_NOTICE:
+                line = f"{prefix}[{_format_ts(event.ts)}] -{display}- {event.text}"
+            else:
+                line = f"{prefix}[{_format_ts(event.ts)}] {display}: {event.text}"
             if event.mine and not self.interactive:
                 print(line)
             elif event.mine:
@@ -270,6 +276,14 @@ class CliAdapter:
 
         elif isinstance(event, events.MentionBlocked):
             self._out(f"[@{event.target_display} 호출은 {event.remaining_sec}초 후에 다시 가능합니다]")
+
+        elif isinstance(event, events.CommandHelp):
+            self._out("[사용 가능한 명령]")
+            for line in event.lines:
+                self._out("  " + line)
+
+        elif isinstance(event, events.CommandError):
+            self._out(f"[{event.text}]")
 
         elif isinstance(event, events.NicknameRetrying):
             print(f"[알림] 닉네임이 사용 중입니다. '{event.new_nickname}'(으)로 재시도합니다.")
@@ -353,13 +367,30 @@ async def channel_flow(adapter: CliAdapter, writer):
             return
 
 
+# CLI 화면 조작 전용 명령 - 서버로 나가지 않고 터미널 쪽에서만 의미가 있음
+_CLI_LOCAL_HELP = [
+    "/입장(/join) <채널> [비밀번호]  -  채널에 입장합니다",
+    "/전환(/switch) <채널>  -  활성 채널을 바꿉니다",
+    "/나가기(/leave) [채널]  -  채널에서 나갑니다",
+    "/채널목록(/channels)  -  참여 중인 채널을 봅니다",
+    "/종료(/quit)  -  프로그램을 끝냅니다",
+]
+
+
 async def _handle_slash_command(adapter: CliAdapter, writer, command: str):
     s = adapter.session
     normalize = irc_protocol.normalize_channel if adapter.protocol == "irc" else (lambda c: c)
     parts = command.split(maxsplit=2)
     cmd = parts[0]
 
-    if cmd in ("/입장", "/join"):
+    if cmd == "/help":
+        # CLI 전용 명령을 먼저 보여주고, 프로토콜이 지원하는 명령은 코어가 이어서 알려줌
+        print("[CLI 전용 명령]")
+        for line in _CLI_LOCAL_HELP:
+            print("  " + line)
+        s.send_message(s.active_channel, command)
+        await _drain(writer)
+    elif cmd in ("/입장", "/join"):
         if len(parts) < 2:
             print("[사용법] /입장 <채널명> [비밀번호]")
             return
@@ -393,7 +424,14 @@ async def _handle_slash_command(adapter: CliAdapter, writer, command: str):
             )
             print(f"[참여 채널: {listing}] (*는 활성 채널)")
     else:
-        print(f"[오류] 알 수 없는 명령: {cmd}")
+        # CLI 전용 명령이 아니면 코어에 넘김 - /me, /notice, /whois 같은 프로토콜 명령은
+        # GUI와 완전히 같은 구현(chat_core)을 타므로 여기서 다시 만들 필요가 없음.
+        # 코어도 모르는 명령이면 CommandError 이벤트로 안내가 나감
+        if not s.active_channel:
+            print("[오류] 채널에 먼저 입장하세요.")
+            return
+        s.send_message(s.active_channel, command)
+        await _drain(writer)
 
 
 async def listen_loop(adapter: CliAdapter, reader):

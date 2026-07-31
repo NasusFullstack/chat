@@ -187,34 +187,39 @@ QLabel#timestampBadge {
     border-radius: 7px;
     padding: 0px 7px;
 }
-/* 탭 아래 본문(pane)과 선택된 탭이 같은 면색(#16171f)이라 하나로 이어져 보이게 함 -
-   예전엔 pane 모서리(8px)와 탭 모서리(6px)가 달라 살짝 어긋나 보였음 */
+/* 탭 영역에는 테두리를 두지 않음. 예전엔 pane 테두리 + 탭 테두리 + 채팅영역이 겹쳐서
+   선이 끊긴 것처럼 보였음. 지금은 채팅 로그(QScrollArea#chatLog)가 참여자 목록과
+   완전히 같은 카드 테두리를 갖고, 탭은 그 위에 얹히는 형태라 선이 하나로 깔끔함 */
 QTabWidget::pane {
-    background-color: #16171f;
-    border: 1px solid #3d3f52;
-    border-top-left-radius: 0px;
-    border-top-right-radius: 10px;
-    border-bottom-left-radius: 10px;
-    border-bottom-right-radius: 10px;
-    top: -1px;
+    background: transparent;
+    border: none;
+    top: 0px;
 }
+/* 탭은 사방이 닫힌 '칩' 모양으로 두고 채팅 카드와 살짝 띄움. 예전처럼 탭 아래를 열어두면
+   그 아래를 지나는 카드 테두리 선과 만나 선이 끊긴 것처럼 보임 */
 QTabBar::tab {
     background-color: #22232e;
     color: #9a9cad;
-    padding: 7px 14px;
+    padding: 6px 14px;
     border: 1px solid #3d3f52;
-    border-bottom: none;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
-    margin-right: 2px;
+    border-radius: 8px;
+    margin-right: 4px;
+    margin-bottom: 6px;
 }
 QTabBar::tab:selected {
     background-color: #16171f;
     color: #ffffff;
+    border: 1px solid #7c6cf0;
 }
 QTabBar::tab:hover:!selected {
     background-color: #2f3140;
     color: #cfd0da;
+}
+/* 채팅 로그 - 참여자 목록(QListWidget)과 같은 면색/테두리/모서리로 통일 */
+QScrollArea#chatLog {
+    background-color: #16171f;
+    border: 1px solid #3d3f52;
+    border-radius: 10px;
 }
 /* '+' 채널 추가 탭 - 항상 마지막 탭이라는 설계상의 불변조건을 이용해 :last로 구분함
    (disabled로 구분하려 했으나 disabled 탭은 마우스 이벤트 자체를 못 받아 클릭이 아예
@@ -291,10 +296,12 @@ QPushButton#titleBarCloseBtn:hover {
     background-color: #e0454b;
     color: #ffffff;
 }
-/* 팝업(프로필 변경/채널 추가/확인창)은 뒤에 있는 본창과 색이 같아 경계가 안 보이던
-   문제가 있어서, 유일하게 강조색 테두리를 씀 - 컨테이너 모서리(10px)로 통일 */
+/* 팝업(프로필 변경/채널 추가/확인창) - 테두리 색을 다른 창들과 같은 #3d3f52로 통일함.
+   원래는 본창과 구분하려고 보라색을 썼는데, 팝업만 색이 튀어서 오히려 이질적이었음.
+   구분은 색이 아니라 팝업 자체 배경(#22232e)이 본창(#1e1f29)보다 밝은 것으로 충분함 */
 QDialog {
-    border: 1px solid #7c6cf0;
+    background-color: #22232e;
+    border: 1px solid #3d3f52;
     border-radius: 10px;
 }
 """

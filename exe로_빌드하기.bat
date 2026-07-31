@@ -27,7 +27,13 @@ rem --onedir: 실행할 때마다 임시폴더에 압축을 새로 푸는 --onef
 rem 백신이 끼어들면 "Failed to load Python DLL" 오류가 나는 경우가 있어서, 미리 풀린
 rem 상태로 배포하는 --onedir로 바꿈 (대신 파일 하나가 아니라 폴더로 나눠줘야 함 -
 rem installer.iss로 만든 설치 프로그램을 같이 배포하면 사용자는 그래도 파일 하나만 받음)
-pyinstaller --noconfirm --clean --onedir --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." --name FriendChat_GUI gui_client.py
+rem 치트 연출용 이미지(배틀크루저/미네랄/가스)는 있으면 같이 넣고, 없으면 건너뜀 -
+rem 앱이 파일 없을 때는 직접 그리는 쪽으로 폴백하므로 없어도 빌드/실행 둘 다 정상
+set EXTRA_DATA=
+if exist battlecruiser.png set EXTRA_DATA=%EXTRA_DATA% --add-data "battlecruiser.png;."
+if exist mineral.png set EXTRA_DATA=%EXTRA_DATA% --add-data "mineral.png;."
+if exist gas.png set EXTRA_DATA=%EXTRA_DATA% --add-data "gas.png;."
+pyinstaller --noconfirm --clean --onedir --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;."%EXTRA_DATA% --name FriendChat_GUI gui_client.py
 
 echo [3/6] Building CLI client (lightweight, for friends)...
 pyinstaller --noconfirm --clean --onefile --console --name FriendChat_CLI cli_client.py

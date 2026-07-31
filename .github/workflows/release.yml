@@ -25,7 +25,20 @@ jobs:
       # --onedir: --onefile은 실행할 때마다 임시폴더에 압축을 새로 푸는데, 그 타이밍에
       # 백신이 끼어들면 "Failed to load Python DLL" 오류가 나는 경우가 있어서(자동 업데이트
       # 직후뿐 아니라 평소 실행에서도 재현됨), 미리 풀린 상태로 배포하는 --onedir로 바꿈
-      - run: pyinstaller --noconfirm --clean --onedir --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." --name FriendChat_GUI gui_client.py
+      #
+      # 치트 연출용 이미지(battlecruiser/mineral/gas)는 저장소에 있으면 같이 넣고, 없으면
+      # 그냥 건너뜀 - 앱이 파일 없을 때는 직접 그리는 쪽으로 폴백하므로 빌드가 깨지지 않음
+      - name: Build GUI
+        shell: pwsh
+        run: |
+          $data = @("icon.ico", "icon.png")
+          foreach ($name in @("battlecruiser.png", "mineral.png", "gas.png")) {
+            if (Test-Path $name) { $data += $name } else { Write-Host "skip (없음): $name" }
+          }
+          # $args는 PowerShell 자동 변수라 덮어쓰면 안 됨 - 다른 이름을 씀
+          $dataArgs = @()
+          foreach ($name in $data) { $dataArgs += @("--add-data", "$name;.") }
+          pyinstaller --noconfirm --clean --onedir --windowed --icon=icon.ico @dataArgs --name FriendChat_GUI gui_client.py
 
       # 앱 내부 자동 업데이트가 받는 패키지 - 설치 폴더 내용물을 통째로 교체하는 용도
       - name: Package update archive

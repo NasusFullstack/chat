@@ -6,11 +6,12 @@
 """
 import time
 
-from chat_core import events
+from chat_core import commands, events
 from chat_core.protocols import wire_custom as wire
+from chat_core.protocols.common_commands import CommonCommands
 
 
-class CustomProtocol:
+class CustomProtocol(CommonCommands):
     name = "custom"
 
     # ---------- 의도(내보내기) ----------
@@ -44,6 +45,37 @@ class CustomProtocol:
 
     def normalize_channel(self, channel: str) -> str:
         return channel
+
+    # ---------- 슬래시 명령 ----------
+    # 커스텀 서버(server.py)는 IRC처럼 NOTICE/WHOIS/MODE 같은 개념이 없어서, 서버를
+    # 고치지 않고 흉내낼 수 있는 것만 지원한다. 지원 목록에 없는 명령은 세션이
+    # "이 서버에서는 지원하지 않는 명령" 안내를 띄움(조용히 무시하면 먹통처럼 보임).
+    def command_specs(self):
+        return _SPECS
+
+    def run_command(self, session, channel: str, name: str, args: str) -> bool:
+        handler = _HANDLERS_BY_NAME.get(name)
+        if handler is None:
+            return False
+        handler(self, session, channel, args)
+        return True
+
+    def _cmd_notice(self, session, channel: str, args: str) -> None:
+        if not args:
+            session.emit(events.CommandError(f"사용법: {commands.NOTICE.usage}"))
+            return
+        # 서버는 텍스트를 그대로 중계만 하므로, IRC와 같은 프레이밍을 태워 보내면
+        # 받는 쪽 클라이언트가 알아서 공지 형태로 그려줌
+        session.send_wire_chat(channel, commands.format_notice(args), args)
+
+    def _cmd_names(self, session, channel: str, args: str) -> None:
+        # 커스텀 서버는 참여자 목록을 변경 시마다 알아서 밀어주므로 재조회 요청이 없음.
+        # 지금 세션이 알고 있는 목록을 다시 발행해서 화면만 갱신함
+        target = args.strip() or channel
+        if not target:
+            session.emit(events.CommandError("참여자를 조회할 채널이 없습니다."))
+            return
+        session.replace_members(target, session.members.get(target, set()))
 
     # ---------- 수신 처리 ----------
     def handle_incoming(self, session, raw) -> None:
@@ -120,3 +152,14 @@ class CustomProtocol:
         wire.TYPE_MEMBER_NICKNAME: _on_member_nickname,
         wire.TYPE_ERROR: _on_error,
     }
+
+
+# 표를 클래스 밖에 두는 이유는 irc.py와 같음(상속받은 COMMON_COMMANDS는 클래스 본문
+# 안에서는 아직 참조할 수 없음)
+_COMMANDS = {
+    **CommonCommands.COMMON_COMMANDS,
+    commands.NOTICE: CustomProtocol._cmd_notice,
+    commands.NAMES: CustomProtocol._cmd_names,
+}
+_SPECS = sorted(_COMMANDS, key=lambda spec: spec.name)
+_HANDLERS_BY_NAME = {spec.name: handler for spec, handler in _COMMANDS.items()}
