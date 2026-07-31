@@ -209,6 +209,17 @@ class ChatSession:
     def set_nickname(self, nickname: str):
         self.protocol.publish_nickname(self, nickname)
 
+    def restore_my_profile(self, avatar_b64: str | None):
+        """로그인 직후, 예전에 내가 설정해둔 아이콘을 되살림(네트워크로 보내지는 않음).
+
+        보낼 필요가 없는 이유: 커스텀 서버는 계정에 이미 저장해두고 입장 때 알아서
+        내려주고, IRC는 채널에 입장하는 순간 JOIN 처리에서 자동으로 뿌려짐. 여기서는
+        "내 아이콘이 뭐였는지"를 세션이 기억하게만 해두면 됨 - 이게 없으면 재시작 후
+        프로필 창이 비어 보이고, IRC에선 남들에게 내 아이콘을 다시 못 보냄."""
+        if not avatar_b64 or not self.my_id:
+            return
+        self.apply_avatar(self.my_id, avatar_b64)
+
     def normalize_channel(self, channel: str) -> str:
         return self.protocol.normalize_channel(channel)
 

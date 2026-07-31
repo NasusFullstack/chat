@@ -21,8 +21,8 @@ from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QPushButton, QStackedWidget, QTabBar, QTabWidget,
-    QVBoxLayout, QWidget,
+    QListWidget, QListWidgetItem, QPushButton, QScrollArea, QStackedWidget, QTabBar,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 import avatar_store
@@ -32,9 +32,10 @@ from gui.helpers import (
     _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert, _hashed_avatar_pixmap,
 )
 from gui.theme import (
-    ADD_TAB_LABEL, AVATAR_LIST_PX, AVATAR_MSG_PX, DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT,
-    UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
+    ADD_TAB_LABEL, APP_TITLE, AVATAR_LIST_PX, AVATAR_MSG_PX, DEFAULT_PLAIN_PORT,
+    DEFAULT_SSL_PORT, UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
 )
+from version import APP_VERSION
 from gui.cheat_overlay import CheatOverlay
 from gui.widgets import ChannelLogView, _ChannelTabBar
 
@@ -50,9 +51,14 @@ class LoginPage(QWidget):
 
         box = QVBoxLayout()
         box.setSpacing(8)
-        title = QLabel("채팅 프로그램 접속")
+        title = QLabel(f"{APP_TITLE} 접속")
         title.setObjectName("title")
         box.addWidget(title)
+
+        # 어느 버전을 쓰고 있는지 한눈에 보이게(문의 받을 때 버전부터 확인하게 되므로)
+        version_label = QLabel(f"v{APP_VERSION}")
+        version_label.setObjectName("hint")
+        box.addWidget(version_label)
 
         self.protocol_combo = QComboBox()
         self.protocol_combo.addItem("친구 채팅 서버 (커스텀)", "custom")
@@ -113,6 +119,9 @@ class LoginPage(QWidget):
         self.pw_input = QLineEdit()
         self.pw_input.setPlaceholderText("비밀번호")
         self.pw_input.setEchoMode(QLineEdit.EchoMode.Password)
+        # 아이디/비밀번호 칸에서 Enter로 바로 로그인
+        self.pw_input.returnPressed.connect(lambda: self.on_submit("login"))
+        self.user_input.returnPressed.connect(lambda: self.on_submit("login"))
         box.addWidget(self.pw_input)
 
         self.auto_login_checkbox = QCheckBox("자동로그인 (다음에 앱을 열면 바로 로그인)")
@@ -139,9 +148,25 @@ class LoginPage(QWidget):
         box.addWidget(self.status_label)
 
         container = QFrame()
+        container.setObjectName("card")   # 로그인/채널 화면의 카드 - QSS에서 테두리/여백을 줌
         container.setLayout(box)
         container.setFixedWidth(360)
-        layout.addWidget(container)
+
+        # 로그인 폼은 항목이 많아서 창을 최소 크기로 줄이면 카드가 잘림(실측: 582px 필요,
+        # 최소 창에선 486px만 확보). 스크롤 영역에 담아 어떤 창 크기에서도 다 볼 수 있게 함
+        holder = QWidget()
+        holder_layout = QVBoxLayout(holder)
+        holder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        holder_layout.setContentsMargins(0, 12, 0, 12)
+        holder_layout.addWidget(container)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("plainScroll")  # 테두리/배경 없는 스크롤 영역(QSS에서 처리)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(holder)
+        layout.addWidget(scroll)
         self.setLayout(layout)
 
         self._reload_servers()
@@ -283,9 +308,10 @@ class LoginPage(QWidget):
 
 
 class ChannelPage(QWidget):
-    def __init__(self, on_submit):
+    def __init__(self, on_submit, on_back=None):
         super().__init__()
         self.on_submit = on_submit
+        self.on_back = on_back
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -297,11 +323,14 @@ class ChannelPage(QWidget):
 
         self.channel_input = QLineEdit()
         self.channel_input.setPlaceholderText("채널명 (예: #친구들)")
+        # 채널명/비번 입력창에서 Enter로 바로 입장 (매번 마우스로 버튼 누르지 않게)
+        self.channel_input.returnPressed.connect(lambda: self.on_submit("join"))
         box.addWidget(self.channel_input)
 
         self.key_input = QLineEdit()
         self.key_input.setPlaceholderText("채널 비밀번호 (선택)")
         self.key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.key_input.returnPressed.connect(lambda: self.on_submit("join"))
         box.addWidget(self.key_input)
 
         btn_row = QHBoxLayout()
@@ -319,7 +348,14 @@ class ChannelPage(QWidget):
         self.status_label.setWordWrap(True)
         box.addWidget(self.status_label)
 
+        # 로그인 화면으로 되돌아갈 수단이 없으면 계정을 잘못 골랐을 때 앱을 껐다 켜야 함
+        self.back_btn = QPushButton("← 로그인 화면으로")
+        self.back_btn.setObjectName("secondary")
+        self.back_btn.clicked.connect(lambda: self.on_back() if self.on_back else None)
+        box.addWidget(self.back_btn)
+
         container = QFrame()
+        container.setObjectName("card")   # 로그인/채널 화면의 카드 - QSS에서 테두리/여백을 줌
         container.setLayout(box)
         container.setFixedWidth(360)
         layout.addWidget(container)
@@ -341,12 +377,15 @@ class ChannelPage(QWidget):
 class ChatPage(QWidget):
     """여러 채널을 탭으로 동시에 열어둘 수 있음"""
 
-    def __init__(self, on_send, on_add_channel, on_leave_channel, on_set_avatar):
+    def __init__(self, on_send, on_add_channel, on_leave_channel, on_set_avatar, on_all_channels_left=None):
         super().__init__()
         self.on_send = on_send
         self.on_add_channel = on_add_channel
         self.on_leave_channel = on_leave_channel
         self.on_set_avatar = on_set_avatar
+        # 마지막 채널까지 나가면 채널 선택 화면으로 돌려보내기 위한 콜백
+        # (없으면 빈 채팅 화면에 갇혀서 다시 들어갈 방법이 '+' 탭밖에 없음)
+        self.on_all_channels_left = on_all_channels_left
         self.my_id = ""
         self._log_views: dict[str, ChannelLogView] = {}
         self._members: dict[str, list[str]] = {}
@@ -526,7 +565,20 @@ class ChatPage(QWidget):
             self._active_channel = ""
             self._center_stack.setCurrentWidget(self._empty_label)
             self.user_list.clear()
+            if self.on_all_channels_left is not None:
+                self.on_all_channels_left()
         self._update_input_enabled()
+
+    def reset(self):
+        """로그아웃 등으로 세션이 끝났을 때 화면을 깨끗이 비움 - 이전 계정의 대화/참여자가
+        다음 로그인 화면에 남아있으면 안 됨"""
+        for channel in list(self._log_views.keys()):
+            self.remove_channel(channel)
+        self._avatar_pixmaps.clear()
+        self._nicknames.clear()
+        self._members.clear()
+        self.my_id = ""
+        self.user_list.clear()
 
     def set_active_channel(self, channel: str):
         view = self._log_views.get(channel)
