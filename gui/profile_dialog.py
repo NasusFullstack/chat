@@ -1,10 +1,12 @@
 """프로필(닉네임 + 16x16 픽셀아트 아이콘) 편집 다이얼로그 + 색상 선택 다이얼로그.
 
 themed_warning은 테스트가 g.themed_warning = fake로 직접 몽키패치하는 대상이라, 여기서는
-`import gui_client` 후 `gui_client.themed_warning(...)`처럼 모듈 속성으로 조회해서 호출함
-(직접 `from gui.themed_dialogs import themed_warning` 하면 패치가 안 먹힘 - 자세한 이유는
-gui_client.py 상단 주석 참고). ProfileDialog 클래스 자체는 몽키패치 대상이 아니라(패치되는
-건 인스턴스의 exec 메서드) 자유롭게 재수출해도 안전함.
+호출하는 메서드 본문 안에서 `import gui_client`를 한 뒤 `gui_client.themed_warning(...)`
+처럼 모듈 속성으로 조회해서 호출함. 이 import를 파일 맨 위에 두면 PyInstaller로 빌드한
+실행 파일에서 순환참조 크래시가 남(로컬 CPython에서는 통과하지만 프로즌 임포터는 버전에
+따라 덜 관대함 - 실제로 사고가 났었음) - 자세한 이유는 gui_client.py 상단 주석 참고.
+ProfileDialog 클래스 자체는 몽키패치 대상이 아니라(패치되는 건 인스턴스의 exec 메서드)
+자유롭게 재수출해도 안전함.
 """
 import base64
 
@@ -15,7 +17,6 @@ from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget,
 )
 
-import gui_client
 from gui.helpers import _decode_avatar_pixmap
 from gui.theme import AVATAR_CELL_PX, AVATAR_GRID_SIZE, AVATAR_MAX_B64_CHARS, IS_WINDOWS, NICKNAME_MAX_LEN
 from gui.themed_dialogs import _MiniTitleBar
@@ -269,6 +270,7 @@ class ProfileDialog(QDialog):
         return base64.b64encode(bytes(buffer.data())).decode("ascii")
 
     def _on_save(self):
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         b64 = self.to_base64_png()
         if len(b64) > AVATAR_MAX_B64_CHARS:
             gui_client.themed_warning(self, "저장 실패", "아이콘 데이터가 너무 큽니다. 더 단순하게 그려주세요.")

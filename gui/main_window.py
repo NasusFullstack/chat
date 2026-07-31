@@ -1,8 +1,11 @@
 """메인 윈도우 - 로그인/채널입장/채팅 화면을 QStackedWidget으로 전환하며 프로토콜 메시지를 처리함.
 
 themed_get_text/themed_warning은 테스트가 g.themed_warning = fake처럼 gui_client 모듈에
-직접 몽키패치하는 대상임 - 그래서 `import gui_client` 후 `gui_client.themed_warning(...)`
-처럼 모듈 속성으로 조회해서 호출함. 자세한 이유는 gui_client.py 상단 주석 참고.
+직접 몽키패치하는 대상임 - 그래서 호출하는 메서드 본문 안에서 `import gui_client`를 한 뒤
+`gui_client.themed_warning(...)`처럼 모듈 속성으로 조회해서 호출함. 이 import를 파일 맨
+위에 두면 PyInstaller로 빌드한 실행 파일에서 순환참조 크래시가 남(로컬 CPython에서는
+통과하지만 프로즌 임포터는 버전에 따라 덜 관대함 - 실제로 사고가 났었음) - 자세한 이유는
+gui_client.py 상단 주석 참고.
 """
 import time
 
@@ -13,7 +16,6 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QLineEdit, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-import gui_client
 import history_store
 import irc_protocol
 import login_prefs
@@ -335,6 +337,7 @@ class MainWindow(QMainWindow):
 
     def _handle_add_channel(self):
         """채팅 화면 안에서 채널을 추가로 입장 (기존 채널을 떠나지 않음, 새 채널 생성은 지원 안 함)"""
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         channel, ok = gui_client.themed_get_text(self.chat_page, "채널 추가", "입장할 채널명:")
         channel = channel.strip()
         if not ok or not channel:
@@ -356,6 +359,7 @@ class MainWindow(QMainWindow):
             self.client.send_cmd({"cmd": "leave", "channel": channel})
 
     def _handle_set_avatar(self):
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         is_irc = self._protocol_mode == "irc"
         current_nickname = self._irc_current_nick if is_irc else self.chat_page._nicknames.get(self.my_id, "")
         dlg = ProfileDialog(
@@ -415,6 +419,7 @@ class MainWindow(QMainWindow):
 
     # ---------------- 실제 IRC 서버 메시지 처리 ----------------
     def _on_irc_line(self, msg: irc_protocol.IrcMessage):
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         cmd = msg.command
 
         if cmd == irc_protocol.RPL_WELCOME:
@@ -568,6 +573,7 @@ class MainWindow(QMainWindow):
 
     # ---------------- 친구 서버 메시지 처리 ----------------
     def _on_message(self, msg: dict):
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         mtype = msg.get("type")
 
         if mtype == "auth_result":

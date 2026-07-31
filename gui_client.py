@@ -18,17 +18,24 @@ themed_get_text, themed_question, themed_warning, _flash_taskbar_icon, _shake_wi
 (pages.py, profile_dialog.py, main_window.py)은 절대 `from gui.themed_dialogs import
 themed_question`처럼 직접 바인딩하면 안 됨 - 파이썬은 `from import`한 이름의 원본이
 나중에 재할당돼도 그걸 추적하지 않아서, 테스트가 `g.themed_question`을 아무리 패치해도
-호출부는 여전히 원본 함수를 참조하게 됨(몽키패치가 무효화됨). 대신 각 모듈은 파일 맨
-위에서 `import gui_client`만 해두고, 실제 호출 시점에 `gui_client.themed_question(...)`
-처럼 매번 모듈 속성으로 조회해서 씀.
+호출부는 여전히 원본 함수를 참조하게 됨(몽키패치가 무효화됨). 대신 각 호출 지점은
+그 메서드 "본문 안에서" `import gui_client`를 한 뒤, 실제 호출 시점에
+`gui_client.themed_question(...)`처럼 매번 모듈 속성으로 조회해서 씀.
 
-`import gui_client`가 여기서부터 시작된 import 사슬(gui_client -> gui.main_window ->
-gui.pages -> gui_client) 안에서 다시 등장하니 순환참조처럼 보이지만 안전함: 파이썬은
-모듈 실행을 시작하자마자 sys.modules에 그 모듈을 등록하므로, gui.pages가 로드되는
-시점에 `import gui_client`를 실행하면 (아직 이 파일의 아래쪽 import들이 안 끝났더라도)
-이미 등록된 gui_client 모듈 객체를 그대로 돌려받음 - gui.pages는 로드 시점(모듈 최상단)
-에는 gui_client.themed_question을 건드리지 않고, 실제 사용자가 버튼을 눌러 메서드가
-호출되는 훨씬 나중 시점(이 파일의 import가 전부 끝난 뒤)에만 접근하므로 문제없음.
+**중요**: 이 `import gui_client`는 반드시 함수/메서드 "본문 안"에 있어야 하고, 절대
+파일 맨 위(모듈 최상단)에 두면 안 됨. 처음엔 파일 맨 위에 둬도 될 거라 생각했는데
+(gui_client -> gui.main_window -> gui.pages -> gui_client로 이어지는 순환참조가
+"sys.modules에 이미 등록된 부분초기화 모듈을 그대로 돌려받으니 안전하다"는 논리),
+로컬 개발 환경(CPython 소스 실행)에서는 실제로 통과했지만 **PyInstaller로 빌드한
+실행 파일에서 사용자가 "cannot import name 'X' from partially initialized module"
+크래시를 실제로 겪었음** - PyInstaller의 프로즌 임포터(pyimod02_importers)는 버전에
+따라 모듈 최상단의 순환참조를 CPython만큼 관대하게 처리하지 못하는 것으로 보임(로컬
+PyInstaller 버전에서는 재현 안 됐지만 CI가 빌드한 실행 파일에서는 크래시가 남 - 즉
+이 문제는 PyInstaller 버전에 따라 재현 여부가 갈릴 수 있어 로컬 빌드 테스트만으로는
+안심할 수 없음). 함수 본문 안에서의 지연 import는 그 함수가 실제로 호출되는 시점
+(=gui_client.py의 모든 import가 완전히 끝난 뒤, 앱이 실제로 동작하는 훨씬 나중 시점)
+에만 실행되므로 이 순환참조 위험이 원천적으로 없음 - 앞으로 gui/ 하위 모듈에 새 함수를
+추가할 때도 gui_client의 5개 함수를 쓰려면 반드시 이 패턴(본문 안 지연 import)을 따를 것.
 
 ProfileDialog 같은 "클래스"는 이 규칙과 무관함 - 테스트가 패치하는 건 인스턴스의 exec
 메서드(클래스 속성)라서, 클래스 객체 자체는 어디서 import하든 항상 같은 객체를 가리키므로
