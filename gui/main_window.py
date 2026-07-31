@@ -7,6 +7,7 @@ themed_get_text/themed_warning은 테스트가 g.themed_warning = fake처럼 gui
 통과하지만 프로즌 임포터는 버전에 따라 덜 관대함 - 실제로 사고가 났었음) - 자세한 이유는
 gui_client.py 상단 주석 참고.
 """
+import sys
 import time
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
@@ -19,8 +20,9 @@ from PySide6.QtWidgets import (
 import avatar_store
 import irc_protocol
 import login_prefs
-from chat_core import events as domain_events
+from chat_core import constants, events as domain_events
 from chat_core.session import build_session
+from updater import POST_UPDATE_FLAG
 from gui.helpers import _friendly_connection_error
 from gui.network import ChatClient
 from gui.pages import ChannelPage, ChatPage, LoginPage
@@ -33,6 +35,8 @@ from version import APP_VERSION
 # 시작화면을 최소한 이만큼은 보여줌 - 업데이트가 없을 때 로고가 깜빡하고 사라지면
 # 오히려 뭔가 잘못된 것처럼 보임
 _SPLASH_MIN_MS = 900
+# 업데이트 직후 재실행된 경우엔 이미 오래 기다린 뒤라 로고를 짧게만 보여주고 넘어감
+_SPLASH_POST_UPDATE_MS = 400
 
 # 로그인 폼(카드 582px) + 커스텀 타이틀바(36px) + 위아래 여백이 스크롤 없이 다 들어가는 크기.
 # 이 화면들은 크기를 고정해서 내용이 잘리거나 휠을 굴려야 하는 일이 없게 함
@@ -55,6 +59,15 @@ _RESIZE_EDGE_CURSORS = {
 
 class MainWindow(QMainWindow):
     _RESIZE_BORDER = 6  # 프레임 없는 창에서 이 두께(px)만큼을 크기조절 손잡이로 취급
+
+    # 치트 id -> 화면 동작. if/elif를 늘리는 대신 표에 한 줄 추가하는 형태로 둠.
+    # 모르는 id는 조용히 무시되므로, 새 치트를 쓰는 사람과 구버전 클라이언트가 같은
+    # 채널에 있어도 구버전이 죽지 않음
+    _CHEAT_EFFECTS = {
+        constants.CHEAT_RESOURCES: lambda page: page.show_resource_cheat(),
+        constants.CHEAT_BATTLECRUISER_SUMMON: lambda page: page.summon_battlecruiser(),
+        constants.CHEAT_BATTLECRUISER_DISMISS: lambda page: page.dismiss_battlecruiser(),
+    }
 
     def __init__(self):
         super().__init__()
@@ -155,6 +168,12 @@ class MainWindow(QMainWindow):
         업데이트가 계속 실패하는 환경에서 앱 화면을 한 번도 못 보여줌(실제 사고 이력).
         """
         self.stack.setCurrentWidget(self.startup_page)
+        if POST_UPDATE_FLAG in sys.argv:
+            # 방금 업데이트를 마치고 다시 실행된 참 - 업데이트를 또 확인할 필요가 없고,
+            # 사용자는 이미 한참 기다렸으므로 로고도 짧게만 보여주고 바로 로그인으로 감
+            self.startup_page.set_status("업데이트 완료! 시작하는 중...")
+            QTimer.singleShot(_SPLASH_POST_UPDATE_MS, self._go_to_login)
+            return
         QTimer.singleShot(_SPLASH_MIN_MS, self._boot_check_update)
 
     def _boot_check_update(self):
@@ -163,7 +182,11 @@ class MainWindow(QMainWindow):
         self.startup_page.set_status("업데이트 확인 중...")
         QApplication.processEvents()
         if update_flow.check_and_apply(self.startup_page):
-            return  # 업데이트를 적용하는 중 - 잠시 후 프로세스가 종료되고 새 버전으로 다시 뜸
+            # 업데이트 적용 중 - 곧 이 프로세스가 끝나고 새 버전이 뜸. 그동안 창이 그냥
+            # 멈춰 보이지 않도록 안내 문구를 남겨둠(설치가 끝날 때까지 이 화면이 유지됨)
+            self.startup_page.set_status("업데이트를 설치하고 있습니다. 곧 자동으로 다시 시작됩니다...")
+            QApplication.processEvents()
+            return
         self.startup_page.hide_progress()
         self._go_to_login()
 
@@ -309,6 +332,8 @@ class MainWindow(QMainWindow):
             transport=transport,
             on_event=self._on_domain_event,
         )
+        # '/'만 쳐도 명령 목록이 뜨게 - 지원 명령은 프로토콜마다 다르므로 코어에서 받아옴
+        self.chat_page.set_command_specs(self.session.command_specs())
 
         if self.client.state() == QSslSocket.SocketState.ConnectedState:
             # 이미 연결돼 있으면 (예: 회원가입 후 바로 로그인) 재연결하지 않고 바로 전송
@@ -546,7 +571,7 @@ class MainWindow(QMainWindow):
         elif isinstance(event, domain_events.MessageReceived):
             self.chat_page.append_message(
                 event.channel, event.sender, event.text, event.mine, event.ts,
-                is_mention=event.is_mention,
+                is_mention=event.is_mention, kind=event.kind,
             )
 
         elif isinstance(event, domain_events.SystemNotice):
@@ -575,14 +600,27 @@ class MainWindow(QMainWindow):
             )
 
         elif isinstance(event, domain_events.CheatActivated):
-            # 그 채널을 보는 사람 모두에게 자원 오버레이 + 작업표시줄 깜빡임
-            self.chat_page.show_resource_cheat()
+            # 그 채널을 보는 사람 모두에게 효과 + 작업표시줄 깜빡임.
+            # 치트별 화면 동작은 표로 두고, 없는 치트는 조용히 무시(구버전 클라이언트가
+            # 모르는 치트 문구를 받아도 죽지 않게)
+            effect = self._CHEAT_EFFECTS.get(event.cheat_id)
+            if effect is None:
+                return
+            effect(self.chat_page)
             gui_client._flash_taskbar_icon(self)
 
         elif isinstance(event, domain_events.CheatBlocked):
             self.chat_page.show_mention_notice(
                 f"치트는 {event.remaining_sec}초 후에 다시 사용할 수 있습니다."
             )
+
+        elif isinstance(event, domain_events.CommandHelp):
+            self.chat_page.append_system(event.channel, "사용 가능한 명령")
+            for line in event.lines:
+                self.chat_page.append_system(event.channel, line)
+
+        elif isinstance(event, domain_events.CommandError):
+            self.chat_page.show_mention_notice(event.text)
 
         elif isinstance(event, domain_events.MentionBlocked):
             self.chat_page.show_mention_notice(

@@ -17,10 +17,10 @@ PyInstaller의 프로즌 임포터는 버전에 따라 모듈 최상단의 순�
 """
 import time
 
-from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtCore import Qt, QSize, QStringListModel, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QCompleter, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QPushButton, QScrollArea, QStackedWidget, QTabBar,
     QTabWidget, QVBoxLayout, QWidget,
 )
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 import avatar_store
 import login_prefs
 import server_registry
+from chat_core.commands import COMMAND_PREFIX, KIND_ACTION, KIND_NOTICE
 from gui.helpers import (
     _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert, _hashed_avatar_pixmap,
 )
@@ -37,6 +38,7 @@ from gui.theme import (
 )
 from version import APP_VERSION
 from gui.cheat_overlay import CheatOverlay
+from gui.battlecruiser import BattlecruiserOverlay
 from gui.widgets import ChannelLogView, _ChannelTabBar
 
 
@@ -468,10 +470,41 @@ class ChatPage(QWidget):
 
         # 치트 오버레이는 레이아웃에 넣지 않고 채팅 영역 위에 겹쳐 띄움(테두리/배경 없이)
         self._cheat_overlay = CheatOverlay(self._center_stack)
+        self._battlecruiser = BattlecruiserOverlay(self._center_stack)
+        self._battlecruiser.attach_input(self.msg_input)
+
+        # @닉네임 / 슬래시 명령 자동완성 - Qt 내장 QCompleter가 접두사 필터링까지 다 해줌
+        # (별도 라이브러리 불필요). 한글도 일반 접두사 매칭은 그대로 동작함("몽"->"몽키").
+        # 못 하는 건 초성 검색("ㅁ"->"몽키")뿐인데, 그건 자모 분해가 필요한 별개 기능이라
+        # 여기서는 다루지 않음.
+        #
+        # QCompleter는 원래 "위젯 전체 텍스트"를 접두사로 보기 때문에 문장 중간의 @토큰에는
+        # 그대로 쓸 수 없음. 그래서 setCompletionPrefix()로 지금 입력 중인 토큰만 직접
+        # 넘겨주고 complete()로 팝업을 띄우는 방식으로 씀.
+        self._completion_model = QStringListModel([], self)
+        self._completer = QCompleter(self._completion_model, self)
+        self._completer.setWidget(self.msg_input)
+        self._completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._completer.setFilterMode(Qt.MatchFlag.MatchStartsWith)
+        self._completer.activated.connect(self._insert_completion)
+        self.msg_input.textEdited.connect(self._update_completer)
+        # 지금 완성 중인 토큰의 시작 위치(트리거 문자 포함). -1이면 완성 중이 아님
+        self._completion_start = -1
+        # 지금 프로토콜이 지원하는 슬래시 명령 목록 - 세션이 알려주면 갱신됨
+        self._command_tokens: list[str] = []
 
     def show_resource_cheat(self):
         """'show me the money'가 채널에 떴을 때 - 자원 오버레이를 채팅창 가운데에 잠깐 표시"""
         self._cheat_overlay.start()
+
+    def summon_battlecruiser(self):
+        """'배틀크루저 소환' - 채팅창 위에 함선을 띄움(방향키로 조종 가능)"""
+        self._battlecruiser.summon()
+
+    def dismiss_battlecruiser(self):
+        """'배틀크루저 소환해제' - 순간 가속해서 화면 밖으로 빠져나가며 사라짐"""
+        self._battlecruiser.dismiss()
 
     def set_protocol_mode(self, mode: str):
         self._protocol_mode = mode
@@ -579,6 +612,10 @@ class ChatPage(QWidget):
         self._members.clear()
         self.my_id = ""
         self.user_list.clear()
+        # 떠 있던 오버레이/자동완성 팝업이 로그인 화면 위에 남지 않게 정리
+        self._battlecruiser.stop()
+        self._completer.popup().hide()
+        self._completion_start = -1
 
     def set_active_channel(self, channel: str):
         view = self._log_views.get(channel)
@@ -674,12 +711,89 @@ class ChatPage(QWidget):
         여기서는 코어가 실제로 전송했는지를 알 수 없다는 점에 유의(전송 여부와 무관하게
         비우면 막힌 메시지가 사라짐). 그래서 코어가 막았을 때만 입력을 되살리는 대신,
         전송 시도 전 텍스트를 기억해뒀다가 안내문이 뜨면 그대로 복원함."""
+        # 자동완성 팝업이 떠 있을 때의 Enter는 "후보 선택"이지 "전송"이 아님.
+        # 이 가드가 없으면 Enter 한 번에 후보 선택과 전송이 같이 일어나서, 완성되기 전
+        # 상태의 텍스트("@Mo")가 그대로 전송됨(실제 키 이벤트 테스트로 발견한 버그)
+        if self._completer.popup().isVisible():
+            return
         text = self.msg_input.text().strip()
         if not text or not self._active_channel:
             return
         self._pending_input_text = text
         self.msg_input.clear()
         self.on_send(self._active_channel, text)
+
+    # ==================== 자동완성 (@닉네임 / 슬래시 명령) ====================
+
+    def set_command_specs(self, specs):
+        """지금 프로토콜이 지원하는 명령 목록을 코어에서 받아둠 - '/'만 쳐도 이 목록이 뜸.
+        IRC와 커스텀 서버가 지원하는 명령이 다르므로 하드코딩하지 않고 세션에서 받아옴."""
+        self._command_tokens = [spec.token for spec in specs]
+
+    def _completion_candidates(self, trigger: str) -> list[str]:
+        if trigger == COMMAND_PREFIX:
+            return list(self._command_tokens)
+        members = self._members.get(self._active_channel, [])
+        # 나 자신은 호출할 일이 없으니 목록에서 뺌
+        return ["@" + self._display_name_for(uid) for uid in members if uid != self.my_id]
+
+    def _completion_token(self) -> tuple[int, str] | None:
+        """커서 바로 앞에서 입력 중인 토큰이 자동완성 대상이면 (시작위치, 토큰).
+
+        - '@'는 문장 어디서든 트리거(앞이 공백이거나 맨 앞일 때만 - 이메일 주소 오인 방지)
+        - '/'는 맨 앞에서만 트리거(명령은 줄 맨 앞에만 올 수 있음)
+        - 토큰 안에 공백이 들어가면 더 이상 완성 대상이 아님
+        """
+        text = self.msg_input.text()
+        cursor = self.msg_input.cursorPosition()
+        head = text[:cursor]
+        for trigger in ("@", COMMAND_PREFIX):
+            start = head.rfind(trigger)
+            if start < 0:
+                continue
+            token = head[start:]
+            if " " in token:
+                continue
+            if trigger == COMMAND_PREFIX and start != 0:
+                continue
+            if trigger == "@" and start > 0 and not head[start - 1].isspace():
+                continue
+            return start, token
+        return None
+
+    def _update_completer(self, _text: str = ""):
+        found = self._completion_token()
+        if found is None:
+            self._completion_start = -1
+            self._completer.popup().hide()
+            return
+        start, token = found
+        candidates = self._completion_candidates(token[0])
+        if not candidates:
+            self._completion_start = -1
+            self._completer.popup().hide()
+            return
+        self._completion_start = start
+        # 후보 목록 자체를 매번 새로 세팅해야 참여자가 들어오고 나간 게 바로 반영됨
+        self._completion_model.setStringList(candidates)
+        self._completer.setCompletionPrefix(token)
+        if self._completer.completionCount() == 0:
+            self._completer.popup().hide()
+            return
+        popup = self._completer.popup()
+        popup.setCurrentIndex(self._completer.completionModel().index(0, 0))
+        self._completer.complete()
+
+    def _insert_completion(self, chosen: str):
+        """팝업에서 고른 항목으로 입력 중이던 토큰을 교체하고 뒤에 공백 하나를 붙임"""
+        if self._completion_start < 0:
+            return
+        text = self.msg_input.text()
+        cursor = self.msg_input.cursorPosition()
+        new_text = text[:self._completion_start] + chosen + " " + text[cursor:]
+        self.msg_input.setText(new_text)
+        self.msg_input.setCursorPosition(self._completion_start + len(chosen) + 1)
+        self._completion_start = -1
 
     def show_mention_notice(self, text: str):
         """코어가 @호출 쿨타임으로 전송을 막았을 때 - 안내문을 띄우고 입력 내용을 되살림"""
@@ -708,12 +822,15 @@ class ChatPage(QWidget):
         return base.scaled(px, px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
 
     def append_message(self, channel: str, sender: str, text: str, mine: bool, ts: float,
-                       is_mention: bool = False):
-        """is_mention은 도메인 코어가 이미 판단해서 넘겨줌 - 화면은 알림만 트리거하면 됨"""
+                       is_mention: bool = False, kind: str = "chat"):
+        """is_mention/kind는 도메인 코어가 이미 판단해서 넘겨줌 - 화면은 그리기만 하면 됨"""
         view = self._log_views.get(channel)
         if view is None:
             return
-        view.append_message(self._display_name_for(sender), text, mine, ts, self._avatar_for(sender, AVATAR_MSG_PX))
+        view.append_message(
+            self._display_name_for(sender), text, mine, ts,
+            self._avatar_for(sender, AVATAR_MSG_PX), kind=kind,
+        )
         self._mark_unread(channel)
         if is_mention:
             self._trigger_mention_alert()

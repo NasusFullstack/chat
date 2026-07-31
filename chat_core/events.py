@@ -63,6 +63,9 @@ class MessageReceived:
     mine: bool
     ts: float
     is_mention: bool = False
+    # commands.KIND_* - /me는 "action", /notice는 "notice", 평범한 채팅은 "chat".
+    # 종류 판정은 코어가 하고 어댑터는 그리기만 함
+    kind: str = "chat"
 
 
 @dataclass(frozen=True)
@@ -102,14 +105,30 @@ class NicknameRetrying:
 
 @dataclass(frozen=True)
 class CheatActivated:
-    """치트 문구가 채널에 떴음 - 그 채널을 보는 모두에게 자원 오버레이를 띄우면 됨"""
+    """치트 문구가 채널에 떴음 - 그 채널을 보는 모두에게 해당 효과를 띄우면 됨.
+
+    cheat_id는 constants.CHEAT_* 값(자원 오버레이 / 배틀크루저 소환 / 해제)"""
     channel: str
+    cheat_id: str = "resources"
 
 
 @dataclass(frozen=True)
 class CheatBlocked:
     """치트가 채널 쿨타임에 걸려 전송되지 않음 - 친 사람한테만 남은 시간을 알림"""
     remaining_sec: int
+
+
+@dataclass(frozen=True)
+class CommandError:
+    """슬래시 명령이 잘못됐거나 이 프로토콜에서 지원되지 않음 - 친 사람한테만 보여줌"""
+    text: str
+
+
+@dataclass(frozen=True)
+class CommandHelp:
+    """/help 결과 - 어댑터가 목록을 자기 방식대로 출력(GUI는 채팅창, CLI는 print)"""
+    channel: str
+    lines: list[str]
 
 
 @dataclass(frozen=True)

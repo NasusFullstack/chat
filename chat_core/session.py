@@ -13,10 +13,9 @@ Qt에도 asyncio에도 파일시스템에도 직접 의존하지 않음:
 """
 import time
 
-from chat_core import events
+from chat_core import commands, events
 from chat_core.constants import (
-    AVATAR_MAX_B64_CHARS, CHEAT_COOLDOWN_SEC, MENTION_COOLDOWN_SEC, MENTION_TOKEN_RE,
-    is_cheat_phrase,
+    AVATAR_MAX_B64_CHARS, MENTION_COOLDOWN_SEC, MENTION_TOKEN_RE, find_cheat,
 )
 from chat_core.history_adapter import JsonFileHistoryStore
 from chat_core.protocols.custom import CustomProtocol
@@ -67,8 +66,8 @@ class ChatSession:
         self.avatars: dict[str, str] = {}
         # (채널, 호출 대상 user_id) -> 마지막으로 그 사람을 @호출해서 실제로 전송한 시각
         self.mention_cooldowns: dict[tuple[str, str], float] = {}
-        # 채널 -> 마지막으로 치트를 실제로 전송한 시각 (채널당 쿨타임, 사람 무관)
-        self.cheat_cooldowns: dict[str, float] = {}
+        # (채널, 치트 id) -> 마지막으로 그 치트를 실제로 전송한 시각 (채널당 쿨타임, 사람 무관)
+        self.cheat_cooldowns: dict[tuple[str, str], float] = {}
 
         # 프로토콜 구현체가 자기 진행 상태를 여기에 보관함(세션은 의미를 해석하지 않고
         # 저장 공간만 제공 - 프로토콜별 필드를 세션 코드가 알 필요가 없게)
@@ -112,16 +111,20 @@ class ChatSession:
 
     def deliver_message(self, channel: str, sender: str, text: str, mine: bool, ts: float,
                         record_history: bool = True):
-        is_mention = (not mine) and self._is_mentioned(text)
-        self._emit(events.MessageReceived(channel, sender, text, mine, ts, is_mention))
+        # /me, /notice로 보낸 메시지는 CTCP 프레이밍이 씌워져 오므로 여기서 벗겨냄.
+        # 두 프로토콜이 같은 프레이밍을 쓰기 때문에 이 한 곳만 거치면 됨
+        kind, body = commands.classify_message(text)
+        is_mention = (not mine) and self._is_mentioned(body)
+        self._emit(events.MessageReceived(channel, sender, body, mine, ts, is_mention, kind))
         if record_history:
             self._history.append_message(
-                self.protocol.name, self.host, self.port, channel, sender, text, ts
+                self.protocol.name, self.host, self.port, channel, sender, body, ts
             )
         # 치트 문구는 그 채널을 보고 있는 모두에게 효과가 떠야 하므로, 보낸 사람 여부와
         # 무관하게(내가 친 것도 포함) 메시지가 도착하면 이벤트를 발행함
-        if is_cheat_phrase(text):
-            self._emit(events.CheatActivated(channel))
+        cheat = find_cheat(body)
+        if cheat is not None:
+            self._emit(events.CheatActivated(channel, cheat.id))
 
     def replace_members(self, channel: str, users) -> None:
         self.members[channel] = set(users)
@@ -171,32 +174,75 @@ class ChatSession:
         self.protocol.leave(self, channel)
 
     def send_message(self, channel: str, text: str):
-        """@호출/치트 쿨타임에 걸리면 전송 자체를 안 하고 안내 이벤트만 발행(채팅창에 안 남음)"""
-        if is_cheat_phrase(text):
-            remaining = self._check_cheat_cooldown(channel)
+        """입력창에 친 한 줄을 처리 - 슬래시 명령 / 치트 / 일반 채팅을 여기서 갈라줌.
+
+        @호출·치트 쿨타임에 걸리면 전송 자체를 안 하고 안내 이벤트만 발행함(채팅창에 안 남음).
+        """
+        parsed = commands.parse_command(text)
+        if parsed is not None:
+            self.run_command(channel, *parsed)
+            return
+        # '//공지'처럼 슬래시로 시작하는 평문을 보내려던 경우 앞 슬래시 하나를 떼고 전송
+        text = commands.escape_literal(text)
+
+        cheat = find_cheat(text)
+        if cheat is not None:
+            remaining = self._check_cheat_cooldown(channel, cheat)
             if remaining:
                 self._emit(events.CheatBlocked(remaining))
                 return
-            self.cheat_cooldowns[channel] = time.time()
+            self.cheat_cooldowns[(channel, cheat.id)] = time.time()
             self.protocol.send_chat(self, channel, text)
             return
 
-        blocked_target, remaining = self._check_mention_cooldown(channel, text)
+        self.send_wire_chat(channel, text, text)
+
+    def send_wire_chat(self, channel: str, wire_text: str, display_text: str) -> bool:
+        """@호출 쿨타임 정책을 적용한 뒤 실제로 전송. 막히면 False.
+
+        wire_text는 실제로 나가는 문자열(/me면 CTCP 프레이밍이 씌워진 형태),
+        display_text는 쿨타임 판정에 쓰는 사람이 읽는 본문 - 프레이밍 때문에 @토큰 판정이
+        달라지면 안 되므로 둘을 분리했음.
+        """
+        blocked_target, remaining = self._check_mention_cooldown(channel, display_text)
         if blocked_target is not None:
             self._emit(events.MentionBlocked(blocked_target, remaining))
-            return
-        self._record_mention_cooldowns(channel, text)
-        self.protocol.send_chat(self, channel, text)
+            return False
+        self._record_mention_cooldowns(channel, display_text)
+        self.protocol.send_chat(self, channel, wire_text)
+        return True
 
-    def _check_cheat_cooldown(self, channel: str) -> int:
+    def run_command(self, channel: str, name: str, args: str):
+        """슬래시 명령 실행을 프로토콜 전략에 위임.
+
+        이 파일에 명령별 분기를 두지 않는 게 핵심(OCP) - 어떤 명령을 지원하는지는
+        프로토콜마다 다르고, 새 명령 추가도 프로토콜 쪽 표에 한 줄이면 끝나야 함.
+        """
+        if self.protocol.run_command(self, channel, name, args):
+            return
+        known = {spec.name for spec in self.protocol.command_specs()}
+        if name in known:  # 이론상 도달 불가 - 표와 핸들러가 어긋났을 때만
+            self._emit(events.CommandError(f"/{name} 명령을 처리하지 못했습니다."))
+        else:
+            self._emit(events.CommandError(
+                f"/{name} 은(는) 이 서버에서 지원하지 않는 명령입니다. /help 로 목록을 볼 수 있습니다."
+            ))
+
+    def command_specs(self):
+        """자동완성 목록/도움말이 쓰는 지금 프로토콜의 명령 목록"""
+        return self.protocol.command_specs()
+
+    def _check_cheat_cooldown(self, channel: str, cheat) -> int:
         """남은 쿨타임(초). 0이면 지금 써도 됨"""
-        last = self.cheat_cooldowns.get(channel)
+        if not cheat.cooldown_sec:
+            return 0
+        last = self.cheat_cooldowns.get((channel, cheat.id))
         if last is None:
             return 0
         elapsed = time.time() - last
-        if elapsed >= CHEAT_COOLDOWN_SEC:
+        if elapsed >= cheat.cooldown_sec:
             return 0
-        return int(CHEAT_COOLDOWN_SEC - elapsed) + 1
+        return int(cheat.cooldown_sec - elapsed) + 1
 
     def set_avatar(self, avatar_b64: str) -> bool:
         """너무 크면 아무 것도 안 하고 False 반환"""

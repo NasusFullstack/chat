@@ -7,10 +7,23 @@
 import time
 
 import irc_protocol
-from chat_core import events
+from chat_core import commands, events
+from chat_core.protocols.common_commands import CommonCommands
+
+# 서버가 명령에 대한 답으로 돌려주는 숫자 응답 중 사용자에게 그대로 보여줄 것들.
+# (MOTD/서버통계 같은 접속 직후 잡음은 여기 없으므로 조용히 무시됨)
+INFO_NUMERICS = {
+    "301",  # RPL_AWAY - 상대가 자리비움
+    "305", "306",  # 내 자리비움 해제/설정
+    "311", "312", "313", "317", "318", "319", "330", "338", "671",  # WHOIS 응답들
+    "321", "322", "323",  # LIST 응답들
+    "324",  # 채널 모드
+    "331", "332", "333",  # 채널 주제
+    "341",  # INVITE 전송 확인
+}
 
 
-class IrcProtocol:
+class IrcProtocol(CommonCommands):
     name = "irc"
 
     # ---------- 의도(내보내기) ----------
@@ -56,6 +69,89 @@ class IrcProtocol:
     def normalize_channel(self, channel: str) -> str:
         return irc_protocol.normalize_channel(channel)
 
+    # ---------- 슬래시 명령 ----------
+    def command_specs(self):
+        return _SPECS
+
+    def run_command(self, session, channel: str, name: str, args: str) -> bool:
+        handler = _HANDLERS_BY_NAME.get(name)
+        if handler is None:
+            return False
+        handler(self, session, channel, args)
+        return True
+
+    def _cmd_notice(self, session, channel: str, args: str) -> None:
+        if not args:
+            session.emit(events.CommandError(f"사용법: {commands.NOTICE.usage}"))
+            return
+        session.transport(irc_protocol.format_notice(channel, args))
+        # NOTICE는 서버가 나에게 되돌려주지 않으므로 내 화면에도 직접 남김
+        session.emit(events.SystemNotice(channel, f"[공지 보냄] {args}"))
+
+    def _cmd_msg(self, session, channel: str, args: str) -> None:
+        nick, _, text = args.partition(" ")
+        if not nick or not text.strip():
+            session.emit(events.CommandError(f"사용법: {commands.MSG.usage}"))
+            return
+        session.transport(irc_protocol.format_privmsg(nick, text.strip()))
+        session.emit(events.SystemNotice(channel, f"{nick}님에게 귓속말: {text.strip()}"))
+
+    def _cmd_names(self, session, channel: str, args: str) -> None:
+        target = self.normalize_channel(args) if args else channel
+        if not target:
+            session.emit(events.CommandError("참여자를 조회할 채널이 없습니다."))
+            return
+        session.transport(irc_protocol.format_names(target))
+
+    def _cmd_topic(self, session, channel: str, args: str) -> None:
+        if not channel:
+            session.emit(events.CommandError("채널에 먼저 입장하세요."))
+            return
+        session.transport(irc_protocol.format_topic(channel, args or None))
+
+    def _cmd_whois(self, session, channel: str, args: str) -> None:
+        if not args:
+            session.emit(events.CommandError(f"사용법: {commands.WHOIS.usage}"))
+            return
+        session.transport(irc_protocol.format_whois(args.split()[0]))
+
+    def _cmd_away(self, session, channel: str, args: str) -> None:
+        session.transport(irc_protocol.format_away(args or None))
+
+    def _cmd_invite(self, session, channel: str, args: str) -> None:
+        nick, _, target = args.partition(" ")
+        target = self.normalize_channel(target) if target.strip() else channel
+        if not nick or not target:
+            session.emit(events.CommandError(f"사용법: {commands.INVITE.usage}"))
+            return
+        session.transport(irc_protocol.format_invite(nick, target))
+
+    def _cmd_kick(self, session, channel: str, args: str) -> None:
+        nick, _, reason = args.partition(" ")
+        if not nick or not channel:
+            session.emit(events.CommandError(f"사용법: {commands.KICK.usage}"))
+            return
+        session.transport(irc_protocol.format_kick(channel, nick, reason.strip() or None))
+
+    def _cmd_mode(self, session, channel: str, args: str) -> None:
+        target, _, rest = args.partition(" ")
+        if not target or not rest.strip():
+            session.emit(events.CommandError(f"사용법: {commands.MODE.usage}"))
+            return
+        session.transport(irc_protocol.format_mode(target, rest.strip()))
+
+    def _cmd_list(self, session, channel: str, args: str) -> None:
+        session.transport(irc_protocol.format_list())
+
+    def _cmd_quit(self, session, channel: str, args: str) -> None:
+        session.transport(irc_protocol.format_quit(args or None))
+
+    def _cmd_raw(self, session, channel: str, args: str) -> None:
+        if not args:
+            session.emit(events.CommandError(f"사용법: {commands.RAW.usage}"))
+            return
+        session.transport(args)
+
     # ---------- 수신 처리 ----------
     def handle_incoming(self, session, raw) -> None:
         handler = self._HANDLERS.get(raw.command)
@@ -66,6 +162,53 @@ class IrcProtocol:
             self._on_nick_collision(session, raw)
         elif raw.command in irc_protocol.CHANNEL_JOIN_ERROR_NUMERICS:
             session.emit(events.ChannelJoinFailed("", raw.trailing or "채널 입장에 실패했습니다."))
+        elif self._is_reportable_numeric(raw.command):
+            # /whois, /list, /topic 같은 명령의 응답과 각종 오류(4xx/5xx)를 그대로 보여줌.
+            # 이게 없으면 명령은 나가는데 답이 화면에 아무것도 안 떠서 먹통처럼 보임
+            session.emit(events.SystemNotice(session.active_channel, self._numeric_text(raw)))
+
+    @staticmethod
+    def _is_reportable_numeric(command: str) -> bool:
+        if command in INFO_NUMERICS:
+            return True
+        return command.isdigit() and 400 <= int(command) <= 599
+
+    @staticmethod
+    def _numeric_text(msg) -> str:
+        # 숫자 응답은 첫 파라미터가 항상 내 닉네임이라 빼고, 나머지를 사람이 읽을 수 있게 이어붙임
+        parts = [p for p in msg.params[1:] if p]
+        return " ".join(parts) if parts else msg.raw.strip()
+
+    def _on_topic(self, session, msg):
+        channel = msg.params[0] if msg.params else session.active_channel
+        session.emit(events.SystemNotice(
+            channel, f"{msg.source_nick}님이 주제를 바꿨습니다: {msg.trailing}"
+        ))
+
+    def _on_kick(self, session, msg):
+        channel = msg.params[0] if msg.params else ""
+        target = msg.params[1] if len(msg.params) > 1 else ""
+        reason = msg.trailing if len(msg.params) > 2 else ""
+        session.remove_member(channel, target)
+        suffix = f" ({reason})" if reason else ""
+        session.emit(events.SystemNotice(channel, f"{target}님이 내보내졌습니다{suffix}."))
+        if target == session.my_id:
+            session.forget_channel(channel)
+            session.emit(events.ChannelLeft(channel))
+
+    def _on_invite(self, session, msg):
+        channel = msg.trailing or (msg.params[1] if len(msg.params) > 1 else "")
+        session.emit(events.SystemNotice(
+            session.active_channel, f"{msg.source_nick}님이 {channel}(으)로 초대했습니다."
+        ))
+
+    def _on_mode(self, session, msg):
+        target = msg.params[0] if msg.params else ""
+        rest = " ".join(msg.params[1:])
+        session.emit(events.SystemNotice(
+            target if target.startswith("#") else session.active_channel,
+            f"{msg.source_nick or '서버'}: 모드 {target} {rest}".strip(),
+        ))
 
     def _on_ping(self, session, msg):
         # 연결 유지의 핵심 - UI 상태와 무관하게 즉시 응답해야 서버가 끊지 않음
@@ -199,5 +342,31 @@ class IrcProtocol:
         "NICK": _on_nick,
         "PRIVMSG": _on_privmsg,
         "NOTICE": _on_notice,
+        "TOPIC": _on_topic,
+        "KICK": _on_kick,
+        "INVITE": _on_invite,
+        "MODE": _on_mode,
         "ERROR": _on_error,
     }
+
+
+# 실제 IRC 서버가 상대라 표준 명령을 거의 다 그대로 쓸 수 있음.
+# 표를 클래스 밖에 두는 이유: 클래스 본문 안에서는 위에서 정의한 메서드를 참조할 수 있지만
+# 상속받은 COMMON_COMMANDS(부모 클래스 속성)는 아직 이름공간에 없어서 합칠 수 없음.
+_COMMANDS = {
+    **CommonCommands.COMMON_COMMANDS,
+    commands.NOTICE: IrcProtocol._cmd_notice,
+    commands.MSG: IrcProtocol._cmd_msg,
+    commands.NAMES: IrcProtocol._cmd_names,
+    commands.TOPIC: IrcProtocol._cmd_topic,
+    commands.WHOIS: IrcProtocol._cmd_whois,
+    commands.AWAY: IrcProtocol._cmd_away,
+    commands.INVITE: IrcProtocol._cmd_invite,
+    commands.KICK: IrcProtocol._cmd_kick,
+    commands.MODE: IrcProtocol._cmd_mode,
+    commands.LIST: IrcProtocol._cmd_list,
+    commands.QUIT: IrcProtocol._cmd_quit,
+    commands.RAW: IrcProtocol._cmd_raw,
+}
+_SPECS = sorted(_COMMANDS, key=lambda spec: spec.name)
+_HANDLERS_BY_NAME = {spec.name: handler for spec, handler in _COMMANDS.items()}

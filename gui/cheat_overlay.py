@@ -6,10 +6,45 @@
 직접 그리면 어느 PC에서든 항상 똑같은 픽셀 모양이 나옴(느낌도 원본에 가장 가까움).
 아이콘도 같은 이유로 이미지 파일이 아니라 QPainter로 직접 그림.
 """
+import os
+
 from PySide6.QtCore import Qt, QTimer, QRectF
-from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF, QBrush, QLinearGradient
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QPolygonF, QBrush, QLinearGradient
 from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QWidget
+
+from gui.helpers import _find_image_in_app_dirs
+
+# 이 이름의 이미지가 있으면 직접 그린 아이콘 대신 그 이미지를 씀. 없으면 아래의
+# _draw_mineral/_draw_gas로 직접 그림(둘 다 정상 동작).
+# 찾는 경로는 로고(icon.png)와 같은 규칙 - 설치 폴더와 PyInstaller 번들 양쪽을 보므로,
+# 저장소에 파일을 넣고 빌드 스크립트에 --add-data 한 줄만 더하면 설치 때 자동으로 따라감.
+MINERAL_FILENAME = "mineral.png"
+GAS_FILENAME = "gas.png"
+_icon_cache: dict[str, QPixmap | None] = {}
+
+
+def _custom_icon(filename: str) -> QPixmap | None:
+    if filename in _icon_cache:
+        return _icon_cache[filename]
+    path = _find_image_in_app_dirs((filename,))
+    pixmap = None
+    if path:
+        loaded = QPixmap(path)
+        if not loaded.isNull():
+            pixmap = loaded
+    _icon_cache[filename] = pixmap
+    return pixmap
+
+
+def _draw_custom(painter: QPainter, filename: str, x: int, y: int, size: int) -> bool:
+    pixmap = _custom_icon(filename)
+    if pixmap is None:
+        return False
+    scaled = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+    painter.drawPixmap(x, y + (size - scaled.height()) // 2, scaled)
+    return True
 
 # 5x7 픽셀 숫자 (스타 자원 표시처럼 굵고 각진 느낌)
 _DIGITS = {
@@ -64,6 +99,8 @@ def _draw_number(painter: QPainter, x: int, y: int, value: int):
 
 def _draw_mineral(painter: QPainter, x: int, y: int, size: int):
     """미네랄 - 파란 결정 조각 두 개"""
+    if _draw_custom(painter, MINERAL_FILENAME, x, y, size):
+        return
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     grad = QLinearGradient(x, y, x + size, y + size)
@@ -96,6 +133,8 @@ def _draw_mineral(painter: QPainter, x: int, y: int, size: int):
 
 def _draw_gas(painter: QPainter, x: int, y: int, size: int):
     """베스핀 가스 - 초록 통"""
+    if _draw_custom(painter, GAS_FILENAME, x, y, size):
+        return
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     grad = QLinearGradient(x, y, x + size, y + size)

@@ -52,6 +52,11 @@ MIN_VALID_EXE_BYTES = 1_000_000
 # 이 카운터는 자연스럽게 의미가 없어짐(따로 성공을 감지해서 초기화할 필요가 없음)
 MAX_UPDATE_ATTEMPTS = 3
 
+# 업데이트 직후 자동으로 다시 실행될 때 붙는 인자. 방금 최신 버전으로 갈아탔으므로 새로
+# 뜬 앱이 업데이트 확인(네트워크 왕복, 최대 CHECK_TIMEOUT_SEC초)을 또 할 이유가 없음 -
+# 이게 없으면 "패치 끝났는데 앱이 늦게 뜨는" 체감 대기가 그만큼 길어짐
+POST_UPDATE_FLAG = "--post-update"
+
 
 def _update_state_path() -> str:
     exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
@@ -195,8 +200,10 @@ if not errorlevel 1 (
 
 "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
-ping -n 3 127.0.0.1 >nul
-start "" "{current_exe}"
+rem 인스톨러는 파일을 다 쓰고 나서야 리턴하므로(동기), 여기서 따로 기다릴 필요가 없음.
+rem 예전엔 만약을 대비해 2초를 넣어뒀는데 그냥 체감 대기만 늘리는 군더더기였음.
+rem --post-update: 방금 업데이트로 실행된 것이라 새 앱이 업데이트 확인을 또 하지 않게 함
+start "" "{current_exe}" {POST_UPDATE_FLAG}
 del "{installer_path}" >nul 2>nul
 del "%~f0"
 """

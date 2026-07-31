@@ -116,6 +116,46 @@ def format_names(channel: str) -> str:
     return f"NAMES {channel}"
 
 
+def format_notice(target: str, text: str) -> str:
+    return f"NOTICE {target} :{text}"
+
+
+def format_topic(channel: str, topic: str | None = None) -> str:
+    # topic 없이 보내면 "지금 주제가 뭐냐"는 질의, 주면 변경 요청
+    if topic:
+        return f"TOPIC {channel} :{topic}"
+    return f"TOPIC {channel}"
+
+
+def format_whois(nick: str) -> str:
+    return f"WHOIS {nick}"
+
+
+def format_away(reason: str | None = None) -> str:
+    # 사유 없이 보내면 자리비움 해제
+    if reason:
+        return f"AWAY :{reason}"
+    return "AWAY"
+
+
+def format_invite(nick: str, channel: str) -> str:
+    return f"INVITE {nick} {channel}"
+
+
+def format_kick(channel: str, nick: str, reason: str | None = None) -> str:
+    if reason:
+        return f"KICK {channel} {nick} :{reason}"
+    return f"KICK {channel} {nick}"
+
+
+def format_mode(target: str, mode_args: str) -> str:
+    return f"MODE {target} {mode_args}"
+
+
+def format_list() -> str:
+    return "LIST"
+
+
 def parse_names_reply(msg: IrcMessage) -> list[str]:
     names = msg.trailing.split()
     return [n.lstrip("@+%~&") for n in names]

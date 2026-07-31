@@ -55,7 +55,7 @@ class ColorPickerDialog(QDialog):
         for i, hex_color in enumerate(self._PALETTE):
             swatch = QPushButton()
             swatch.setFixedSize(24, 24)
-            swatch.setStyleSheet(f"background-color: {hex_color}; border: 1px solid #3d3f52;")
+            swatch.setStyleSheet(f"background-color: {hex_color}; border: 1px solid #3d3f52; border-radius: 0px;")
             swatch.clicked.connect(lambda checked=False, c=hex_color: self._pick(QColor(c)))
             grid.addWidget(swatch, i // 5, i % 5)
         layout.addWidget(grid_widget)
@@ -94,7 +94,7 @@ class ColorPickerDialog(QDialog):
         self._update_preview()
 
     def _update_preview(self):
-        self.preview.setStyleSheet(f"background-color: {self.selected_color.name()}; border: 1px solid #3d3f52;")
+        self.preview.setStyleSheet(f"background-color: {self.selected_color.name()}; border: 1px solid #3d3f52; border-radius: 0px;")
 
 
 class _AvatarGridWidget(QWidget):
@@ -190,7 +190,7 @@ class ProfileDialog(QDialog):
                 btn = QPushButton()
                 btn.setFixedSize(AVATAR_CELL_PX, AVATAR_CELL_PX)
                 btn.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-                btn.setStyleSheet("background-color: transparent; border: 1px solid #3d3f52;")
+                btn.setStyleSheet("background-color: transparent; border: 1px solid #3d3f52; border-radius: 0px;")
                 grid.addWidget(btn, y, x)
                 self._buttons[(x, y)] = btn
         layout.addWidget(grid_widget)
@@ -232,16 +232,16 @@ class ProfileDialog(QDialog):
                 if color.alpha() == 0:
                     continue
                 self._cell_colors[(x, y)] = color
-                self._buttons[(x, y)].setStyleSheet(f"background-color: {color.name()}; border: 1px solid #3d3f52;")
+                self._buttons[(x, y)].setStyleSheet(f"background-color: {color.name()}; border: 1px solid #3d3f52; border-radius: 0px;")
 
     def _paint_cell(self, x: int, y: int):
         if self._eraser:
             self._cell_colors[(x, y)] = None
-            self._buttons[(x, y)].setStyleSheet("background-color: transparent; border: 1px solid #3d3f52;")
+            self._buttons[(x, y)].setStyleSheet("background-color: transparent; border: 1px solid #3d3f52; border-radius: 0px;")
         else:
             self._cell_colors[(x, y)] = QColor(self._current_color)
             self._buttons[(x, y)].setStyleSheet(
-                f"background-color: {self._current_color.name()}; border: 1px solid #3d3f52;"
+                f"background-color: {self._current_color.name()}; border: 1px solid #3d3f52; border-radius: 0px;"
             )
 
     def _choose_color(self):
@@ -256,7 +256,7 @@ class ProfileDialog(QDialog):
     def _clear_all(self):
         self._cell_colors.clear()
         for btn in self._buttons.values():
-            btn.setStyleSheet("background-color: transparent; border: 1px solid #3d3f52;")
+            btn.setStyleSheet("background-color: transparent; border: 1px solid #3d3f52; border-radius: 0px;")
 
     def to_base64_png(self) -> str:
         image = QImage(AVATAR_GRID_SIZE, AVATAR_GRID_SIZE, QImage.Format.Format_ARGB32)

@@ -10,16 +10,20 @@ chat_core/          도메인 코어 - Qt/asyncio/파일시스템을 전혀 모�
   ports.py            경계(포트) 정의: HistoryStorePort, ProtocolPort, TransportPort
   session.py          ChatSession - 상태(채널/멤버/닉네임/아바타/쿨타임)와 정책
   events.py           코어가 어댑터에 알리는 불변 이벤트들
-  constants.py        아바타 크기 상한, @호출/치트 쿨타임, 치트 문구
+  constants.py        아바타 크기 상한, @호출 쿨타임, 치트 명세(CHEAT_SPECS)
+  commands.py         슬래시 명령 파싱/명세 + 행동(/me)·공지(/notice) CTCP 프레이밍
   history_adapter.py  HistoryStorePort 구현 (JSON 파일 / Null)
   protocols/
     custom.py           커스텀 JSON 프로토콜 전략
     irc.py              실제 IRC 프로토콜 전략
+    common_commands.py  두 프로토콜이 동일하게 처리하는 명령(믹스인)
     wire_custom.py      커스텀 프로토콜 메시지 타입 상수 + dict 빌더
 
 gui/                GUI 어댑터 (PySide6) - 화면만 담당
   startup_page.py     시작화면(큰 로고 + 진행 상태)
   update_flow.py      업데이트 진행을 시작화면에 표시하는 흐름
+  cheat_overlay.py    'show me the money' 자원 오버레이
+  battlecruiser.py    '배틀크루저 소환' 오버레이(방향키 조종)
 cli_client.py       CLI 어댑터 (asyncio) - 터미널 출력만 담당
 gui_client.py       GUI 진입점 (파사드)
 server.py/store.py  서버 (클라이언트 구조와 무관, 이번 범위 밖)
@@ -54,6 +58,19 @@ irc_protocol.py     IRC 와이어 파싱/포맷 (순수, 상태 해석 없음)
 
 수신 메시지 분기도 if/elif 사슬 대신 `_HANDLERS` 디스패치 테이블을 쓴다(새 메시지 타입 지원 시
 기존 코드를 안 건드리게).
+
+**슬래시 명령도 같은 규칙**을 따른다. `ChatSession`에는 `if name == "whois"` 같은 분기가 없고,
+프로토콜 전략이 `command_specs()` / `run_command()`를 갖는다:
+- 두 프로토콜이 똑같이 처리하는 것(`/help /me /join /part /nick`)은 `common_commands.py` 믹스인
+- 프로토콜마다 다른 것은 각자 구현 (`/notice`는 IRC에선 진짜 NOTICE, 커스텀에선 프레이밍 채팅)
+- IRC만 되는 것(`/whois /topic /mode /kick /raw` 등)은 `irc.py`에만 등록
+
+자동완성 목록과 `/help` 출력이 **같은 `command_specs()`를 출처로 쓴다** - 새 명령을 추가하면
+목록과 도움말에 자동으로 함께 나타난다. 커스텀 서버가 못 하는 명령을 치면 조용히 무시하지 않고
+"이 서버에서는 지원하지 않는 명령" 안내를 띄운다(무시하면 먹통처럼 보임).
+
+치트도 마찬가지로 `constants.CHEAT_SPECS` 표 + `MainWindow._CHEAT_EFFECTS` 표다. 모르는 치트
+id는 조용히 무시되므로 구버전 클라이언트가 같은 채널에 있어도 죽지 않는다.
 
 ### SRP
 `gui/`는 역할별로 나뉘어 있다: `theme`(상수/QSS), `helpers`(순수 함수), `network`(소켓),
