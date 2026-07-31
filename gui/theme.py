@@ -74,16 +74,83 @@ QPushButton#secondary {
 QPushButton#secondary:hover {
     background-color: #4a4d63;
 }
+/* --- 공통 디자인 토큰 ---
+   테두리색: 기본 #3d3f52 / 강조(포커스·팝업) #7c6cf0
+   면색: 기본 #1e1f29, 가라앉은 영역 #16171f, 떠 있는 컨트롤 #2a2b38
+   모서리: 컨테이너 10px, 컨트롤 8px, 작은 요소 6px
+   위젯마다 제각각이던 값을 이 규칙으로 통일함 */
+QFrame#card {
+    background-color: #22232e;
+    border: 1px solid #3d3f52;
+    border-radius: 10px;
+    padding: 18px;
+}
 QScrollArea {
     background-color: #16171f;
     border: 1px solid #3d3f52;
-    border-radius: 8px;
+    border-radius: 10px;
+}
+/* 레이아웃 용도로만 쓰는 스크롤 영역(로그인 폼 감싸기) - 테두리/배경 없이 투명하게 */
+QScrollArea#plainScroll, QScrollArea#plainScroll > QWidget > QWidget {
+    background: transparent;
+    border: none;
 }
 QListWidget {
     background-color: #16171f;
     border: 1px solid #3d3f52;
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 4px;
+}
+QListWidget::item {
+    padding: 4px 6px;
+    border-radius: 6px;
+}
+QListWidget::item:selected {
+    background-color: #3d3f52;
+    color: #ffffff;
+}
+QComboBox {
+    background-color: #2a2b38;
+    border: 1px solid #3d3f52;
+    border-radius: 8px;
+    padding: 7px 10px;
+    color: #ffffff;
+}
+QComboBox:hover {
+    border: 1px solid #4a4d63;
+}
+QComboBox:focus {
+    border: 1px solid #7c6cf0;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 22px;
+}
+QComboBox QAbstractItemView {
+    background-color: #22232e;
+    border: 1px solid #3d3f52;
+    border-radius: 8px;
+    selection-background-color: #7c6cf0;
+    selection-color: #ffffff;
+    outline: none;
+    padding: 4px;
+}
+QCheckBox {
+    spacing: 8px;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid #3d3f52;
+    border-radius: 4px;
+    background-color: #2a2b38;
+}
+QCheckBox::indicator:hover {
+    border: 1px solid #7c6cf0;
+}
+QCheckBox::indicator:checked {
+    background-color: #7c6cf0;
+    border: 1px solid #7c6cf0;
 }
 QLabel#title {
     font-size: 20px;
@@ -120,27 +187,34 @@ QLabel#timestampBadge {
     border-radius: 7px;
     padding: 0px 7px;
 }
+/* 탭 아래 본문(pane)과 선택된 탭이 같은 면색(#16171f)이라 하나로 이어져 보이게 함 -
+   예전엔 pane 모서리(8px)와 탭 모서리(6px)가 달라 살짝 어긋나 보였음 */
 QTabWidget::pane {
+    background-color: #16171f;
     border: 1px solid #3d3f52;
-    border-radius: 8px;
+    border-top-left-radius: 0px;
+    border-top-right-radius: 10px;
+    border-bottom-left-radius: 10px;
+    border-bottom-right-radius: 10px;
     top: -1px;
 }
 QTabBar::tab {
-    background-color: #2a2b38;
-    color: #cfd0da;
-    padding: 6px 14px;
+    background-color: #22232e;
+    color: #9a9cad;
+    padding: 7px 14px;
     border: 1px solid #3d3f52;
     border-bottom: none;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
     margin-right: 2px;
 }
 QTabBar::tab:selected {
     background-color: #16171f;
     color: #ffffff;
 }
-QTabBar::tab:hover {
-    background-color: #3d3f52;
+QTabBar::tab:hover:!selected {
+    background-color: #2f3140;
+    color: #cfd0da;
 }
 /* '+' 채널 추가 탭 - 항상 마지막 탭이라는 설계상의 불변조건을 이용해 :last로 구분함
    (disabled로 구분하려 했으나 disabled 탭은 마우스 이벤트 자체를 못 받아 클릭이 아예
@@ -217,9 +291,11 @@ QPushButton#titleBarCloseBtn:hover {
     background-color: #e0454b;
     color: #ffffff;
 }
+/* 팝업(프로필 변경/채널 추가/확인창)은 뒤에 있는 본창과 색이 같아 경계가 안 보이던
+   문제가 있어서, 유일하게 강조색 테두리를 씀 - 컨테이너 모서리(10px)로 통일 */
 QDialog {
     border: 1px solid #7c6cf0;
-    border-radius: 8px;
+    border-radius: 10px;
 }
 """
 # 문자열 전체를 f-string으로 만들면 위의 수많은 CSS 중괄호({...})와 충돌해서 위험하므로,

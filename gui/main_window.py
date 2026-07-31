@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QLineEdit, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+import avatar_store
 import irc_protocol
 import login_prefs
 from chat_core import events as domain_events
@@ -32,6 +33,13 @@ from version import APP_VERSION
 # 시작화면을 최소한 이만큼은 보여줌 - 업데이트가 없을 때 로고가 깜빡하고 사라지면
 # 오히려 뭔가 잘못된 것처럼 보임
 _SPLASH_MIN_MS = 900
+
+# 로그인 폼(카드 582px) + 커스텀 타이틀바(36px) + 위아래 여백이 스크롤 없이 다 들어가는 크기.
+# 이 화면들은 크기를 고정해서 내용이 잘리거나 휠을 굴려야 하는 일이 없게 함
+_FORM_FIXED_SIZE = (560, 700)
+# 채팅 화면은 자유롭게 조절 가능 - 다만 너무 줄이면 탭/참여자 목록이 뭉개져서 하한만 둠
+_CHAT_DEFAULT_SIZE = (860, 700)
+_CHAT_MIN_SIZE = (620, 520)
 
 _RESIZE_EDGE_CURSORS = {
     frozenset({Qt.Edge.TopEdge}): Qt.CursorShape.SizeVerCursor,
@@ -51,11 +59,10 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_TITLE} v{APP_VERSION}")
-        # 로그인 화면이 위젯을 세로로 많이 쌓아둔 편이라(항목이 가장 많은 화면),
-        # 커스텀 타이틀바(36px)까지 감안해도 그 화면이 찌그러지지 않을 만큼
-        # 넉넉하게 시작 크기/최소 크기를 잡음 (타이틀바 높이는 TitleBar.TITLEBAR_HEIGHT)
-        self.resize(720, 600)
-        self.setMinimumSize(480, 540)
+        # 크기 정책은 화면마다 다름(_apply_size_policy_for_page 참고):
+        # - 로그인/채널/시작 화면: 내용이 스크롤 없이 한 번에 다 보이도록 크기 고정
+        # - 채팅 화면: 대화를 넓게 보고 싶을 수 있으므로 자유롭게 크기 조절 가능
+        self.resize(*_CHAT_DEFAULT_SIZE)
 
         self._title_bar: TitleBar | None = None
         if IS_WINDOWS:
@@ -73,6 +80,8 @@ class MainWindow(QMainWindow):
         self._connecting = False
         self._auth_phase = False
         self._pending_ssl = True
+        # 사용자가 직접 로그아웃해서 로그인 화면으로 돌아온 뒤에는 자동로그인을 다시 걸지 않음
+        self._auto_login_suppressed = False
         self._host = ""
         self._port = 0
 
@@ -95,9 +104,10 @@ class MainWindow(QMainWindow):
         # 화면 순서 = 실제 사용 흐름 순서: 시작(로고) -> 로그인 -> 채널선택 -> 채팅
         self.startup_page = StartupPage()
         self.login_page = LoginPage(self._handle_login_submit, self._handle_cancel_connect)
-        self.channel_page = ChannelPage(self._handle_channel_submit)
+        self.channel_page = ChannelPage(self._handle_channel_submit, self._handle_back_to_login)
         self.chat_page = ChatPage(
-            self._handle_send, self._handle_add_channel, self._handle_leave_channel, self._handle_set_avatar
+            self._handle_send, self._handle_add_channel, self._handle_leave_channel,
+            self._handle_set_avatar, self._handle_all_channels_left,
         )
 
         self.stack.addWidget(self.startup_page)
@@ -116,6 +126,27 @@ class MainWindow(QMainWindow):
             self.setCentralWidget(container)
         else:
             self.setCentralWidget(self.stack)
+
+        # 화면이 바뀔 때마다 그 화면에 맞는 크기 정책을 적용
+        self.stack.currentChanged.connect(self._apply_size_policy_for_page)
+        self._apply_size_policy_for_page(self.stack.currentIndex())
+
+    def _apply_size_policy_for_page(self, _index: int):
+        """채팅 화면만 크기 조절을 허용하고, 폼 화면들은 내용이 다 보이는 크기로 고정.
+
+        로그인 폼은 항목이 많아서 창이 작으면 잘리거나 스크롤해야 했음. 어차피 폼 화면은
+        크게 볼 이유가 없으니 아예 고정해두는 게 낫고, 대화 내용을 넓게 보고 싶은
+        채팅 화면만 자유롭게 열어둠.
+        """
+        is_chat = self.stack.currentWidget() is self.chat_page
+        if is_chat:
+            self.setMinimumSize(*_CHAT_MIN_SIZE)
+            self.setMaximumSize(16777215, 16777215)  # Qt의 '제한 없음' 기본값
+            if self.size().width() < _CHAT_DEFAULT_SIZE[0]:
+                self.resize(*_CHAT_DEFAULT_SIZE)
+        else:
+            # 최소=최대로 두면 사용자가 가장자리를 끌어도 크기가 안 바뀜
+            self.setFixedSize(*_FORM_FIXED_SIZE)
 
     def start_boot_sequence(self):
         """창이 화면에 뜬 뒤 호출 - 시작화면에서 업데이트를 확인/적용하고 로그인으로 넘어감.
@@ -141,6 +172,31 @@ class MainWindow(QMainWindow):
         # 자동로그인은 로그인 화면이 실제로 보이는 상태에서 시작해야 "연결 중..." 표시와
         # '연결 취소' 버튼이 정상적으로 보임
         QTimer.singleShot(100, self._maybe_auto_login)
+
+    def _handle_all_channels_left(self):
+        """마지막 채널까지 나가면 채널 선택 화면으로 돌아감(빈 채팅 화면에 갇히지 않게).
+        연결은 그대로 유지하므로 바로 다른 채널에 들어갈 수 있음"""
+        if self.stack.currentWidget() is self.chat_page:
+            self.channel_page.show_status("")
+            self.stack.setCurrentWidget(self.channel_page)
+
+    def _handle_back_to_login(self):
+        """채널 화면에서 로그인 화면으로 되돌아가기(로그아웃).
+
+        연결을 끊고 세션도 새로 비움 - 안 그러면 이전 계정의 채널/멤버 상태가 다음
+        로그인에 섞임. 사용자가 직접 되돌아온 것이므로 자동로그인은 이번 실행 동안
+        다시 걸지 않음(안 그러면 로그인 화면에 도착하자마자 되돌아온 계정으로 다시
+        들어가버려서 계정을 바꿀 수가 없음).
+        """
+        self._auto_login_suppressed = True
+        self._stop_connecting()
+        self.client.abort()
+        self.session = build_session(
+            "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
+        )
+        self.chat_page.reset()
+        self.login_page.show_status("")
+        self.stack.setCurrentWidget(self.login_page)
 
     # ---------------- 세션에서 파생되는 값들 ----------------
     # 예전에는 MainWindow에도 my_id/_irc_current_nick/_my_avatar_b64/_protocol_mode를 따로
@@ -294,6 +350,8 @@ class MainWindow(QMainWindow):
         """저장된 자동로그인 정보가 있으면 앱을 켜자마자 자동으로 로그인 시도.
         로그인 화면의 입력값은 LoginPage._load_saved_prefs()에서 이미 채워둔 상태라
         여기서는 그걸 그대로 제출하기만 하면 됨"""
+        if self._auto_login_suppressed:
+            return  # 사용자가 직접 로그아웃해서 돌아온 경우 - 다시 자동으로 들어가면 계정을 못 바꿈
         prefs = login_prefs.load()
         # password는 필수로 안 봄 - IRC는 비밀번호 없이 접속하는 게 보통이라(NickServ
         # 비번은 선택), 빈 비밀번호를 요구하면 IRC 자동로그인이 항상 조용히 안 걸림
@@ -449,6 +507,9 @@ class MainWindow(QMainWindow):
                 self.channel_page.set_mode(self._protocol_mode)
                 self.stack.setCurrentWidget(self.channel_page)
                 self._save_login_prefs()
+                # 예전에 이 아이디로 설정해둔 아이콘을 되살림(로컬 저장분).
+                # 없으면 아무 일도 안 함 - 커스텀 서버는 어차피 입장 때 서버 값을 다시 내려줌
+                self.session.restore_my_profile(avatar_store.load_avatars().get(event.user_id))
 
         elif isinstance(event, domain_events.RegisterSucceeded):
             self._stop_connecting()

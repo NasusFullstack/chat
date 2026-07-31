@@ -51,6 +51,12 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
+    // 자동 업데이트는 이 인스톨러를 /VERYSILENT로 실행함. 그때는 이 안내를 건너뛴다:
+    // (1) /SUPPRESSMSGBOXES가 붙으면 MsgBox가 안 뜨고 기본값(예)으로 자동 응답돼서
+    //     결과적으로 매 업데이트마다 UAC 승인창이 튀어나옴,
+    // (2) 예외 등록은 최초 설치 때 한 번만 하면 계속 유지되므로 매번 할 이유가 없음.
+    if WizardSilent() then
+      exit;
     if MsgBox(
       'Windows Defender 예외 목록에 이 프로그램을 등록할까요?' + #13#10 +
       '(서명 안 된 프로그램이라 백신이 실행/업데이트를 오탐지로 막는 경우를 줄여줍니다.' + #13#10 +
