@@ -2531,6 +2531,11 @@ def _try_auto_update() -> bool:
     dlg.setLabelText("적용 중입니다... 곧 다시 시작됩니다.")
     dlg.setValue(100)
     QApplication.processEvents()
+    # 이 시도 자체를 기록해둠 - 이 프로세스는 곧 종료돼서 성공했는지 알 방법이 없지만,
+    # 같은 버전으로 너무 여러 번 시도했다면 다음 실행의 check_for_update()가 알아서
+    # 더 이상 시도하지 않게 해줌(그래야 이 컴퓨터에서 계속 실패하는 경우에도 "패치만
+    # 뜨고 앱은 영영 못 켜는" 무한 루프에 갇히지 않음)
+    updater.record_update_attempt(info["version"])
     try:
         updater.apply_update_and_relaunch(new_package_path)  # 성공하면 여기서 프로세스가 끝남
     except Exception:  # noqa: BLE001
@@ -2550,9 +2555,6 @@ def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE_SHEET)
 
-    if _try_auto_update():
-        return
-
     icon_path = _find_app_icon()
     if icon_path:
         app.setWindowIcon(QIcon(icon_path))
@@ -2561,6 +2563,14 @@ def main():
     if icon_path:
         window.set_window_icon(QIcon(icon_path))
     window.show()
+
+    # 창을 먼저 띄운 뒤에 업데이트를 확인/적용함 - 예전에는 반대 순서였는데(업데이트
+    # 확인이 끝나야 창을 띄움), 그러면 이 컴퓨터에서만 계속 실패하는 경우 "적용 중입니다"
+    # 화면만 뜨고 앱 자체는 한 번도 못 보여준 채로 끝나버림(실제로 한 사용자가 겪음).
+    # 창을 먼저 띄워두면 업데이트가 몇 번을 실패하더라도 최소한 그동안은 앱을 계속
+    # 쓸 수 있음 - 회로차단기(MAX_UPDATE_ATTEMPTS)와 함께 이중으로 방지함
+    QTimer.singleShot(300, _try_auto_update)
+
     sys.exit(app.exec())
 
 

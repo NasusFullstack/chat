@@ -34,6 +34,52 @@ DOWNLOAD_TIMEOUT_SEC = 120
 MIN_VALID_PACKAGE_BYTES = 20_000_000
 # 교체 후 새 exe 파일 자체가 이 값보다 작으면(손상/잘림) 롤백함
 MIN_VALID_EXE_BYTES = 1_000_000
+# 같은 버전으로의 업데이트 "시도" 자체가 이 횟수만큼 연속되면(그 이후 성공했는지는 이
+# 프로세스가 이미 종료돼서 알 수 없음 - apply_update_and_relaunch가 배치 스크립트를
+# 띄우고 곧장 sys.exit함) 더 이상 자동으로 재시도하지 않음. 이게 없으면: 이 컴퓨터에서만
+# 계속 실패하는 경우(백업/롤백이 뭔가에 막혀 안 되는 등) 매 실행마다 "적용 중입니다"
+# 화면만 보이고 앱 자체를 절대 못 켜는 무한 루프에 갇힘 - 실제로 한 사용자가 이걸 겪음.
+# 성공하면 다음 실행의 APP_VERSION이 이미 그 버전이라 더 비교할 신버전이 없어져서
+# 이 카운터는 자연스럽게 의미가 없어짐(따로 성공을 감지해서 초기화할 필요가 없음)
+MAX_UPDATE_ATTEMPTS = 3
+
+
+def _update_state_path() -> str:
+    exe_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(exe_dir, "update_attempt_state.json")
+
+
+def _load_update_state() -> dict:
+    path = _update_state_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def record_update_attempt(version: str) -> None:
+    """실제로 apply_update_and_relaunch를 시도하기 직전에 호출함(성공/실패 여부와 무관하게
+    "시도했다"는 사실만 기록 - 이 프로세스는 곧 종료되므로 결과를 알 방법이 없음).
+    같은 버전이면 횟수를 올리고, 그 사이 더 새 버전이 나왔으면 그 버전 기준으로 새로 셈"""
+    state = _load_update_state()
+    if state.get("version") == version:
+        state["attempts"] = state.get("attempts", 0) + 1
+    else:
+        state = {"version": version, "attempts": 1}
+    try:
+        with open(_update_state_path(), "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except OSError:
+        pass
+
+
+def _should_skip_update(version: str) -> bool:
+    state = _load_update_state()
+    return state.get("version") == version and state.get("attempts", 0) >= MAX_UPDATE_ATTEMPTS
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
@@ -59,6 +105,9 @@ def check_for_update() -> dict | None:
 
     latest_tag = data.get("tag_name", "")
     if not latest_tag or _parse_version(latest_tag) <= _parse_version(APP_VERSION):
+        return None
+
+    if _should_skip_update(latest_tag):
         return None
 
     download_url = next(
