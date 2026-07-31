@@ -35,7 +35,7 @@ BOB_AMPLITUDE = 3.5   # 위아래 흔들림(px)
 BOB_TILT_DEG = 2.0    # 함께 살짝 기우는 각도
 
 SHIP_PX = 96          # 오버레이 위젯 한 변(회전해도 안 잘리게 넉넉히)
-TURN_STEP_DEG = 22.5  # 실제 게임처럼 방향을 16방향으로 끊어서 표현
+TURN_STEP_DEG = 11.25  # 실제 게임과 같은 32방향으로 끊어서 표현 (360/32)
 
 ARROW_KEYS = {
     Qt.Key.Key_Left: (-1, 0),
@@ -56,25 +56,47 @@ _ENGINE = QColor("#cfe8ff")
 
 SPRITE_FILENAME = "battlecruiser.png"
 SPRITE_MAX_PX = 256
-_sprite_cache: list = []  # [QPixmap] 또는 [None] - 파일 탐색을 한 번만 하려고 캐시
+# 가로가 세로보다 이 배 이상 길면 "방향별 프레임을 가로로 이어붙인 스트립"으로 봄.
+# 배 한 대짜리 그림과 스트립을 파일명 하나로 같이 받기 위한 구분 규칙
+STRIP_MIN_ASPECT = 8
+FRAME_MAX_PX = 128  # 스트립 한 칸의 최대 크기(그릴 때 96px 안팎이라 이 이상은 낭비)
+_sprite_cache: list = []  # [_Sprite] 또는 [None] - 파일 탐색/변환을 한 번만 하려고 캐시
 
 
-def _grayify_team_color(image: QImage) -> QImage:
-    """스프라이트의 팀 컬러(분홍/마젠타) 픽셀만 회색으로 바꿈.
+WHITE_BG_THRESHOLD = 246  # 이 값 이상인 흰색만 배경으로 봄
+TEAM_GRAY_MAX = 185  # 팀 컬러를 회색으로 옮길 때의 최대 밝기(255면 순백이 되어 얼룩짐)
 
-    스타 유닛 스프라이트는 팀 컬러를 분홍색으로 칠해두고 플레이어 색으로 치환하는 구조라,
-    분홍 계열(R·B는 높고 G는 낮음)만 골라 같은 밝기의 회색으로 옮기면 회색 팀이 됨.
+
+def _convert_pixels(image: QImage) -> QImage:
+    """흰 배경 -> 투명, 팀 컬러(분홍) -> 회색. 두 변환을 한 번에 훑음.
+
+    - 스프라이트 시트는 보통 흰 배경 위에 유닛이 올라가 있어서, 그대로 쓰면 채팅창 위에
+      흰 네모가 깔림. 함선의 가장 밝은 부분도 순백까지는 안 가므로 임계값을 아주 높게
+      잡으면 배경만 안전하게 날아감(이미 투명 배경인 이미지에는 아무 영향 없음).
+    - 스타 유닛 스프라이트는 팀 컬러를 분홍으로 칠해두고 플레이어 색으로 치환하는 구조라,
+      분홍 계열(R·B는 높고 G는 낮음)만 골라 회색으로 옮기면 회색 팀이 됨. 이때 밝기를
+      그대로 쓰면 안 됨 - 가장 밝은 분홍(#ff00ff)이 순백이 되어 함선에 흰 얼룩처럼 남음.
+      TEAM_GRAY_MAX까지로 눌러서 중간 회색 범위에 들어오게 함.
+
+    픽셀마다 QColor 객체를 만드는 pixelColor()를 쓰면 32칸짜리 방향 스트립(30만 픽셀
+    이상)에서 수 초씩 걸려 첫 소환 때 화면이 멈춤. 원시 버퍼를 직접 훑어서 피함.
     """
     image = image.convertToFormat(QImage.Format.Format_ARGB32)
-    for y in range(image.height()):
-        for x in range(image.width()):
-            color = image.pixelColor(x, y)
-            if color.alpha() == 0:
+    buf = image.bits()  # ARGB32는 리틀엔디안에서 B,G,R,A 순으로 저장됨
+    stride = image.bytesPerLine()
+    width, height = image.width(), image.height()
+    for y in range(height):
+        row = y * stride
+        for x in range(width):
+            i = row + x * 4
+            if buf[i + 3] == 0:
                 continue
-            r, g, b = color.red(), color.green(), color.blue()
-            if r > 90 and b > 90 and g + 60 < min(r, b):
-                level = max(r, b)
-                image.setPixelColor(x, y, QColor(level, level, level, color.alpha()))
+            b, g, r = buf[i], buf[i + 1], buf[i + 2]
+            if r >= WHITE_BG_THRESHOLD and g >= WHITE_BG_THRESHOLD and b >= WHITE_BG_THRESHOLD:
+                buf[i + 3] = 0
+            elif r > 90 and b > 90 and g + 60 < min(r, b):
+                level = max(r, b) * TEAM_GRAY_MAX // 255
+                buf[i] = buf[i + 1] = buf[i + 2] = level
     return image
 
 
@@ -100,31 +122,94 @@ def _trim_transparent(image: QImage) -> QImage:
     return image.copy(left, top, right - left + 1, bottom - top + 1)
 
 
-def _load_sprite() -> QPixmap | None:
+class _Sprite:
+    """불러온 함선 그림. 방향별 프레임이 있으면 골라 쓰고, 없으면 한 장을 회전시킴.
+
+    실제 게임은 방향별 그림을 미리 그려두고 고르는 방식이다. 아이소메트릭 그림을
+    회전시키면 각도가 어긋나 보이므로, 프레임이 있으면 회전을 아예 하지 않는다.
+    """
+
+    def __init__(self, frames: list[QPixmap]):
+        self.frames = frames
+
+    @property
+    def directional(self) -> bool:
+        return len(self.frames) > 1
+
+    def pick(self, facing_deg: float) -> QPixmap:
+        """진행 방향(위=0, 시계방향)에 가장 가까운 프레임.
+
+        0번 프레임이 정북이고 번호가 늘수록 시계방향이라는 전제 - 시트에서 프레임을
+        뽑을 때 실제로 측정해 확인한 규칙이다(측정: 0=북, 8=동, 16=남, 24=서).
+        """
+        count = len(self.frames)
+        if count == 1:
+            return self.frames[0]
+        step = 360.0 / count
+        return self.frames[int(round(facing_deg / step)) % count]
+
+
+def _slice_strip(image: QImage) -> list[QImage]:
+    """가로로 이어붙인 방향 프레임 스트립을 한 칸씩 나눔. 스트립이 아니면 통째로 한 장."""
+    width, height = image.width(), image.height()
+    if height <= 0 or width < height * STRIP_MIN_ASPECT:
+        return [image]
+    count = int(round(width / height))
+    if count < 2:
+        return [image]
+    cell = width / count
+    return [image.copy(int(round(i * cell)), 0, int(round(cell)), height) for i in range(count)]
+
+
+def _load_sprite() -> "_Sprite | None":
     """battlecruiser.png가 있으면 그 이미지를, 없으면 아래 _draw_ship()으로 직접 그림.
 
+    파일은 두 가지 형태를 다 받는다:
+    - 배 한 대짜리 그림 -> 진행 방향으로 회전시켜 씀
+    - 방향별 프레임을 가로로 이어붙인 스트립 -> 회전 없이 프레임을 골라 씀(자연스러움)
+    구분은 가로세로 비로 함(STRIP_MIN_ASPECT).
+
     찾는 곳은 로고(icon.png)와 완전히 같은 경로 규칙 - 설치 폴더와 PyInstaller 번들
-    양쪽을 봄. 그래서 저장소에 파일을 넣고 빌드 스크립트에 --add-data 한 줄만 추가하면
-    설치할 때 자동으로 따라가고, 파일이 없으면 그냥 직접 그린 함선이 나옴(둘 다 정상 동작).
+    양쪽을 봄. 파일이 없으면 그냥 직접 그린 함선이 나옴(둘 다 정상 동작).
     """
     if _sprite_cache:
         return _sprite_cache[0]
     path = _find_image_in_app_dirs((SPRITE_FILENAME,))
-    pixmap = None
+    sprite = None
     if path:
         image = QImage(path)
         if not image.isNull():
-            # 팀 컬러 치환이 픽셀 단위 파이썬 루프라, 큰 원본(스프라이트 시트 전체 등)을
-            # 그대로 돌리면 첫 소환 때 화면이 몇 초 멈춤. 어차피 100px 이하로 그리므로
-            # 먼저 줄여놓고 치환함
-            if max(image.width(), image.height()) > SPRITE_MAX_PX:
-                image = image.scaled(
-                    SPRITE_MAX_PX, SPRITE_MAX_PX,
-                    Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation,
-                )
-            pixmap = QPixmap.fromImage(_grayify_team_color(_trim_transparent(image)))
-    _sprite_cache.append(pixmap)
-    return pixmap
+            image = _downscale(image)
+            # 순서 주의: 흰 배경을 먼저 투명하게 만들어야 여백 잘라내기가 제대로 먹음
+            image = _convert_pixels(image)
+            frames = _slice_strip(image)
+            if len(frames) > 1:
+                # 스트립은 칸마다 따로 여백을 자르면 방향이 바뀔 때 배 위치가 튀므로
+                # 칸 크기를 그대로 유지함(원본 격자의 상대 위치가 곧 정렬 기준)
+                pixmaps = [QPixmap.fromImage(f) for f in frames]
+            else:
+                pixmaps = [QPixmap.fromImage(_trim_transparent(frames[0]))]
+            sprite = _Sprite(pixmaps)
+    _sprite_cache.append(sprite)
+    return sprite
+
+
+def _downscale(image: QImage) -> QImage:
+    """픽셀 변환이 파이썬 루프라 큰 원본을 그대로 돌리면 첫 소환 때 화면이 멈춤.
+    스트립은 '칸 하나'가, 낱장은 '이미지 전체'가 기준이라 각각 다르게 줄임."""
+    width, height = image.width(), image.height()
+    if height > 0 and width >= height * STRIP_MIN_ASPECT:
+        if height <= FRAME_MAX_PX:
+            return image
+        ratio = FRAME_MAX_PX / height
+        return image.scaled(int(width * ratio), FRAME_MAX_PX,
+                            Qt.AspectRatioMode.IgnoreAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation)
+    if max(width, height) <= SPRITE_MAX_PX:
+        return image
+    return image.scaled(SPRITE_MAX_PX, SPRITE_MAX_PX,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
 
 
 def _draw_ship(painter: QPainter, size: float):
@@ -363,23 +448,34 @@ class BattlecruiserOverlay(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.translate(self.width() / 2, self.height() / 2)
+        sprite = _load_sprite()
 
         moving = math.hypot(self._vx, self._vy) > 0.15
-        if not moving and self._leaving_ms < 0:
+        bobbing = (not moving) and self._leaving_ms < 0
+        wave = math.sin(2 * math.pi * self._phase / BOB_PERIOD_MS) if bobbing else 0.0
+        if bobbing:
             # 멈춰 있을 때만 제자리에서 둥실둥실 (방향은 마지막 것 그대로 유지)
-            wave = math.sin(2 * math.pi * self._phase / BOB_PERIOD_MS)
             painter.translate(0, wave * BOB_AMPLITUDE)
-            painter.rotate(self._facing + wave * BOB_TILT_DEG)
-        else:
-            painter.rotate(self._facing)
 
-        sprite = _load_sprite()
+        if sprite is not None and sprite.directional:
+            # 방향별 그림이 있으면 회전시키지 않고 해당 방향 프레임을 고름.
+            # 둥실거릴 때의 미세한 기울기까지 프레임으로 표현할 수는 없으므로 그건 생략 -
+            # 어차피 위아래 흔들림만으로도 떠 있는 느낌은 충분히 남
+            self._draw_pixmap(painter, sprite.pick(self._facing))
+            painter.end()
+            return
+
+        painter.rotate(self._facing + wave * BOB_TILT_DEG)
         if sprite is not None:
-            scaled = sprite.scaled(
-                int(SHIP_PX * 0.9), int(SHIP_PX * 0.9),
-                Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation,
-            )
-            painter.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
+            self._draw_pixmap(painter, sprite.frames[0])
         else:
             _draw_ship(painter, SHIP_PX * 0.86)
         painter.end()
+
+    @staticmethod
+    def _draw_pixmap(painter: QPainter, pixmap: QPixmap):
+        scaled = pixmap.scaled(
+            int(SHIP_PX * 0.9), int(SHIP_PX * 0.9),
+            Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation,
+        )
+        painter.drawPixmap(-scaled.width() // 2, -scaled.height() // 2, scaled)
