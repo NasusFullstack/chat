@@ -16,9 +16,10 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QLineEdit, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-import history_store
 import irc_protocol
 import login_prefs
+from chat_core import events as domain_events
+from chat_core.session import build_session
 from gui.helpers import _friendly_connection_error
 from gui.network import ChatClient
 from gui.pages import ChannelPage, ChatPage, LoginPage
@@ -71,18 +72,19 @@ class MainWindow(QMainWindow):
         self._pending_ssl = True
         self._host = ""
         self._port = 0
-        self._protocol_mode = "custom"
-        self._joined_channels: set[str] = set()
         self._my_avatar_b64: str | None = None
 
-        # 실제 IRC 서버 모드 전용 상태
+        # 채널/멤버/닉네임/아바타 등 세션 상태는 전부 chat_core.ChatSession이 소유함
+        # (예전에는 여기에 _joined_channels/_irc_members/_irc_names_buffer/... 로 흩어져
+        # 있었고 cli_client.py에도 같은 게 따로 있었음). 로그인 시도할 때마다 새로 만들지만,
+        # 로그인 전에도 None이 아니도록 빈 세션을 하나 둠 - 안 그러면 로그인 전에 호출될 수
+        # 있는 경로(예: 채널 추가)에서 None 참조로 죽음. 소켓이 아직 연결 전이라
+        # client.send_cmd()는 조용히 무시되므로 예전(연결 전 전송 무시) 동작과 동일함
+        self.session = build_session(
+            "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
+        )
+        # 프로필 창에 현재 닉네임을 채워넣을 때만 쓰는 IRC 표시용 캐시
         self._irc_current_nick = ""
-        self._irc_password = ""
-        self._irc_identified = False
-        self._irc_members: dict[str, set[str]] = {}
-        self._irc_names_buffer: dict[str, list[str]] = {}
-        self._irc_nick_retries = 0
-        self._nick_change_pending = False  # 프로필 화면에서 직접 요청한 닉네임 변경 처리 중인지
 
         self._connect_timer = QTimer(self)
         self._connect_timer.setSingleShot(True)
@@ -116,6 +118,14 @@ class MainWindow(QMainWindow):
         # 정상적으로 보임 - 생성자 안에서 곧바로 시도하면 아직 화면에 아무것도
         # 그려지기 전이라 사용자 입장에서 뭐가 되고 있는지 알기 어려움
         QTimer.singleShot(200, self._maybe_auto_login)
+
+    @property
+    def _protocol_mode(self) -> str:
+        """프로토콜은 세션이 단일 출처(single source of truth)로 소유함.
+
+        예전에는 MainWindow에도 따로 문자열을 들고 있어서 세션과 어긋날 여지가 있었는데,
+        여기서 파생시키면 그런 불일치가 구조적으로 불가능해짐."""
+        return self.session.protocol_mode
 
     def set_window_icon(self, icon: QIcon):
         self.setWindowIcon(icon)
@@ -183,7 +193,6 @@ class MainWindow(QMainWindow):
             return
 
         self.pending_mode = mode
-        self._protocol_mode = protocol
         self.chat_page.set_protocol_mode(protocol)
         self._pending_user_id = values["user_id"]
         self._pending_password = values["password"]
@@ -191,17 +200,16 @@ class MainWindow(QMainWindow):
         self._pending_auto_login = values["auto_login"]
         self._host = values["host"]
         self._port = port
-        self._joined_channels = set()
         self._my_avatar_b64 = None
 
-        if protocol == "irc":
-            self._irc_current_nick = values["user_id"]
-            self._irc_password = values["password"]
-            self._irc_identified = False
-            self._irc_members = {}
-            self._irc_names_buffer = {}
-            self._irc_nick_retries = 0
-            self._nick_change_pending = False
+        # 로그인 시도마다 도메인 세션을 새로 만듦(이전 세션의 채널/멤버 상태가 안 섞이게).
+        # 프로토콜에 맞는 전송 방식만 꽂아주면 나머지 상태 로직은 전부 코어가 담당함
+        transport = self.client.send_irc if protocol == "irc" else self.client.send_cmd
+        self.session = build_session(
+            protocol, values["host"], port,
+            transport=transport,
+            on_event=self._on_domain_event,
+        )
 
         if self.client.state() == QSslSocket.SocketState.ConnectedState:
             # 이미 연결돼 있으면 (예: 회원가입 후 바로 로그인) 재연결하지 않고 바로 전송
@@ -299,17 +307,13 @@ class MainWindow(QMainWindow):
         self._connect_timer.start(CONNECT_TIMEOUT_MS)
         if self._protocol_mode == "irc":
             self.login_page.show_status("서버 접속 중... (언제든 '연결 취소' 가능)")
-            self._start_irc_registration()
-            return
-        self.login_page.show_status("로그인 확인 중... (언제든 '연결 취소' 가능)")
-        cmd = "login" if self.pending_mode == "login" else "register"
-        self.client.send_cmd({"cmd": cmd, "id": self._pending_user_id, "pw": self._pending_password})
-
-    def _start_irc_registration(self):
-        if self._irc_password:
-            self.client.send_irc(irc_protocol.format_pass(self._irc_password))
-        self.client.send_irc(irc_protocol.format_nick(self._irc_current_nick))
-        self.client.send_irc(irc_protocol.format_user(self._irc_current_nick, self._irc_current_nick))
+        else:
+            self.login_page.show_status("로그인 확인 중... (언제든 '연결 취소' 가능)")
+        # IRC는 회원가입 개념이 없어서 login()이 곧 등록 핸드셰이크임(프로토콜 전략이 처리)
+        if self.pending_mode == "register":
+            self.session.register(self._pending_user_id, self._pending_password)
+        else:
+            self.session.login(self._pending_user_id, self._pending_password)
 
     def _on_connection_failed(self, err: str):
         if not self._connecting:
@@ -326,14 +330,10 @@ class MainWindow(QMainWindow):
         if not values["channel"]:
             self.channel_page.show_status("채널명을 입력하세요.")
             return
-        if self._protocol_mode == "irc":
-            channel = irc_protocol.normalize_channel(values["channel"])
-            self.client.send_irc(irc_protocol.format_join(channel, values["key"] or None))
-            return
         if action == "create":
-            self.client.send_cmd({"cmd": "create_channel", "channel": values["channel"], "key": values["key"]})
+            self.session.create_channel(values["channel"], values["key"])
         else:
-            self.client.send_cmd({"cmd": "join", "channel": values["channel"], "key": values["key"]})
+            self.session.join_channel(values["channel"], values["key"])
 
     def _handle_add_channel(self):
         """채팅 화면 안에서 채널을 추가로 입장 (기존 채널을 떠나지 않음, 새 채널 생성은 지원 안 함)"""
@@ -346,304 +346,154 @@ class MainWindow(QMainWindow):
             self.chat_page, "채널 추가", "채널 비밀번호 (없으면 비워둠):", QLineEdit.EchoMode.Password
         )
         key = key if ok2 else ""
-        if self._protocol_mode == "irc":
-            channel = irc_protocol.normalize_channel(channel)
-            self.client.send_irc(irc_protocol.format_join(channel, key or None))
-        else:
-            self.client.send_cmd({"cmd": "join", "channel": channel, "key": key})
+        self.session.join_channel(channel, key)
 
     def _handle_leave_channel(self, channel: str):
-        if self._protocol_mode == "irc":
-            self.client.send_irc(irc_protocol.format_part(channel))
-        else:
-            self.client.send_cmd({"cmd": "leave", "channel": channel})
+        self.session.leave_channel(channel)
 
     def _handle_set_avatar(self):
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         is_irc = self._protocol_mode == "irc"
-        current_nickname = self._irc_current_nick if is_irc else self.chat_page._nicknames.get(self.my_id, "")
+        current_nickname = self.session.display_name_for(self.my_id) if self.my_id else ""
+        if current_nickname == self.my_id:
+            current_nickname = self._irc_current_nick if is_irc else ""
         dlg = ProfileDialog(
             initial_base64=self._my_avatar_b64, initial_nickname=current_nickname, is_irc=is_irc, parent=self.chat_page
         )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         b64 = dlg.result_base64
-        if len(b64) > AVATAR_MAX_B64_CHARS:
+        if not self.session.set_avatar(b64):
             gui_client.themed_warning(self, "아이콘 저장 실패", "아이콘 데이터가 너무 큽니다.")
             return
         self._my_avatar_b64 = b64
-        self.chat_page.set_avatar(self.my_id, b64)  # 상대에게는 다시 안 돌아오므로 낙관적으로 먼저 반영
-        if is_irc:
-            # 실제 IRC 서버는 아이콘 개념이 없으므로, PRIVMSG 안에 CTCP처럼 숨겨서
-            # 우리 클라이언트끼리만 알아보게 보냄 (내가 입장한 모든 채널에)
-            for channel in self._joined_channels:
-                self.client.send_irc(irc_protocol.format_ctcp_avatar(channel, b64))
-        else:
-            self.client.send_cmd({"cmd": "set_avatar", "avatar": b64})
 
         new_nickname = dlg.result_nickname
-        if new_nickname == current_nickname:
-            return
-        if is_irc:
-            if new_nickname:
-                # 실제 IRC 서버는 닉네임이 곧 접속 식별자라 서버가 승인해야 확정됨 -
-                # 낙관적으로 먼저 바꾸지 않고 NICK 요청 후 서버 응답(NICK 반영/충돌 오류)을 기다림
-                self._nick_change_pending = True
-                self.client.send_irc(irc_protocol.format_nick(new_nickname))
-        else:
-            self.chat_page.set_nickname(self.my_id, new_nickname)  # 낙관적으로 먼저 반영
-            self.client.send_cmd({"cmd": "set_nickname", "nickname": new_nickname})
-
-    def _on_channel_joined(self, channel: str, text: str):
-        """커스텀 프로토콜의 channel_result 성공 / IRC의 자기 자신 JOIN 둘 다 여기로 모임"""
-        first_time = self.stack.currentWidget() is self.channel_page
-        self._joined_channels.add(channel)
-        self.chat_page.add_channel(channel, activate=True)
-        if first_time:
-            self.stack.setCurrentWidget(self.chat_page)
-            self.chat_page.focus_input()
-        self.chat_page.append_system(channel, text)
-        entries = history_store.load_history(self._protocol_mode, self._host, self._port, channel)
-        self.chat_page.load_history(channel, entries)
+        if new_nickname != current_nickname and (new_nickname or not is_irc):
+            self.session.set_nickname(new_nickname)
 
     # ---------------- 채팅 ----------------
     def _handle_send(self, channel: str, text: str):
-        if self._protocol_mode == "irc":
-            self.client.send_irc(irc_protocol.format_privmsg(channel, text))
-            # IRC 서버는 보낸 메시지를 나에게 다시 돌려주지 않으므로 직접 반영
-            ts = time.time()
-            self.chat_page.append_message(channel, self._irc_current_nick, text, True, ts)
-            history_store.append_message("irc", self._host, self._port, channel, self._irc_current_nick, text, ts)
-            return
-        self.client.send_cmd({"cmd": "msg", "channel": channel, "text": text})
+        self.session.send_message(channel, text)
 
-    # ---------------- 실제 IRC 서버 메시지 처리 ----------------
+    # ---------------- 프로토콜 메시지 -> 도메인 코어로 위임 ----------------
+    # 예전에는 이 두 메서드가 각각 150줄/70줄짜리 거대한 분기문이었고, 같은 로직이
+    # cli_client.py에도 따로 구현돼 있었음. 지금은 해석을 전부 chat_core가 하고
+    # 여기서는 원시 메시지를 넘기기만 함 - GUI/CLI가 같은 코어를 공유하게 됨.
     def _on_irc_line(self, msg: irc_protocol.IrcMessage):
+        self.session.handle_incoming(msg)
+
+    def _on_message(self, msg: dict):
+        self.session.handle_incoming(msg)
+
+    # ---------------- 도메인 이벤트 -> 화면 갱신 ----------------
+    def _on_domain_event(self, event):
+        """코어가 발행한 이벤트를 Qt 위젯에 반영하는 유일한 지점.
+
+        여기서는 "무엇을 보여줄지"만 결정하고, "무슨 일이 일어났는지"에 대한 판단
+        (로그인 성공 여부, 멘션 여부, 쿨타임 등)은 이미 코어가 끝낸 상태로 넘어옴.
+        """
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
-        cmd = msg.command
 
-        if cmd == irc_protocol.RPL_WELCOME:
-            self._stop_connecting()
-            # 서버가 001 응답 첫 파라미터로 실제로 확정된 닉네임을 알려줌 - 우리가 보낸
-            # 닉네임과 다를 수 있음(글자 제한/치환 등으로 서버가 바꿨을 수 있어서, 이걸
-            # 안 읽고 우리가 보낸 값을 그대로 쓰면 화면에는 엉뚱한 이름이 남을 수 있음)
-            confirmed_nick = msg.params[0] if msg.params else self._irc_current_nick
-            self._irc_current_nick = confirmed_nick
-            self.my_id = confirmed_nick
-            self.chat_page.my_id = self.my_id
-            self.channel_page.set_mode("irc")
-            self.stack.setCurrentWidget(self.channel_page)
-            self._save_login_prefs()
-            if self._irc_password and not self._irc_identified:
-                self._irc_identified = True
-                self.client.send_irc(irc_protocol.format_privmsg("NickServ", f"IDENTIFY {self._irc_password}"))
-            return
-
-        if cmd in irc_protocol.NICK_COLLISION_NUMERICS:
-            if self._nick_change_pending:
-                # 로그인 후 프로필 화면에서 직접 요청한 닉네임 변경이 거부된 경우 -
-                # 이미 접속된 세션이므로 연결을 끊지 않고 실패만 알림
-                self._nick_change_pending = False
-                gui_client.themed_warning(
-                    self, "닉네임 변경 실패", msg.trailing or "이미 사용 중인 닉네임입니다."
-                )
-                return
-            if self.stack.currentWidget() is self.login_page and self._irc_nick_retries < irc_protocol.MAX_NICK_RETRIES:
-                self._irc_nick_retries += 1
-                self._irc_current_nick += "_"
-                self.client.send_irc(irc_protocol.format_nick(self._irc_current_nick))
-            else:
-                self._stop_connecting()
-                self.client.abort()
-                self.login_page.show_status("사용 가능한 닉네임이 없습니다. 다른 닉네임으로 다시 시도하세요.")
-            return
-
-        if cmd in irc_protocol.CHANNEL_JOIN_ERROR_NUMERICS:
-            text = msg.trailing or "채널 입장에 실패했습니다."
-            if self.stack.currentWidget() is self.channel_page:
-                self.channel_page.show_status(text)
-            else:
-                gui_client.themed_warning(self, "채널 입장 실패", text)
-            return
-
-        if cmd == irc_protocol.RPL_NAMREPLY:
-            channel = msg.params[2] if len(msg.params) > 2 else ""
-            self._irc_names_buffer.setdefault(channel, []).extend(irc_protocol.parse_names_reply(msg))
-            return
-
-        if cmd == irc_protocol.RPL_ENDOFNAMES:
-            channel = msg.params[1] if len(msg.params) > 1 else ""
-            members = set(self._irc_names_buffer.pop(channel, []))
-            self._irc_members[channel] = members
-            self.chat_page.update_userlist(channel, sorted(members))
-            return
-
-        if cmd == "JOIN":
-            nick = msg.source_nick
-            channel = msg.trailing or (msg.params[0] if msg.params else "")
-            if nick == self._irc_current_nick:
-                self._irc_members.setdefault(channel, set()).add(nick)
-                self._on_channel_joined(channel, f"{channel}에 입장했습니다.")
-                self.client.send_irc(irc_protocol.format_names(channel))
-                if self._my_avatar_b64:
-                    # 내가 방금 입장한 채널의 기존 멤버들에게 내 아이콘을 알려줌
-                    self.client.send_irc(irc_protocol.format_ctcp_avatar(channel, self._my_avatar_b64))
-            else:
-                members = self._irc_members.setdefault(channel, set())
-                members.add(nick)
-                self.chat_page.append_system(channel, f"{nick}님이 입장했습니다.")
-                self.chat_page.update_userlist(channel, sorted(members))
-                if self._my_avatar_b64:
-                    # 새로 들어온 사람에게 내 아이콘을 바로 알려줌 (channel 전체에 다시 뿌릴 필요 없이 1:1로)
-                    self.client.send_irc(irc_protocol.format_ctcp_avatar(nick, self._my_avatar_b64))
-            return
-
-        if cmd == "PART":
-            nick = msg.source_nick
-            channel = msg.params[0] if msg.params else ""
-            members = self._irc_members.setdefault(channel, set())
-            members.discard(nick)
-            self.chat_page.append_system(channel, f"{nick}님이 나갔습니다.")
-            self.chat_page.update_userlist(channel, sorted(members))
-            if nick == self._irc_current_nick:
-                self._joined_channels.discard(channel)
-                self.chat_page.remove_channel(channel)
-            return
-
-        if cmd == "QUIT":
-            # QUIT은 채널 정보가 없으므로 그 닉네임이 있던 모든 채널에 반영
-            nick = msg.source_nick
-            for channel, members in self._irc_members.items():
-                if nick in members:
-                    members.discard(nick)
-                    self.chat_page.append_system(channel, f"{nick}님이 접속을 종료했습니다.")
-                    self.chat_page.update_userlist(channel, sorted(members))
-            return
-
-        if cmd == "NICK":
-            old_nick = msg.source_nick
-            new_nick = msg.trailing or (msg.params[0] if msg.params else "")
-            if old_nick == self._irc_current_nick:
-                self._irc_current_nick = new_nick
-                self.my_id = new_nick
-                self.chat_page.my_id = new_nick
-                self._nick_change_pending = False
-            for channel, members in self._irc_members.items():
-                if old_nick in members:
-                    members.discard(old_nick)
-                    members.add(new_nick)
-                    self.chat_page.append_system(channel, f"{old_nick}님이 {new_nick}(으)로 닉네임을 변경했습니다.")
-                    self.chat_page.update_userlist(channel, sorted(members))
-            return
-
-        if cmd == "PRIVMSG":
-            sender = msg.source_nick
-            target = msg.params[0] if msg.params else ""
-            text = msg.trailing
-            avatar_b64 = irc_protocol.parse_ctcp_avatar(text)
-            if avatar_b64 is not None:
-                # 아이콘 교환용 CTCP - 채팅으로 표시하거나 기록에 남기지 않고 캐시만 갱신
-                self.chat_page.set_avatar(sender, avatar_b64)
-                return
-            ts = time.time()
-            if target == self._irc_current_nick:
-                active = self.chat_page.active_channel()
-                if active:
-                    self.chat_page.append_message(active, f"{sender} (귓속말)", text, False, ts)
-            else:
-                self.chat_page.append_message(target, sender, text, False, ts)
-                history_store.append_message("irc", self._host, self._port, target, sender, text, ts)
-            return
-
-        if cmd == "NOTICE":
-            text = msg.trailing
+        if isinstance(event, domain_events.LoggedIn):
+            self.my_id = event.user_id
+            self.chat_page.my_id = event.user_id
+            if self._protocol_mode == "irc":
+                self._irc_current_nick = event.user_id
             if self.stack.currentWidget() is self.login_page:
-                self.login_page.show_status(text)
-            else:
-                active = self.chat_page.active_channel()
-                if active:
-                    self.chat_page.append_system(active, text)
-            return
+                self._stop_connecting()
+                self.channel_page.set_mode(self._protocol_mode)
+                self.stack.setCurrentWidget(self.channel_page)
+                self._save_login_prefs()
 
-        if cmd == "ERROR":
+        elif isinstance(event, domain_events.RegisterSucceeded):
+            self._stop_connecting()
+            self.login_page.show_status("회원가입 완료! 이제 로그인하세요.")
+            self.pending_mode = ""
+
+        elif isinstance(event, domain_events.AuthFailed):
+            self._stop_connecting()
+            self.login_page.show_status(event.text)
+
+        elif isinstance(event, domain_events.ChannelCreated):
+            self.channel_page.show_status("채널 생성 완료! 입장 버튼을 눌러주세요.")
+
+        elif isinstance(event, domain_events.ChannelJoined):
+            first_time = self.stack.currentWidget() is self.channel_page
+            self.chat_page.add_channel(event.channel, activate=True)
+            if first_time:
+                self.stack.setCurrentWidget(self.chat_page)
+                self.chat_page.focus_input()
+            self.chat_page.append_system(event.channel, event.text)
+            self.chat_page.load_history(event.channel, event.history)
+
+        elif isinstance(event, domain_events.ChannelJoinFailed):
+            if self.stack.currentWidget() is self.channel_page:
+                self.channel_page.show_status(event.text)
+            else:
+                gui_client.themed_warning(self, "채널 입장 실패", event.text)
+
+        elif isinstance(event, domain_events.ChannelLeft):
+            self.chat_page.remove_channel(event.channel)
+
+        elif isinstance(event, domain_events.ChannelLeaveFailed):
+            gui_client.themed_warning(self, "채널 나가기 실패", event.text)
+
+        elif isinstance(event, domain_events.MessageReceived):
+            self.chat_page.append_message(
+                event.channel, event.sender, event.text, event.mine, event.ts,
+                is_mention=event.is_mention,
+            )
+
+        elif isinstance(event, domain_events.SystemNotice):
+            if not event.channel:
+                # 등록 전 NOTICE 등 - 채널이 없으면 로그인 화면 상태줄에 표시
+                if self.stack.currentWidget() is self.login_page:
+                    self.login_page.show_status(event.text)
+                return
+            self.chat_page.append_system(event.channel, event.text)
+
+        elif isinstance(event, domain_events.UserlistUpdated):
+            self.chat_page.update_userlist(event.channel, event.users)
+
+        elif isinstance(event, domain_events.AvatarUpdated):
+            self.chat_page.set_avatar(event.user_id, event.avatar_b64)
+
+        elif isinstance(event, domain_events.NicknameUpdated):
+            self.chat_page.set_nickname(event.user_id, event.nickname)
+
+        elif isinstance(event, domain_events.NicknameChangeFailed):
+            gui_client.themed_warning(self, "닉네임 변경 실패", event.text)
+
+        elif isinstance(event, domain_events.NicknameRetrying):
+            self.login_page.show_status(
+                f"닉네임이 사용 중이라 '{event.new_nickname}'(으)로 재시도합니다."
+            )
+
+        elif isinstance(event, domain_events.CheatActivated):
+            # 그 채널을 보는 사람 모두에게 자원 오버레이 + 작업표시줄 깜빡임
+            self.chat_page.show_resource_cheat()
+            gui_client._flash_taskbar_icon(self)
+
+        elif isinstance(event, domain_events.CheatBlocked):
+            self.chat_page.show_mention_notice(
+                f"치트는 {event.remaining_sec}초 후에 다시 사용할 수 있습니다."
+            )
+
+        elif isinstance(event, domain_events.MentionBlocked):
+            self.chat_page.show_mention_notice(
+                f"@{event.target_display} 호출은 {event.remaining_sec}초 후에 다시 가능합니다."
+            )
+
+        elif isinstance(event, domain_events.ConnectionClosed):
             active = self.chat_page.active_channel()
             if active:
-                self.chat_page.append_system(active, f"서버 연결이 종료되었습니다: {msg.trailing}")
-            return
+                self.chat_page.append_system(active, f"서버 연결이 종료되었습니다: {event.text}")
 
-    # ---------------- 친구 서버 메시지 처리 ----------------
-    def _on_message(self, msg: dict):
-        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
-        mtype = msg.get("type")
-
-        if mtype == "auth_result":
-            self._stop_connecting()
-            if msg.get("ok"):
-                if self.pending_mode == "register":
-                    self.login_page.show_status("회원가입 완료! 이제 로그인하세요.")
-                    self.pending_mode = ""
-                else:
-                    self.my_id = self._pending_user_id
-                    self.chat_page.my_id = self.my_id
-                    self.stack.setCurrentWidget(self.channel_page)
-                    self._save_login_prefs()
-            else:
-                self.login_page.show_status(msg.get("text", "실패"))
-
-        elif mtype == "channel_result":
-            channel = msg.get("channel", "")
-            if msg.get("ok"):
-                if "채널 생성" in msg.get("text", ""):
-                    self.channel_page.show_status("채널 생성 완료! 입장 버튼을 눌러주세요.")
-                else:
-                    self._on_channel_joined(channel, msg.get("text", "입장 성공"))
-            else:
-                if self.stack.currentWidget() is self.channel_page:
-                    self.channel_page.show_status(msg.get("text", "실패"))
-                else:
-                    gui_client.themed_warning(self, "채널 입장 실패", msg.get("text", "실패"))
-
-        elif mtype == "leave_result":
-            channel = msg.get("channel", "")
-            if msg.get("ok"):
-                self._joined_channels.discard(channel)
-                self.chat_page.remove_channel(channel)
-            else:
-                gui_client.themed_warning(self, "채널 나가기 실패", msg.get("text", "실패"))
-
-        elif mtype == "chat":
-            sender = msg.get("from", "?")
-            channel = msg.get("channel", "")
-            text = msg.get("text", "")
-            ts = msg.get("ts", time.time())
-            self.chat_page.append_message(channel, sender, text, sender == self.my_id, ts)
-            history_store.append_message("custom", self._host, self._port, channel, sender, text, ts)
-
-        elif mtype == "system":
-            channel = msg.get("channel") or self.chat_page.active_channel()
-            if channel:
-                self.chat_page.append_system(channel, msg.get("text", ""))
-
-        elif mtype == "userlist":
-            channel = msg.get("channel") or self.chat_page.active_channel()
-            if channel:
-                self.chat_page.update_userlist(channel, msg.get("users", []))
-
-        elif mtype == "member_avatar":
-            user_id = msg.get("user_id", "")
-            if user_id:
-                self.chat_page.set_avatar(user_id, msg.get("avatar"))
-
-        elif mtype == "member_nickname":
-            user_id = msg.get("user_id", "")
-            if user_id:
-                self.chat_page.set_nickname(user_id, msg.get("nickname"))
-
-        elif mtype == "error":
-            text = msg.get("text", "오류")
+        elif isinstance(event, domain_events.GenericError):
             if self.stack.currentWidget() is self.login_page:
-                self.login_page.show_status(text)
+                self.login_page.show_status(event.text)
             elif self.stack.currentWidget() is self.channel_page:
-                self.channel_page.show_status(text)
+                self.channel_page.show_status(event.text)
             else:
-                gui_client.themed_warning(self, "오류", text)
+                gui_client.themed_warning(self, "오류", event.text)

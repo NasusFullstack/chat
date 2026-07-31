@@ -24,8 +24,17 @@ from version import APP_VERSION
 
 GITHUB_REPO = "NasusFullstack/chat"
 RELEASES_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-# 인스톨러(FriendChat_Setup.exe)는 최초 설치 전용이고, 자동 업데이트는 이 zip을 받아서
-# 설치 폴더 내용물을 통째로 교체함 (onedir 배포라 파일이 exe 하나가 아니라 여러 개임)
+# 자동 업데이트는 인스톨러(FriendChat_Setup.exe)를 조용히 실행하는 방식이 기본임.
+#
+# 왜 zip 통째 교체가 아니라 인스톨러인가 (실측으로 확인한 근본 원인):
+# 예전 방식은 설치 폴더를 통째로 move(rename)해서 바꿔치기했는데, 폴더 안 파일이 단
+# 하나라도 다른 프로세스에 열려 있으면 move 전체가 "Access is denied"로 실패함. 백신
+# 실시간 검사가 DLL 하나만 잡고 있어도 재시도가 전부 실패해서 패치가 영영 안 됐음
+# ("설치는 되는데 업데이트만 계속 안 된다"는 증상의 정체). 같은 상황에서도 파일 단위
+# 접근은 정상이라, 파일 단위로 처리하는 Inno Setup 인스톨러는 문제없이 성공함.
+# 게다가 인스톨러가 zip보다 용량도 작음(압축률이 더 좋음).
+INSTALLER_ASSET_NAME = "FriendChat_Setup.exe"
+# 구버전 호환/대비용 - 인스톨러 자산이 없는 릴리즈에서만 zip 방식으로 물러남
 ASSET_NAME = "FriendChat_GUI.zip"
 CHECK_TIMEOUT_SEC = 4
 DOWNLOAD_TIMEOUT_SEC = 120
@@ -110,19 +119,23 @@ def check_for_update() -> dict | None:
     if _should_skip_update(latest_tag):
         return None
 
-    download_url = next(
-        (a.get("browser_download_url") for a in data.get("assets", []) if a.get("name") == ASSET_NAME),
-        None,
-    )
-    if not download_url:
-        return None
+    assets = {a.get("name"): a.get("browser_download_url") for a in data.get("assets", [])}
 
-    return {"version": latest_tag, "download_url": download_url}
+    # 인스톨러 방식이 기본(파일 잠금에 강함). 없으면 예전 zip 방식으로 물러남
+    installer_url = assets.get(INSTALLER_ASSET_NAME)
+    if installer_url:
+        return {"version": latest_tag, "download_url": installer_url, "kind": "installer"}
+
+    zip_url = assets.get(ASSET_NAME)
+    if zip_url:
+        return {"version": latest_tag, "download_url": zip_url, "kind": "zip"}
+
+    return None
 
 
-def download_update(download_url: str, progress_cb=None) -> str:
-    """새 버전 패키지(zip)를 임시 파일로 내려받고 그 경로를 반환. 크기가 이상하면 예외 발생."""
-    fd, tmp_path = tempfile.mkstemp(suffix=".zip", prefix="FriendChat_GUI_new_")
+def download_update(download_url: str, progress_cb=None, suffix: str = ".zip") -> str:
+    """새 버전 패키지를 임시 파일로 내려받고 그 경로를 반환. 크기가 이상하면 예외 발생."""
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="FriendChat_GUI_new_")
     os.close(fd)
     try:
         req = urllib.request.Request(download_url, headers={"User-Agent": "FriendChatUpdater"})
@@ -152,6 +165,45 @@ def download_update(download_url: str, progress_cb=None) -> str:
             pass
         raise
     return tmp_path
+
+
+def apply_installer_and_relaunch(installer_path: str):
+    """받아둔 인스톨러를 조용히 실행해서 업데이트하고 앱을 다시 띄움.
+
+    폴더 통째 move 방식과 달리 Inno Setup은 파일 단위로 처리하므로, 백신이 특정 파일을
+    잠시 잡고 있어도 정상적으로 덮어쓸 수 있음(그게 "설치는 되는데 패치는 안 되던" 문제의
+    해법). 인스톨러는 PrivilegesRequired=lowest로 만들어져 있어 UAC 창도 안 뜸.
+
+    현재 프로세스가 살아있는 동안에는 자기 자신의 파일을 덮어쓸 수 없으므로, 여기서도
+    "PID가 끝나길 기다렸다가 실행하는 배치"를 쓴다(기존 방식과 동일한 검증된 패턴).
+    """
+    current_exe = sys.executable
+    pid = os.getpid()
+
+    bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="friendchat_setup_")
+    os.close(bat_fd)
+    # chcp 65001 + UTF-8 BOM 저장: 설치 경로에 한글("춥채팅")이 들어가므로 필수
+    # ping을 딜레이로 쓰는 이유: timeout /t는 콘솔 없는 환경에서 즉시 실패함
+    script = f"""@echo off
+chcp 65001 >nul
+:wait
+tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
+if not errorlevel 1 (
+    ping -n 2 127.0.0.1 >nul
+    goto wait
+)
+
+"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+
+ping -n 3 127.0.0.1 >nul
+start "" "{current_exe}"
+del "{installer_path}" >nul 2>nul
+del "%~f0"
+"""
+    with open(bat_path, "w", encoding="utf-8-sig") as f:
+        f.write(script)
+    subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
+    sys.exit(0)
 
 
 def apply_update_and_relaunch(new_package_path: str):

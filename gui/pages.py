@@ -29,13 +29,13 @@ import avatar_store
 import login_prefs
 import server_registry
 from gui.helpers import (
-    _MENTION_TOKEN_RE, _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert,
-    _hashed_avatar_pixmap,
+    _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert, _hashed_avatar_pixmap,
 )
 from gui.theme import (
     ADD_TAB_LABEL, AVATAR_LIST_PX, AVATAR_MSG_PX, DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT,
-    MENTION_COOLDOWN_SEC, UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
+    UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
 )
+from gui.cheat_overlay import CheatOverlay
 from gui.widgets import ChannelLogView, _ChannelTabBar
 
 
@@ -361,10 +361,9 @@ class ChatPage(QWidget):
         self._unread_timers: dict[str, QTimer] = {}
         self._unread_blink_on: dict[str, bool] = {}
         self._unread_blink_step: dict[str, int] = {}
-        # (채널, 호출 대상 user_id) -> 마지막으로 그 사람을 @호출해서 실제로 전송한 시각.
-        # 내가 같은 사람을 다시 호출할 때만 쿨타임이 적용되고, 다른 사람을 부르는 건 무관함
-        self._mention_cooldowns: dict[tuple[str, str], float] = {}
         self._mention_notice_timer: QTimer | None = None
+        # 코어가 @호출 쿨타임으로 전송을 막으면 입력창 내용을 되살리기 위해 잠깐 보관
+        self._pending_input_text = ""
 
         layout = QHBoxLayout()
 
@@ -427,6 +426,13 @@ class ChatPage(QWidget):
         layout.addWidget(right_widget, 1)
         self.setLayout(layout)
         self._update_input_enabled()
+
+        # 치트 오버레이는 레이아웃에 넣지 않고 채팅 영역 위에 겹쳐 띄움(테두리/배경 없이)
+        self._cheat_overlay = CheatOverlay(self._center_stack)
+
+    def show_resource_cheat(self):
+        """'show me the money'가 채널에 떴을 때 - 자원 오버레이를 채팅창 가운데에 잠깐 표시"""
+        self._cheat_overlay.start()
 
     def set_protocol_mode(self, mode: str):
         self._protocol_mode = mode
@@ -609,48 +615,26 @@ class ChatPage(QWidget):
                 self.tabs.tabBar().setTabIcon(index, QIcon())
 
     def _submit(self):
+        """입력창 내용을 그대로 상위(MainWindow -> ChatSession)로 넘김.
+
+        @호출 쿨타임 판단은 이제 도메인 코어가 함 - 막히면 MentionBlocked 이벤트가 돌아와
+        show_mention_notice()로 안내문이 뜨고, 그때는 입력창을 비우지 않아야 하므로
+        여기서는 코어가 실제로 전송했는지를 알 수 없다는 점에 유의(전송 여부와 무관하게
+        비우면 막힌 메시지가 사라짐). 그래서 코어가 막았을 때만 입력을 되살리는 대신,
+        전송 시도 전 텍스트를 기억해뒀다가 안내문이 뜨면 그대로 복원함."""
         text = self.msg_input.text().strip()
         if not text or not self._active_channel:
             return
-        channel = self._active_channel
-        blocked_target, remaining = self._check_mention_cooldown(channel, text)
-        if blocked_target is not None:
-            # 쿨타임 중이면 메시지 자체를 아예 보내지 않음(채팅창에 안 남음) -
-            # 입력한 내용은 그대로 두고, 보낸 사람한테만 잠깐 안내문을 보여줌
-            self._show_mention_notice(f"@{blocked_target} 호출은 {remaining}초 후에 다시 가능합니다.")
-            return
-        self._record_mention_cooldowns(channel, text)
-        self.on_send(channel, text)
+        self._pending_input_text = text
         self.msg_input.clear()
+        self.on_send(self._active_channel, text)
 
-    def _mentioned_targets(self, channel: str, text: str) -> list[str]:
-        """text에 있는 @토큰들을 그 채널의 실제 참여자(닉네임 또는 아이디)로 해석"""
-        tokens = _MENTION_TOKEN_RE.findall(text)
-        if not tokens:
-            return []
-        members = self._members.get(channel, [])
-        by_display = {self._display_name_for(uid): uid for uid in members}
-        by_id = {uid: uid for uid in members}
-        resolved = []
-        for token in tokens:
-            target = by_display.get(token) or by_id.get(token)
-            if target and target not in resolved:
-                resolved.append(target)
-        return resolved
-
-    def _check_mention_cooldown(self, channel: str, text: str) -> tuple[str | None, int]:
-        now = time.time()
-        for target in self._mentioned_targets(channel, text):
-            last = self._mention_cooldowns.get((channel, target))
-            if last is not None and now - last < MENTION_COOLDOWN_SEC:
-                remaining = int(MENTION_COOLDOWN_SEC - (now - last)) + 1
-                return self._display_name_for(target), remaining
-        return None, 0
-
-    def _record_mention_cooldowns(self, channel: str, text: str):
-        now = time.time()
-        for target in self._mentioned_targets(channel, text):
-            self._mention_cooldowns[(channel, target)] = now
+    def show_mention_notice(self, text: str):
+        """코어가 @호출 쿨타임으로 전송을 막았을 때 - 안내문을 띄우고 입력 내용을 되살림"""
+        if self._pending_input_text:
+            self.msg_input.setText(self._pending_input_text)
+            self._pending_input_text = ""
+        self._show_mention_notice(text)
 
     def _show_mention_notice(self, text: str):
         self._mention_notice.setText(text)
@@ -671,20 +655,16 @@ class ChatPage(QWidget):
         base = cached if cached is not None else _hashed_avatar_pixmap(user_id)
         return base.scaled(px, px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
 
-    def append_message(self, channel: str, sender: str, text: str, mine: bool, ts: float):
+    def append_message(self, channel: str, sender: str, text: str, mine: bool, ts: float,
+                       is_mention: bool = False):
+        """is_mention은 도메인 코어가 이미 판단해서 넘겨줌 - 화면은 알림만 트리거하면 됨"""
         view = self._log_views.get(channel)
         if view is None:
             return
         view.append_message(self._display_name_for(sender), text, mine, ts, self._avatar_for(sender, AVATAR_MSG_PX))
         self._mark_unread(channel)
-        if not mine and self._is_mentioned(text):
+        if is_mention:
             self._trigger_mention_alert()
-
-    def _is_mentioned(self, text: str) -> bool:
-        if not self.my_id:
-            return False
-        my_names = {self.my_id, self._display_name_for(self.my_id)}
-        return any(token in my_names for token in _MENTION_TOKEN_RE.findall(text))
 
     def _trigger_mention_alert(self):
         """지금 그 채널을 보고 있는지와 무관하게 항상 작업표시줄 깜빡임 + 창 흔들림"""
