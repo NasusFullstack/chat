@@ -29,6 +29,7 @@ import server_registry
 import irc_protocol
 import history_store
 import avatar_store
+import login_prefs
 from version import APP_VERSION
 
 IS_WINDOWS = sys.platform == "win32"
@@ -585,6 +586,9 @@ class LoginPage(QWidget):
         self.pw_input.setEchoMode(QLineEdit.EchoMode.Password)
         box.addWidget(self.pw_input)
 
+        self.auto_login_checkbox = QCheckBox("자동로그인 (다음에 앱을 열면 바로 로그인)")
+        box.addWidget(self.auto_login_checkbox)
+
         btn_row = QHBoxLayout()
         self.login_btn = QPushButton("로그인")
         self.login_btn.clicked.connect(lambda: self.on_submit("login"))
@@ -616,6 +620,36 @@ class LoginPage(QWidget):
         # _on_protocol_changed가 안전하게 실행됨 (그래서 protocol_combo 생성 시점이
         # 아니라 __init__ 맨 마지막에서 기본값을 IRC로 바꿈)
         self.protocol_combo.setCurrentIndex(self.protocol_combo.findData("irc"))
+        self._load_saved_prefs()
+
+    def _load_saved_prefs(self):
+        """예전에 로그인했던 아이디/서버 정보를 미리 채워둠. 자동로그인을 켜둔 적이
+        있으면 비밀번호까지 채우고 체크박스도 켜서, MainWindow가 이어서 자동으로
+        로그인을 시도할 수 있게 함(비밀번호는 자동로그인을 켠 경우에만 저장돼있음)"""
+        prefs = login_prefs.load()
+        if not prefs:
+            return
+        if prefs.get("host"):
+            self.host_input.setText(prefs["host"])
+        if prefs.get("port"):
+            self.port_input.setText(str(prefs["port"]))
+        if "ssl" in prefs:
+            self.ssl_checkbox.setChecked(bool(prefs["ssl"]))
+        if prefs.get("cert_path"):
+            self.cert_input.setText(prefs["cert_path"])
+        proto = prefs.get("protocol")
+        if proto:
+            idx = self.protocol_combo.findData(proto)
+            if idx >= 0:
+                self.protocol_combo.setCurrentIndex(idx)
+        if prefs.get("user_id"):
+            self.user_input.setText(prefs["user_id"])
+        if prefs.get("auto_login"):
+            # IRC는 비밀번호 없이 접속하는 게 보통이라(NickServ 비번은 선택),
+            # 비밀번호가 비어있어도 자동로그인 자체는 걸려야 함 - password 존재 여부로
+            # 게이트를 걸면 안 됨
+            self.pw_input.setText(prefs.get("password", ""))
+            self.auto_login_checkbox.setChecked(True)
 
     def _reload_servers(self, select_name: str | None = None):
         self.server_combo.blockSignals(True)
@@ -713,6 +747,7 @@ class LoginPage(QWidget):
             "protocol": self.protocol_combo.currentData(),
             "user_id": self.user_input.text().strip(),
             "password": self.pw_input.text(),
+            "auto_login": self.auto_login_checkbox.isChecked(),
         }
 
 
@@ -1913,6 +1948,11 @@ class MainWindow(QMainWindow):
         else:
             self.setCentralWidget(self.stack)
 
+        # 창이 실제로 뜬 뒤에 시도해야 로그인 중 상태 표시(연결 중.../취소 버튼)가
+        # 정상적으로 보임 - 생성자 안에서 곧바로 시도하면 아직 화면에 아무것도
+        # 그려지기 전이라 사용자 입장에서 뭐가 되고 있는지 알기 어려움
+        QTimer.singleShot(200, self._maybe_auto_login)
+
     def set_window_icon(self, icon: QIcon):
         self.setWindowIcon(icon)
         if self._title_bar is not None:
@@ -1983,6 +2023,8 @@ class MainWindow(QMainWindow):
         self.chat_page.set_protocol_mode(protocol)
         self._pending_user_id = values["user_id"]
         self._pending_password = values["password"]
+        self._pending_cert_path = values["cert_path"]
+        self._pending_auto_login = values["auto_login"]
         self._host = values["host"]
         self._port = port
         self._joined_channels = set()
@@ -2014,6 +2056,34 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             self._stop_connecting()
             self.login_page.show_status(f"오류: {e}")
+
+    def _save_login_prefs(self):
+        """로그인이 실제로 성공한 시점에만 호출함. 자동로그인 체크박스를 껐다면
+        비밀번호는 저장하지 않고(민감정보), 아이디/서버 주소 등은 다음에 편하게
+        쓸 수 있도록 계속 기억해둠. 매번 새로 덮어써서, 체크박스를 껐다가 로그인하면
+        이전에 저장돼있던 비밀번호도 자연스럽게 지워짐"""
+        prefs = {
+            "user_id": self._pending_user_id,
+            "host": self._host,
+            "port": self._port,
+            "ssl": self._pending_ssl,
+            "cert_path": self._pending_cert_path,
+            "protocol": self._protocol_mode,
+            "auto_login": self._pending_auto_login,
+        }
+        if self._pending_auto_login:
+            prefs["password"] = self._pending_password
+        login_prefs.save(prefs)
+
+    def _maybe_auto_login(self):
+        """저장된 자동로그인 정보가 있으면 앱을 켜자마자 자동으로 로그인 시도.
+        로그인 화면의 입력값은 LoginPage._load_saved_prefs()에서 이미 채워둔 상태라
+        여기서는 그걸 그대로 제출하기만 하면 됨"""
+        prefs = login_prefs.load()
+        # password는 필수로 안 봄 - IRC는 비밀번호 없이 접속하는 게 보통이라(NickServ
+        # 비번은 선택), 빈 비밀번호를 요구하면 IRC 자동로그인이 항상 조용히 안 걸림
+        if prefs.get("auto_login") and prefs.get("user_id"):
+            self._handle_login_submit("login")
 
     def _stop_connecting(self):
         self._connecting = False
@@ -2196,6 +2266,7 @@ class MainWindow(QMainWindow):
             self.chat_page.my_id = self.my_id
             self.channel_page.set_mode("irc")
             self.stack.setCurrentWidget(self.channel_page)
+            self._save_login_prefs()
             if self._irc_password and not self._irc_identified:
                 self._irc_identified = True
                 self.client.send_irc(irc_protocol.format_privmsg("NickServ", f"IDENTIFY {self._irc_password}"))
@@ -2347,6 +2418,7 @@ class MainWindow(QMainWindow):
                     self.my_id = self._pending_user_id
                     self.chat_page.my_id = self.my_id
                     self.stack.setCurrentWidget(self.channel_page)
+                    self._save_login_prefs()
             else:
                 self.login_page.show_status(msg.get("text", "실패"))
 
