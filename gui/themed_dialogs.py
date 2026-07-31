@@ -2,9 +2,11 @@
 
 themed_question/themed_warning/themed_get_text는 테스트가 g.themed_question = fake처럼
 직접 몽키패치하는 대상임 - 이 셋을 호출하는 다른 모듈(pages.py, profile_dialog.py,
-main_window.py)은 반드시 `import gui_client` 후 `gui_client.themed_question(...)`처럼
-모듈 속성으로 조회해서 호출해야 몽키패치가 실제로 먹힘. `from gui.themed_dialogs import
-themed_question`처럼 직접 바인딩하면 안 됨 - 자세한 이유는 gui_client.py 상단 주석 참고.
+main_window.py)은 호출하는 메서드 "본문 안에서" `import gui_client`를 한 뒤
+`gui_client.themed_question(...)`처럼 모듈 속성으로 조회해서 호출해야 몽키패치가 실제로
+먹힘. `from gui.themed_dialogs import themed_question`처럼 직접 바인딩하거나 파일 맨
+위에서 `import gui_client`를 하면 안 됨(둘 다 PyInstaller 빌드에서 순환참조 크래시가
+나거나 몽키패치가 무효화됨) - 자세한 이유는 gui_client.py 상단 주석 참고.
 """
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget

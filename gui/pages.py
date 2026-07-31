@@ -3,10 +3,17 @@
 이 모듈은 themed_get_text/themed_question(gui.themed_dialogs)와 _flash_taskbar_icon/
 _shake_window(gui.mention_alerts)를 호출하는데, 이 4개는 테스트가 g.themed_question =
 fake처럼 gui_client 모듈에 직접 몽키패치하는 대상임. 그래서 `from gui.themed_dialogs
-import themed_question`처럼 바로 바인딩하지 않고, `import gui_client` 후 호출 시점에
-`gui_client.themed_question(...)`으로 모듈 속성을 조회함 - 이러면 gui_client.py가 아직
-이 모듈을 import하는 도중이라도(순환참조처럼 보이지만) 문제없이 동작함. 자세한 이유는
-gui_client.py 상단 주석 참고.
+import themed_question`처럼 모듈 로드 시점에 바로 바인딩하지 않고, 호출하는 메서드
+"본문 안에서" `import gui_client`를 한 뒤 `gui_client.themed_question(...)`으로 모듈
+속성을 조회함.
+
+주의: 이 import를 파일 맨 위(모듈 최상단)에 두면 안 됨 - PyInstaller로 빌드한 실행
+파일에서 "cannot import name 'X' from partially initialized module" 순환참조 오류로
+실제로 크래시가 났음(로컬 개발 환경의 CPython에서는 sys.modules 캐싱 덕에 통과했지만,
+PyInstaller의 프로즌 임포터는 버전에 따라 모듈 최상단의 순환참조를 CPython만큼
+관대하게 처리하지 못함). 함수/메서드 "본문 안에서"의 지연 import는 그 함수가 실제로
+호출되는 시점(=gui_client.py의 모든 import가 이미 끝난 뒤)에만 실행되므로 이 문제가
+원천적으로 없음 - 자세한 이유는 gui_client.py 상단 주석 참고.
 """
 import time
 
@@ -18,7 +25,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-import gui_client
 import avatar_store
 import login_prefs
 import server_registry
@@ -226,6 +232,7 @@ class LoginPage(QWidget):
         except ValueError:
             self.show_status("포트는 숫자여야 합니다.")
             return
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         name, ok = gui_client.themed_get_text(self, "공용서버 등록", "서버 이름:")
         name = name.strip()
         if not ok or not name:
@@ -238,6 +245,7 @@ class LoginPage(QWidget):
         self.show_status(f"'{name}' 서버가 등록되었습니다. 다음부터 목록에서 바로 선택할 수 있어요.")
 
     def _delete_server(self):
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         data = self.server_combo.itemData(self.server_combo.currentIndex())
         if not data:
             self.show_status("삭제할 서버를 목록에서 선택하세요.")
@@ -542,6 +550,7 @@ class ChatPage(QWidget):
         # 스크롤이 출렁이는(위로 튀는) 원인이었음
 
     def _request_close_channel(self, channel: str):
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         if gui_client.themed_question(self, "채널 나가기", f"'{channel}' 채널에서 나갈까요?"):
             self.on_leave_channel(channel)
 
@@ -679,6 +688,7 @@ class ChatPage(QWidget):
 
     def _trigger_mention_alert(self):
         """지금 그 채널을 보고 있는지와 무관하게 항상 작업표시줄 깜빡임 + 창 흔들림"""
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         top = self.window()
         gui_client._flash_taskbar_icon(top)
         gui_client._shake_window(top)

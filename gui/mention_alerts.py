@@ -1,9 +1,10 @@
 """@호출 알림 (작업표시줄 깜빡임 + 창 흔들림).
 
 _flash_taskbar_icon/_shake_window는 테스트가 g._flash_taskbar_icon = fake처럼 직접
-몽키패치하는 대상임 - 이 둘을 호출하는 다른 모듈(pages.py)은 반드시 `import gui_client`
-후 `gui_client._flash_taskbar_icon(...)`처럼 모듈 속성으로 조회해서 호출해야 몽키패치가
-실제로 먹힘. 자세한 이유는 gui_client.py 상단 주석 참고.
+몽키패치하는 대상임 - 이 둘을 호출하는 다른 모듈(pages.py)은 호출하는 메서드 "본문
+안에서" `import gui_client`를 한 뒤 `gui_client._flash_taskbar_icon(...)`처럼 모듈
+속성으로 조회해서 호출해야 몽키패치가 실제로 먹힘(파일 맨 위에서 import하면 PyInstaller
+빌드에서 순환참조 크래시가 남 - 자세한 이유는 gui_client.py 상단 주석 참고).
 """
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QWidget
