@@ -24,9 +24,14 @@ from gui.helpers import _friendly_connection_error
 from gui.network import ChatClient
 from gui.pages import ChannelPage, ChatPage, LoginPage
 from gui.profile_dialog import ProfileDialog
-from gui.theme import APP_TITLE, AVATAR_MAX_B64_CHARS, CONNECT_TIMEOUT_MS, IS_WINDOWS
+from gui.startup_page import StartupPage
+from gui.theme import APP_TITLE, CONNECT_TIMEOUT_MS, IS_WINDOWS
 from gui.title_bar import TitleBar
 from version import APP_VERSION
+
+# 시작화면을 최소한 이만큼은 보여줌 - 업데이트가 없을 때 로고가 깜빡하고 사라지면
+# 오히려 뭔가 잘못된 것처럼 보임
+_SPLASH_MIN_MS = 900
 
 _RESIZE_EDGE_CURSORS = {
     frozenset({Qt.Edge.TopEdge}): Qt.CursorShape.SizeVerCursor,
@@ -65,14 +70,11 @@ class MainWindow(QMainWindow):
         self.client.message_received.connect(self._on_message)
         self.client.irc_line_received.connect(self._on_irc_line)
 
-        self.my_id = ""
-        self.pending_mode = ""
         self._connecting = False
         self._auth_phase = False
         self._pending_ssl = True
         self._host = ""
         self._port = 0
-        self._my_avatar_b64: str | None = None
 
         # 채널/멤버/닉네임/아바타 등 세션 상태는 전부 chat_core.ChatSession이 소유함
         # (예전에는 여기에 _joined_channels/_irc_members/_irc_names_buffer/... 로 흩어져
@@ -83,8 +85,6 @@ class MainWindow(QMainWindow):
         self.session = build_session(
             "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
         )
-        # 프로필 창에 현재 닉네임을 채워넣을 때만 쓰는 IRC 표시용 캐시
-        self._irc_current_nick = ""
 
         self._connect_timer = QTimer(self)
         self._connect_timer.setSingleShot(True)
@@ -92,12 +92,15 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
 
+        # 화면 순서 = 실제 사용 흐름 순서: 시작(로고) -> 로그인 -> 채널선택 -> 채팅
+        self.startup_page = StartupPage()
         self.login_page = LoginPage(self._handle_login_submit, self._handle_cancel_connect)
         self.channel_page = ChannelPage(self._handle_channel_submit)
         self.chat_page = ChatPage(
             self._handle_send, self._handle_add_channel, self._handle_leave_channel, self._handle_set_avatar
         )
 
+        self.stack.addWidget(self.startup_page)
         self.stack.addWidget(self.login_page)
         self.stack.addWidget(self.channel_page)
         self.stack.addWidget(self.chat_page)
@@ -114,18 +117,59 @@ class MainWindow(QMainWindow):
         else:
             self.setCentralWidget(self.stack)
 
-        # 창이 실제로 뜬 뒤에 시도해야 로그인 중 상태 표시(연결 중.../취소 버튼)가
-        # 정상적으로 보임 - 생성자 안에서 곧바로 시도하면 아직 화면에 아무것도
-        # 그려지기 전이라 사용자 입장에서 뭐가 되고 있는지 알기 어려움
-        QTimer.singleShot(200, self._maybe_auto_login)
+    def start_boot_sequence(self):
+        """창이 화면에 뜬 뒤 호출 - 시작화면에서 업데이트를 확인/적용하고 로그인으로 넘어감.
+
+        창을 먼저 띄우고 그 다음에 업데이트를 확인하는 순서는 반드시 지켜야 함: 반대로 하면
+        업데이트가 계속 실패하는 환경에서 앱 화면을 한 번도 못 보여줌(실제 사고 이력).
+        """
+        self.stack.setCurrentWidget(self.startup_page)
+        QTimer.singleShot(_SPLASH_MIN_MS, self._boot_check_update)
+
+    def _boot_check_update(self):
+        from gui import update_flow
+
+        self.startup_page.set_status("업데이트 확인 중...")
+        QApplication.processEvents()
+        if update_flow.check_and_apply(self.startup_page):
+            return  # 업데이트를 적용하는 중 - 잠시 후 프로세스가 종료되고 새 버전으로 다시 뜸
+        self.startup_page.hide_progress()
+        self._go_to_login()
+
+    def _go_to_login(self):
+        self.stack.setCurrentWidget(self.login_page)
+        # 자동로그인은 로그인 화면이 실제로 보이는 상태에서 시작해야 "연결 중..." 표시와
+        # '연결 취소' 버튼이 정상적으로 보임
+        QTimer.singleShot(100, self._maybe_auto_login)
+
+    # ---------------- 세션에서 파생되는 값들 ----------------
+    # 예전에는 MainWindow에도 my_id/_irc_current_nick/_my_avatar_b64/_protocol_mode를 따로
+    # 들고 있어서 세션과 어긋날 여지가 있었음(같은 사실을 두 곳이 기억하는 구조). 전부
+    # 세션에서 파생시키면 그런 불일치가 구조적으로 불가능해짐.
 
     @property
     def _protocol_mode(self) -> str:
-        """프로토콜은 세션이 단일 출처(single source of truth)로 소유함.
-
-        예전에는 MainWindow에도 따로 문자열을 들고 있어서 세션과 어긋날 여지가 있었는데,
-        여기서 파생시키면 그런 불일치가 구조적으로 불가능해짐."""
         return self.session.protocol_mode
+
+    @property
+    def my_id(self) -> str:
+        return self.session.my_id
+
+    @property
+    def _my_avatar_b64(self) -> str | None:
+        return self.session.avatars.get(self.session.my_id)
+
+    @property
+    def pending_mode(self) -> str:
+        return self.session.pending_auth_mode
+
+    def _is_pre_login(self) -> bool:
+        """아직 로그인 전 화면(시작화면/로그인화면)에 있는지.
+
+        자동로그인은 시작화면 직후에 걸리기 때문에 login_page만 보면 안 됨 - 시작화면을
+        도입했을 때 로그인 성공 후 화면 전환이 안 되는 버그가 실제로 이걸로 생겼었음.
+        """
+        return self.stack.currentWidget() in (self.startup_page, self.login_page)
 
     def set_window_icon(self, icon: QIcon):
         self.setWindowIcon(icon)
@@ -192,7 +236,7 @@ class MainWindow(QMainWindow):
             self.login_page.show_status("포트는 숫자여야 합니다.")
             return
 
-        self.pending_mode = mode
+        self._auth_mode = mode  # "login" 또는 "register" - 연결 완료 후 어느 쪽을 보낼지
         self.chat_page.set_protocol_mode(protocol)
         self._pending_user_id = values["user_id"]
         self._pending_password = values["password"]
@@ -200,7 +244,6 @@ class MainWindow(QMainWindow):
         self._pending_auto_login = values["auto_login"]
         self._host = values["host"]
         self._port = port
-        self._my_avatar_b64 = None
 
         # 로그인 시도마다 도메인 세션을 새로 만듦(이전 세션의 채널/멤버 상태가 안 섞이게).
         # 프로토콜에 맞는 전송 방식만 꽂아주면 나머지 상태 로직은 전부 코어가 담당함
@@ -310,7 +353,7 @@ class MainWindow(QMainWindow):
         else:
             self.login_page.show_status("로그인 확인 중... (언제든 '연결 취소' 가능)")
         # IRC는 회원가입 개념이 없어서 login()이 곧 등록 핸드셰이크임(프로토콜 전략이 처리)
-        if self.pending_mode == "register":
+        if self._auth_mode == "register":
             self.session.register(self._pending_user_id, self._pending_password)
         else:
             self.session.login(self._pending_user_id, self._pending_password)
@@ -320,7 +363,7 @@ class MainWindow(QMainWindow):
             # 사용자가 취소했거나 타임아웃으로 이미 처리된 경우 - 중복 메시지 방지
             return
         self._stop_connecting()
-        if self.stack.currentWidget() is self.login_page:
+        if self._is_pre_login():
             friendly = _friendly_connection_error(err, self._pending_ssl, self.client._pinned_cert)
             self.login_page.show_status(friendly)
 
@@ -354,9 +397,9 @@ class MainWindow(QMainWindow):
     def _handle_set_avatar(self):
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         is_irc = self._protocol_mode == "irc"
-        current_nickname = self.session.display_name_for(self.my_id) if self.my_id else ""
-        if current_nickname == self.my_id:
-            current_nickname = self._irc_current_nick if is_irc else ""
+        # IRC는 닉네임이 곧 접속 식별자라 my_id 자체가 현재 닉네임이고,
+        # 커스텀 서버는 아이디와 별개인 표시용 닉네임이 따로 있음(없으면 빈 값)
+        current_nickname = self.my_id if is_irc else self.session.nicknames.get(self.my_id, "")
         dlg = ProfileDialog(
             initial_base64=self._my_avatar_b64, initial_nickname=current_nickname, is_irc=is_irc, parent=self.chat_page
         )
@@ -366,7 +409,6 @@ class MainWindow(QMainWindow):
         if not self.session.set_avatar(b64):
             gui_client.themed_warning(self, "아이콘 저장 실패", "아이콘 데이터가 너무 큽니다.")
             return
-        self._my_avatar_b64 = b64
 
         new_nickname = dlg.result_nickname
         if new_nickname != current_nickname and (new_nickname or not is_irc):
@@ -396,11 +438,13 @@ class MainWindow(QMainWindow):
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
 
         if isinstance(event, domain_events.LoggedIn):
-            self.my_id = event.user_id
             self.chat_page.my_id = event.user_id
-            if self._protocol_mode == "irc":
-                self._irc_current_nick = event.user_id
-            if self.stack.currentWidget() is self.login_page:
+            # 아직 로그인 단계에 있을 때만 채널 화면으로 넘어감. IRC 닉네임 변경도
+            # LoggedIn을 발생시키는데(내 식별자가 바뀌는 건 같으므로), 그때는 이미 채팅
+            # 중이라 화면을 되돌리면 안 됨.
+            # 시작화면도 포함해야 함 - 자동로그인은 시작화면 직후에 걸리므로 login_page만
+            # 보면 전환이 안 일어남(시작화면 도입 때 실제로 이걸로 깨졌었음)
+            if self._is_pre_login():
                 self._stop_connecting()
                 self.channel_page.set_mode(self._protocol_mode)
                 self.stack.setCurrentWidget(self.channel_page)
@@ -409,7 +453,6 @@ class MainWindow(QMainWindow):
         elif isinstance(event, domain_events.RegisterSucceeded):
             self._stop_connecting()
             self.login_page.show_status("회원가입 완료! 이제 로그인하세요.")
-            self.pending_mode = ""
 
         elif isinstance(event, domain_events.AuthFailed):
             self._stop_connecting()
@@ -448,7 +491,7 @@ class MainWindow(QMainWindow):
         elif isinstance(event, domain_events.SystemNotice):
             if not event.channel:
                 # 등록 전 NOTICE 등 - 채널이 없으면 로그인 화면 상태줄에 표시
-                if self.stack.currentWidget() is self.login_page:
+                if self._is_pre_login():
                     self.login_page.show_status(event.text)
                 return
             self.chat_page.append_system(event.channel, event.text)
@@ -491,7 +534,7 @@ class MainWindow(QMainWindow):
                 self.chat_page.append_system(active, f"서버 연결이 종료되었습니다: {event.text}")
 
         elif isinstance(event, domain_events.GenericError):
-            if self.stack.currentWidget() is self.login_page:
+            if self._is_pre_login():
                 self.login_page.show_status(event.text)
             elif self.stack.currentWidget() is self.channel_page:
                 self.channel_page.show_status(event.text)
