@@ -18,8 +18,10 @@ chat_core/          도메인 코어 - Qt/asyncio/파일시스템을 전혀 모�
     wire_custom.py      커스텀 프로토콜 메시지 타입 상수 + dict 빌더
 
 gui/                GUI 어댑터 (PySide6) - 화면만 담당
+  startup_page.py     시작화면(큰 로고 + 진행 상태)
+  update_flow.py      업데이트 진행을 시작화면에 표시하는 흐름
 cli_client.py       CLI 어댑터 (asyncio) - 터미널 출력만 담당
-gui_client.py       GUI 진입점 (파사드) + 자동 업데이트 트리거
+gui_client.py       GUI 진입점 (파사드)
 server.py/store.py  서버 (클라이언트 구조와 무관, 이번 범위 밖)
 irc_protocol.py     IRC 와이어 파싱/포맷 (순수, 상태 해석 없음)
 ```
@@ -57,6 +59,33 @@ irc_protocol.py     IRC 와이어 파싱/포맷 (순수, 상태 해석 없음)
 `gui/`는 역할별로 나뉘어 있다: `theme`(상수/QSS), `helpers`(순수 함수), `network`(소켓),
 `widgets`(메시지/로그뷰), `pages`(화면), `main_window`(조정), `themed_dialogs`, `profile_dialog`,
 `title_bar`, `cheat_overlay`.
+
+## 화면 흐름 (부팅 순서)
+
+```
+시작화면(로고) --업데이트 확인/적용--> 로그인 --> 채널 선택 --> 채팅
+```
+
+`MainWindow.start_boot_sequence()`가 이 흐름을 주도한다. `QStackedWidget`에 담긴 순서도
+실제 흐름 순서와 같게 맞춰뒀다(읽기 쉬우라고).
+
+- 업데이트 진행 상황은 시작화면에 표시한다. 예전엔 로그인 화면이 먼저 뜨고 그 위에 모달
+  진행창이 덮치는 구조라 흐름이 어색했다.
+- **로그인 전 화면 판정은 `_is_pre_login()`을 쓸 것.** `currentWidget() is login_page`만
+  보면 시작화면 단계에서 걸리는 자동로그인이 성공해도 채널 화면으로 안 넘어간다
+  (시작화면을 도입했을 때 실제로 이 버그가 났다).
+- `LoggedIn` 이벤트는 IRC 닉네임 변경 때도 발생한다(내 식별자가 바뀌는 건 같으므로).
+  그래서 화면 전환은 반드시 "아직 로그인 전일 때만" 해야 한다.
+
+## 상태의 단일 출처 (중복 보관 금지)
+
+`MainWindow`는 `my_id` / `_protocol_mode` / `_my_avatar_b64` / `pending_mode`를 **직접 갖지
+않고 세션에서 파생**시킨다(전부 `@property`). 예전엔 세션과 윈도우가 같은 사실을 각자
+기억해서 어긋날 여지가 있었다. 새 상태를 추가할 때도 "이미 세션이 아는 사실인가"를 먼저
+확인할 것.
+
+`ChatPage._members` / `_nicknames` / `_avatar_pixmaps`는 예외로 남겨둔 **화면 렌더링용
+캐시**다. 값의 출처는 도메인 이벤트뿐이고, 여기서 뭘 판단하지는 않는다.
 
 ## 절대 어기면 안 되는 규칙들 (전부 실제 사고 이력 있음)
 

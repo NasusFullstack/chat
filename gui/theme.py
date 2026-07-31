@@ -94,6 +94,21 @@ QLabel#hint {
     color: #9a9cad;
     font-size: 12px;
 }
+QLabel#startupTitle {
+    font-size: 26px;
+    font-weight: bold;
+    color: #ffffff;
+}
+QProgressBar {
+    background-color: #2a2b38;
+    border: 1px solid #3d3f52;
+    border-radius: 6px;
+    height: 8px;
+}
+QProgressBar::chunk {
+    background-color: #7c6cf0;
+    border-radius: 5px;
+}
 QLabel#status_err {
     color: #ff6b6b;
 }

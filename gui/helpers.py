@@ -147,6 +147,28 @@ def _titlebar_icon(kind: str, color: str = "#cfd0da") -> QIcon:
     return QIcon(pixmap)
 
 
+def _find_logo_image() -> str:
+    """시작화면에 크게 띄울 로고용 - png를 우선으로 찾음.
+
+    _find_app_icon()은 창/작업표시줄 아이콘용이라 icon.ico를 먼저 고르는데, 그 ico는
+    16x16이라 크게 키우면 뭉개짐. 큰 로고는 1024px짜리 icon.png를 써야 함.
+    """
+    return _find_image_in_app_dirs(("icon.png", "icon.ico"))
+
+
+def _find_image_in_app_dirs(names: tuple[str, ...]) -> str:
+    search_dirs = [_app_dir()]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        search_dirs.append(meipass)
+    for directory in search_dirs:
+        for name in names:
+            candidate = os.path.join(directory, name)
+            if os.path.exists(candidate):
+                return candidate
+    return ""
+
+
 def _find_app_icon() -> str:
     # exe에 내장된 아이콘 리소스는 탐색기 파일 아이콘에는 반영되지만, 실행 중인 창의
     # 타이틀바/작업표시줄 아이콘은 Qt가 setWindowIcon()을 직접 호출해야 반영됨 - 그래서

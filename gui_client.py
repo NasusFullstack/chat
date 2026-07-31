@@ -44,9 +44,8 @@ gui/profile_dialog.py처럼 자유롭게 `from gui.profile_dialog import Profile
 """
 import sys
 
-from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QProgressDialog
+from PySide6.QtWidgets import QApplication
 
 import server_registry
 import irc_protocol
@@ -77,66 +76,11 @@ from gui.widgets import ChannelLogView, MessageWidget, _build_system_label, _Cha
 from gui.title_bar import TitleBar
 from gui.profile_dialog import ColorPickerDialog, ProfileDialog, _AvatarGridWidget
 from gui.pages import ChannelPage, ChatPage, LoginPage
+from gui.startup_page import StartupPage
 from gui.main_window import MainWindow
 
 if IS_WINDOWS:
     import ctypes  # 작업표시줄 아이콘 그룹핑(AppUserModelID)에만 사용
-
-
-def _try_auto_update() -> bool:
-    """exe로 빌드되어 실행 중일 때만 새 버전을 확인해서 있으면 적용하고 True를 반환함
-    (True면 apply_update_and_relaunch()가 이미 현재 프로세스를 종료시켰거나 곧 종료시킴).
-    소스 실행 중이거나, 확인/다운로드에 실패하면 아무 것도 안 하고 조용히 False를 반환해서
-    평소처럼 앱이 계속 뜨게 함 - 업데이트 기능 때문에 실행 자체가 막히면 안 되므로."""
-    if not getattr(sys, "frozen", False):
-        return False
-
-    import updater
-    info = updater.check_for_update()
-    if info is None:
-        return False
-
-    dlg = QProgressDialog(f"새 버전({info['version']})을 받는 중입니다...", None, 0, 100)
-    dlg.setWindowTitle("업데이트")
-    dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
-    dlg.setMinimumDuration(0)
-    dlg.setValue(0)
-    dlg.show()
-
-    def on_progress(read: int, total: int):
-        dlg.setValue(int(read / total * 100) if total else 0)
-        QApplication.processEvents()
-
-    is_installer = info.get("kind") == "installer"
-    try:
-        new_package_path = updater.download_update(
-            info["download_url"], progress_cb=on_progress,
-            suffix=".exe" if is_installer else ".zip",
-        )
-    except Exception:  # noqa: BLE001
-        dlg.close()
-        return False
-
-    dlg.setLabelText("적용 중입니다... 곧 다시 시작됩니다.")
-    dlg.setValue(100)
-    QApplication.processEvents()
-    # 이 시도 자체를 기록해둠 - 이 프로세스는 곧 종료돼서 성공했는지 알 방법이 없지만,
-    # 같은 버전으로 너무 여러 번 시도했다면 다음 실행의 check_for_update()가 알아서
-    # 더 이상 시도하지 않게 해줌(그래야 이 컴퓨터에서 계속 실패하는 경우에도 "패치만
-    # 뜨고 앱은 영영 못 켜는" 무한 루프에 갇히지 않음)
-    updater.record_update_attempt(info["version"])
-    try:
-        # 인스톨러 방식이 기본 - 폴더 통째 move는 파일 하나만 잠겨도 전부 실패하는데
-        # 인스톨러는 파일 단위로 처리해서 그 상황에서도 성공함(실측 확인)
-        if is_installer:
-            updater.apply_installer_and_relaunch(new_package_path)
-        else:
-            updater.apply_update_and_relaunch(new_package_path)
-        # 성공하면 위에서 프로세스가 끝나므로 여기 도달하지 않음
-    except Exception:  # noqa: BLE001
-        dlg.close()
-        return False
-    return True
 
 
 def main():
@@ -159,12 +103,10 @@ def main():
         window.set_window_icon(QIcon(icon_path))
     window.show()
 
-    # 창을 먼저 띄운 뒤에 업데이트를 확인/적용함 - 예전에는 반대 순서였는데(업데이트
-    # 확인이 끝나야 창을 띄움), 그러면 이 컴퓨터에서만 계속 실패하는 경우 "적용 중입니다"
-    # 화면만 뜨고 앱 자체는 한 번도 못 보여준 채로 끝나버림(실제로 한 사용자가 겪음).
-    # 창을 먼저 띄워두면 업데이트가 몇 번을 실패하더라도 최소한 그동안은 앱을 계속
-    # 쓸 수 있음 - 회로차단기(MAX_UPDATE_ATTEMPTS)와 함께 이중으로 방지함
-    QTimer.singleShot(300, _try_auto_update)
+    # 창(시작화면)을 먼저 띄운 뒤에 업데이트를 확인/적용함. 반대로 하면 업데이트가 계속
+    # 실패하는 환경에서 앱 화면을 한 번도 못 보여주고 끝남(실제 사고 이력).
+    # 실제 진행은 MainWindow가 시작화면에 표시하면서 처리함.
+    window.start_boot_sequence()
 
     sys.exit(app.exec())
 
