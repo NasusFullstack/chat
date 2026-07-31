@@ -107,8 +107,12 @@ def _try_auto_update() -> bool:
         dlg.setValue(int(read / total * 100) if total else 0)
         QApplication.processEvents()
 
+    is_installer = info.get("kind") == "installer"
     try:
-        new_package_path = updater.download_update(info["download_url"], progress_cb=on_progress)
+        new_package_path = updater.download_update(
+            info["download_url"], progress_cb=on_progress,
+            suffix=".exe" if is_installer else ".zip",
+        )
     except Exception:  # noqa: BLE001
         dlg.close()
         return False
@@ -122,7 +126,13 @@ def _try_auto_update() -> bool:
     # 뜨고 앱은 영영 못 켜는" 무한 루프에 갇히지 않음)
     updater.record_update_attempt(info["version"])
     try:
-        updater.apply_update_and_relaunch(new_package_path)  # 성공하면 여기서 프로세스가 끝남
+        # 인스톨러 방식이 기본 - 폴더 통째 move는 파일 하나만 잠겨도 전부 실패하는데
+        # 인스톨러는 파일 단위로 처리해서 그 상황에서도 성공함(실측 확인)
+        if is_installer:
+            updater.apply_installer_and_relaunch(new_package_path)
+        else:
+            updater.apply_update_and_relaunch(new_package_path)
+        # 성공하면 위에서 프로세스가 끝나므로 여기 도달하지 않음
     except Exception:  # noqa: BLE001
         dlg.close()
         return False
