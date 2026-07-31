@@ -129,6 +129,7 @@ def apply_update_and_relaunch(new_package_path: str):
     install_dir = os.path.dirname(current_exe)
     backup_dir = install_dir + ".bak"
     new_exe_path = os.path.join(install_dir, exe_name)
+    backup_exe_path = os.path.join(backup_dir, exe_name)
     pid = os.getpid()
 
     bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="friendchat_update_")
@@ -164,7 +165,10 @@ set RETRY=0
 move /y "{install_dir}" "{backup_dir}" >nul 2>nul
 if not exist "{backup_dir}" (
     set /a RETRY+=1
-    if %RETRY% LSS 8 (
+    rem 원래 8회(16초)였는데, 같은 사용자 환경에서 같은 원인으로 두 번 실패한 걸 보면
+    rem 일시적인 백신 스캔보다 더 오래 잠기는 뭔가(백신 딥스캔, 인덱싱 등)가 있는 것
+    rem 같아서 20회(약 40초)로 늘림
+    if %RETRY% LSS 20 (
         ping -n 2 127.0.0.1 >nul
         goto retry_backup
     )
@@ -183,7 +187,7 @@ rmdir /s /q "{install_dir}" >nul 2>nul
 move /y "{extract_dir}" "{install_dir}" >nul 2>nul
 if not exist "{new_exe_path}" (
     set /a RETRY+=1
-    if %RETRY% LSS 8 (
+    if %RETRY% LSS 20 (
         ping -n 2 127.0.0.1 >nul
         goto retry_move
     )
@@ -210,12 +214,22 @@ set RETRY=0
 move /y "{backup_dir}" "{install_dir}" >nul 2>nul
 if not exist "{new_exe_path}" (
     set /a RETRY+=1
-    if %RETRY% LSS 8 (
+    if %RETRY% LSS 20 (
         ping -n 2 127.0.0.1 >nul
         goto retry_rollback
     )
 )
-start "" "{current_exe}"
+
+rem 롤백(백업 -> install_dir로 되돌리기)까지 실패하면 install_dir는 비어있는데
+rem backup_dir({backup_dir})에는 예전 정상 버전이 멀쩡히 남아있는 상태임. 이때 그냥
+rem 존재하지도 않는 install_dir의 exe를 실행하려 들면 앱이 그냥 안 뜨고 "사라진"
+rem 것처럼 보임 - backup_dir에서라도 직접 실행해서 최소한 앱은 계속 쓸 수 있게 함
+rem (다음 업데이트 때 install_dir가 다시 채워지길 기대함)
+if exist "{new_exe_path}" (
+    start "" "{current_exe}"
+) else (
+    start "" "{backup_exe_path}"
+)
 del "%~f0"
 exit /b
 
