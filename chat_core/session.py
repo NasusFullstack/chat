@@ -269,6 +269,13 @@ class ChatSession:
     def normalize_channel(self, channel: str) -> str:
         return self.protocol.normalize_channel(channel)
 
+    def request_unfurl(self, url: str):
+        """링크 미리보기 정보를 요청. 결과는 UnfurlResult 이벤트로 돌아옴.
+
+        '누가 가져오는가'는 프로토콜이 정함 - 커스텀 서버는 서버가 대신 가져오고,
+        실제 IRC 서버는 그럴 수 없으니 아무 것도 하지 않음(이 파일에는 그 분기가 없음)."""
+        self.protocol.request_unfurl(self, url)
+
     # ==================== 수신 처리 ====================
 
     def handle_incoming(self, raw):

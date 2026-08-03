@@ -10,8 +10,11 @@ from PySide6.QtWidgets import (
 )
 
 from chat_core.commands import KIND_ACTION, KIND_CHAT, KIND_NOTICE
-from gui.helpers import _format_ts, _linkify
-from gui.theme import ADD_TAB_LABEL, AVATAR_MSG_PX, CHANNEL_TAB_FIXED_WIDTH, TIMESTAMP_BADGE_HEIGHT_PX
+from gui.helpers import _format_ts, _linkify, extract_urls
+from gui.theme import (
+    ADD_TAB_LABEL, ADD_TAB_WIDTH, AVATAR_MSG_PX, CHANNEL_TAB_FIXED_WIDTH, CHANNEL_TAB_HEIGHT,
+    TIMESTAMP_BADGE_HEIGHT_PX,
+)
 
 
 def _message_html(sender: str, safe_text: str, mine: bool, kind: str) -> str:
@@ -31,12 +34,18 @@ class MessageWidget(QWidget):
     """채팅 메시지 한 개 - 왼쪽에 아바타, 오른쪽 아래에 시간 타원 배지"""
 
     def __init__(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap,
-                 parent=None, kind: str = KIND_CHAT):
+                 parent=None, kind: str = KIND_CHAT, preview: bool = False):
         super().__init__(parent)
+        # 말풍선 배경은 채팅 카드 면색이 그대로 비쳐야 함. objectName으로 한정하지 않으면
+        # 이 규칙이 자식(링크 미리보기 카드 등)까지 상속돼 그쪽 배경/테두리를 지워버림
+        self.setObjectName("messageRow")
+        self.setStyleSheet("QWidget#messageRow { background: transparent; }")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 1, 4, 1)
 
         avatar_label = QLabel()
+        avatar_label.setObjectName("messageAvatar")
+        avatar_label.setStyleSheet("QLabel#messageAvatar { background: transparent; }")
         avatar_label.setFixedSize(AVATAR_MSG_PX, AVATAR_MSG_PX)
         avatar_label.setPixmap(avatar_pixmap.scaled(
             AVATAR_MSG_PX, AVATAR_MSG_PX,
@@ -55,6 +64,8 @@ class MessageWidget(QWidget):
         safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
         safe_text = _linkify(safe_text)
         text_label = QLabel(_message_html(sender, safe_text, mine, kind))
+        text_label.setObjectName("messageText")
+        text_label.setStyleSheet("QLabel#messageText { background: transparent; }")
         text_label.setTextFormat(Qt.TextFormat.RichText)
         text_label.setWordWrap(True)
         text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -65,6 +76,16 @@ class MessageWidget(QWidget):
         text_label.setCursor(Qt.CursorShape.IBeamCursor)
         body.addWidget(text_label)
         self._text_label = text_label
+
+        # 링크 미리보기 자리. 서버에 요청을 넣어두고 결과가 오면 그때 채워짐
+        # (못 받으면 높이 0이라 평소 메시지와 똑같이 보임). 여기서 직접 네트워크를
+        # 타지 않는 이유는 gui/link_preview.py 맨 위 설명 참고
+        self.preview_area = None
+        self.preview_urls = extract_urls(text) if preview else []
+        if self.preview_urls:
+            from gui.link_preview import LinkPreviewArea
+            self.preview_area = LinkPreviewArea(self.preview_urls, self)
+            body.addWidget(self.preview_area)
 
         badge_row = QHBoxLayout()
         badge_row.addStretch(1)
@@ -90,6 +111,8 @@ class MessageWidget(QWidget):
 
 def _build_system_label(text: str) -> QLabel:
     label = QLabel(f'<span style="color:#9a9cad"><i>* {text}</i></span>')
+    label.setObjectName("systemNotice")
+    label.setStyleSheet("QLabel#systemNotice { background: transparent; }")
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
     label.setWordWrap(True)
     return label
@@ -106,10 +129,25 @@ class ChannelLogView(QScrollArea):
         # 예전엔 탭 pane 쪽 테두리와 겹쳐서 선이 끊겨 보였음
         self.setObjectName("chatLog")
         self.setFrameShape(QFrame.Shape.NoFrame)
+        # 둥근 모서리를 살리려면 viewport와 내용 위젯이 반드시 투명해야 함. 둘 중 하나라도
+        # 불투명하면 사각형인 그 자식이 둥근 모서리 위에 덮여 그려져서 모서리가 잘려나간
+        # 것처럼 보임(테두리가 끊긴 것처럼 보이던 원인). 배경색은 QScrollArea 자신이 그림
+        # 선택자를 반드시 objectName으로 한정할 것. 위젯에 직접 준 스타일시트는 자식 위젯에도
+        # 그대로 상속되므로, 그냥 "background: transparent"라고 쓰면 이 안에 들어가는
+        # 링크 미리보기 카드 같은 것들의 배경/테두리까지 다 지워버림(실제로 그 증상이 났음)
+        self.viewport().setObjectName("chatLogViewport")
+        self.viewport().setAutoFillBackground(False)
+        self.viewport().setStyleSheet(
+            "QWidget#chatLogViewport { background: transparent; border: none; }")
 
         content = QWidget()
+        content.setObjectName("chatLogContent")
+        content.setAutoFillBackground(False)
+        content.setStyleSheet("QWidget#chatLogContent { background: transparent; }")
         self._layout = QVBoxLayout(content)
         self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # 둥근 모서리 안쪽으로 내용이 파고들지 않게 여백을 둠
+        self._layout.setContentsMargins(8, 8, 8, 8)
         self._layout.setSpacing(2)
         self.setWidget(content)
         self._messages: list[MessageWidget] = []
@@ -132,11 +170,25 @@ class ChannelLogView(QScrollArea):
         return self._container_width or self.viewport().width()
 
     def append_message(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap,
-                       kind: str = KIND_CHAT):
-        widget = MessageWidget(sender, text, mine, ts, avatar_pixmap, kind=kind)
+                       kind: str = KIND_CHAT, preview: bool = True):
+        widget = MessageWidget(sender, text, mine, ts, avatar_pixmap, kind=kind, preview=preview)
         widget.set_wrap_width(self._effective_width())
         self._layout.addWidget(widget)
         self._messages.append(widget)
+        return widget
+
+    def apply_unfurl(self, url: str, title: str, description: str, thumb_b64: str) -> bool:
+        """서버가 보내준 링크 정보를 그 링크를 기다리던 메시지들에 반영.
+
+        같은 링크가 여러 메시지에 있을 수 있으므로 전부 훑음. 뒤에서부터 찾는 이유는
+        방금 온 메시지가 기다리고 있을 가능성이 가장 높기 때문."""
+        applied = False
+        for widget in reversed(self._messages):
+            area = widget.preview_area
+            if area is not None and area.wants(url):
+                area.apply_result(url, title, description, thumb_b64)
+                applied = True
+        return applied
 
     def append_system(self, text: str):
         self._layout.addWidget(_build_system_label(text))
@@ -162,10 +214,23 @@ class ChannelLogView(QScrollArea):
 
 
 class _ChannelTabBar(QTabBar):
-    """채널 탭은 글자 수와 무관하게 항상 고정폭, 맨 끝의 '+' 탭만 그 절반 크기로 그림"""
+    """채널 탭은 글자 수와 무관하게 항상 같은 크기, 맨 끝의 '+' 탭만 작은 정사각형."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # 탭 아래를 가로지르는 기본 밑줄(base line)을 끄지 않으면 탭 위쪽으로 짧은 선분이
+        # 삐져나오고, 아래로는 채팅 카드 테두리와 별개인 줄이 하나 더 그어져 지저분해짐
+        self.setDrawBase(False)
+        # 긴 채널명은 잘라내는 대신 말줄임(...)으로 - 그냥 잘리면 글자가 반쯤 남아 엉성함
+        self.setElideMode(Qt.TextElideMode.ElideRight)
+        self.setExpanding(False)
+        self.setUsesScrollButtons(True)
 
     def tabSizeHint(self, index: int) -> QSize:
-        size = super().tabSizeHint(index)
         if self.tabText(index) == ADD_TAB_LABEL:
-            return QSize(CHANNEL_TAB_FIXED_WIDTH // 2, size.height())
-        return QSize(CHANNEL_TAB_FIXED_WIDTH, size.height())
+            return QSize(ADD_TAB_WIDTH, CHANNEL_TAB_HEIGHT)
+        return QSize(CHANNEL_TAB_FIXED_WIDTH, CHANNEL_TAB_HEIGHT)
+
+    def minimumTabSizeHint(self, index: int) -> QSize:
+        # 이걸 안 주면 탭이 많아졌을 때 Qt가 제멋대로 줄여서 크기가 들쭉날쭉해짐
+        return self.tabSizeHint(index)

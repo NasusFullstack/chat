@@ -125,6 +125,18 @@ class CommandError:
 
 
 @dataclass(frozen=True)
+class UnfurlResult:
+    """서버가 대신 가져와 준 링크 미리보기 정보.
+
+    thumb_b64는 서버가 이미지 기능을 켰을 때만 채워짐(기본은 꺼져 있어 제목/설명만 옴).
+    아무것도 못 가져왔으면 title이 비어 있으니 어댑터는 미리보기를 만들지 않으면 됨."""
+    url: str
+    title: str = ""
+    description: str = ""
+    thumb_b64: str = ""
+
+
+@dataclass(frozen=True)
 class CommandHelp:
     """/help 결과 - 어댑터가 목록을 자기 방식대로 출력(GUI는 채팅창, CLI는 print)"""
     channel: str
