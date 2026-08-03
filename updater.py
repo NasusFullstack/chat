@@ -172,6 +172,55 @@ def download_update(download_url: str, progress_cb=None, suffix: str = ".zip") -
     return tmp_path
 
 
+def build_installer_batch(installer_path: str, current_exe: str, pid: int) -> str:
+    """인스톨러 실행 + 앱 재시작을 담당하는 배치 스크립트 내용.
+
+    실제로 돌려보고 검증할 수 있도록 apply_installer_and_relaunch()에서 분리해둠
+    (여기 로직이 틀리면 "패치는 됐는데 앱이 안 켜지는" 증상이 나는데, 눈으로 읽어서는
+    잘 안 보인다).
+    """
+    # chcp 65001 + UTF-8 BOM 저장: 설치 경로에 한글("춥채팅")이 들어가므로 필수
+    # ping을 딜레이로 쓰는 이유: timeout /t는 콘솔 없는 환경에서 즉시 실패함
+    return f"""@echo off
+chcp 65001 >nul
+:wait
+tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
+if not errorlevel 1 (
+    ping -n 2 127.0.0.1 >nul
+    goto wait
+)
+
+rem 여기서 start를 쓰면 안 됨. start는 cmd 내장 명령이라 콘솔이 필요한데 이 배치는
+rem 콘솔 없이(CREATE_NO_WINDOW) 실행되므로 멈춰버림. 프로그램을 직접 호출하면 cmd가
+rem 원래 끝날 때까지 기다리므로 /wait 없이도 순서가 보장됨
+"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+
+rem 인스톨러가 리턴해도 파일 잠금 해제나 뒷정리가 덜 끝나 있을 수 있음.
+rem "동기 실행이니 기다릴 필요 없다"고 판단해 이 여유를 지웠더니 "패치는 됐는데 앱이
+rem 안 켜지는" 증상이 났음(바로가기로 직접 실행하면 정상). 검증 없이 지우지 말 것.
+ping -n 4 127.0.0.1 >nul
+
+rem --post-update: 방금 업데이트로 실행된 것이라 새 앱이 업데이트 확인을 또 하지 않게 함.
+rem 실행 파일이 아직 안 준비돼 실패할 수 있으므로, 준비될 때까지 잠깐씩 기다리며 재시도함
+set RETRY=0
+:launch
+if exist "{current_exe}" goto doLaunch
+set /a RETRY+=1
+if %RETRY% LSS 10 (
+    ping -n 3 127.0.0.1 >nul
+    goto launch
+)
+goto launched
+
+:doLaunch
+start "" "{current_exe}" {POST_UPDATE_FLAG}
+
+:launched
+del "{installer_path}" >nul 2>nul
+del "%~f0"
+"""
+
+
 def apply_installer_and_relaunch(installer_path: str):
     """받아둔 인스톨러를 조용히 실행해서 업데이트하고 앱을 다시 띄움.
 
@@ -182,31 +231,9 @@ def apply_installer_and_relaunch(installer_path: str):
     현재 프로세스가 살아있는 동안에는 자기 자신의 파일을 덮어쓸 수 없으므로, 여기서도
     "PID가 끝나길 기다렸다가 실행하는 배치"를 쓴다(기존 방식과 동일한 검증된 패턴).
     """
-    current_exe = sys.executable
-    pid = os.getpid()
-
     bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="friendchat_setup_")
     os.close(bat_fd)
-    # chcp 65001 + UTF-8 BOM 저장: 설치 경로에 한글("춥채팅")이 들어가므로 필수
-    # ping을 딜레이로 쓰는 이유: timeout /t는 콘솔 없는 환경에서 즉시 실패함
-    script = f"""@echo off
-chcp 65001 >nul
-:wait
-tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
-if not errorlevel 1 (
-    ping -n 2 127.0.0.1 >nul
-    goto wait
-)
-
-"{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-
-rem 인스톨러는 파일을 다 쓰고 나서야 리턴하므로(동기), 여기서 따로 기다릴 필요가 없음.
-rem 예전엔 만약을 대비해 2초를 넣어뒀는데 그냥 체감 대기만 늘리는 군더더기였음.
-rem --post-update: 방금 업데이트로 실행된 것이라 새 앱이 업데이트 확인을 또 하지 않게 함
-start "" "{current_exe}" {POST_UPDATE_FLAG}
-del "{installer_path}" >nul 2>nul
-del "%~f0"
-"""
+    script = build_installer_batch(installer_path, sys.executable, os.getpid())
     with open(bat_path, "w", encoding="utf-8-sig") as f:
         f.write(script)
     subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)

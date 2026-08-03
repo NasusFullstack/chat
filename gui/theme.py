@@ -240,9 +240,9 @@ QScrollArea#chatLog > QWidget > QWidget {
    (disabled로 구분하려 했으나 disabled 탭은 마우스 이벤트 자체를 못 받아 클릭이 아예
    안 먹혔던 문제가 있어서 enabled로 바꿈) */
 QTabBar::tab:last {
-    background-color: transparent;
-    color: #7f8296;
-    border: 1px dashed #3d3f52;
+    background-color: #1e1f29;
+    color: #9a9cad;
+    border: 1px solid #34364a;
     padding: 0px;
     font-weight: bold;
     font-size: 16px;
@@ -250,7 +250,7 @@ QTabBar::tab:last {
 QTabBar::tab:last:hover {
     background-color: #2f3140;
     color: #ffffff;
-    border: 1px dashed #7c6cf0;
+    border: 1px solid #7c6cf0;
 }
 QScrollBar:vertical {
     background: transparent;
