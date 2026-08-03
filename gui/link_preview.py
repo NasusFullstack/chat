@@ -176,7 +176,12 @@ class ImagePreview(QLabel):
         if self._movie is not None and self._source_size is not None:
             size = _preview_size(self._source_size.width(), self._source_size.height(),
                                  self._max_width)
-            self._movie.setScaledSize(size)
+            # 움짤은 QMovie.setScaledSize()를 쓰면 안 된다. 애니메이션 GIF는 대부분의
+            # 프레임이 '바뀐 부분'만 담고 있고, Qt는 다시 그릴 영역을 '축소 전' 좌표로
+            # 알려준다. 그래서 크기를 조절해두면 갱신 영역이 어긋나 화면 대부분이 예전
+            # 그림 그대로 남는다("세로가 80% 날아간다"는 증상).
+            # 대신 움짤은 원래 크기로 재생시키고, 라벨이 그릴 때 통째로 줄이게 한다.
+            self.setScaledContents(True)
             self.setFixedSize(size)
         elif self._source is not None:
             pixmap = _scaled_for_preview(self._source, self._max_width)
@@ -214,7 +219,8 @@ class ImagePreview(QLabel):
         size = movie.currentPixmap().size()
         if size.width() <= 0:
             return False
-        # scaledSize를 준 뒤에는 currentPixmap이 그 크기로만 답하므로, 원본 크기를 지금 기억
+        # 원본 크기를 기억해둠 - 창 크기가 바뀔 때 항상 여기서 다시 계산해야 함
+        # (그려지는 크기를 기준으로 삼으면 만질 때마다 겹겹이 축소됨)
         self._source_size = size
         self._movie = movie
         self.setMovie(movie)
@@ -353,8 +359,12 @@ class LinkPreviewArea(QWidget):
             layout = parent.layout()
             if layout is not None:
                 layout.invalidate()
-            if parent.objectName() == "chatLogContent":
-                parent.adjustSize()
+            # 메시지 목록(ChannelLogView)까지 올라가서 높이를 다시 맞추게 한다.
+            # 예전엔 여기서 안쪽 위젯에 adjustSize()를 불렀는데, 그건 폭까지 sizeHint로
+            # 바꿔버려서 스크롤 영역이 정하는 폭과 싸운다
+            sync = getattr(parent, "sync_content_height", None)
+            if callable(sync):
+                sync()
                 break
             parent = parent.parentWidget()
         if self._on_preview_shown is not None:

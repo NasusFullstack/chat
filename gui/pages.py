@@ -703,6 +703,13 @@ class ChatPage(QWidget):
         if activate:
             self.set_active_channel(channel)
 
+    def open_channels(self) -> list[str]:
+        """지금 화면에 열려 있는 채널 목록(탭 순서)"""
+        return list(self._log_views.keys())
+
+    def has_channel(self, channel: str) -> bool:
+        return channel in self._log_views
+
     def remove_channel(self, channel: str):
         view = self._log_views.pop(channel, None)
         if view is None:

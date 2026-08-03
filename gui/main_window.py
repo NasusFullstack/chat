@@ -28,7 +28,8 @@ from gui.network import ChatClient
 from gui.pages import ChannelPage, ChatPage, LoginPage
 from gui.profile_dialog import ProfileDialog
 from gui.startup_page import StartupPage
-from gui.theme import APP_TITLE, CONNECT_TIMEOUT_MS, IS_WINDOWS
+from gui.theme import (APP_TITLE, CONNECT_TIMEOUT_MS, IS_WINDOWS, RECONNECT_BASE_MS,
+                       RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_MS)
 from gui.title_bar import TitleBar
 from version import APP_VERSION
 
@@ -89,6 +90,7 @@ class MainWindow(QMainWindow):
         self.client.connection_failed.connect(self._on_connection_failed)
         self.client.message_received.connect(self._on_message)
         self.client.irc_line_received.connect(self._on_irc_line)
+        self.client.disconnected.connect(self._on_socket_disconnected)
 
         self._connecting = False
         self._auth_phase = False
@@ -97,6 +99,17 @@ class MainWindow(QMainWindow):
         self._auto_login_suppressed = False
         self._host = ""
         self._port = 0
+
+        # ---- 끊겼을 때 자동 재접속 ----
+        # 예전엔 끊김을 알려주는 경로가 아예 없어서, 서버가 죽어도 화면상으론 멀쩡해 보이고
+        # 메시지만 조용히 안 갔음("나갔는지 알 수가 없다")
+        self._reconnecting = False        # 지금 자동 재접속 시도 중인가
+        self._intentional_close = False   # 로그아웃/종료처럼 일부러 끊은 것인가
+        self._reconnect_attempt = 0
+        self._channels_to_restore: list[str] = []
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self._try_reconnect)
 
         # 채널/멤버/닉네임/아바타 등 세션 상태는 전부 chat_core.ChatSession이 소유함
         # (예전에는 여기에 _joined_channels/_irc_members/_irc_names_buffer/... 로 흩어져
@@ -196,6 +209,92 @@ class MainWindow(QMainWindow):
         # '연결 취소' 버튼이 정상적으로 보임
         QTimer.singleShot(100, self._maybe_auto_login)
 
+    # ---------------- 끊김 감지와 자동 재접속 ----------------
+
+    def _on_socket_disconnected(self):
+        """서버와의 연결이 끊어졌을 때. 사용자가 일부러 끊은 게 아니면 다시 붙는다.
+
+        예전엔 끊김을 알려주는 경로가 아예 없어서, 서버가 죽어도 화면상으론 멀쩡해 보이고
+        메시지만 조용히 안 나갔음."""
+        if self._intentional_close or self._is_pre_login() or not self.session.my_id:
+            return
+        if self._reconnecting:
+            return
+        self._reconnecting = True
+        self._reconnect_attempt = 0
+        # 다시 붙은 뒤 원래 보던 채널로 돌아가기 위해 기억해둠
+        self._channels_to_restore = sorted(self.session.joined_channels)
+        self._notify_all_channels("서버와의 연결이 끊어졌습니다. 다시 연결하는 중...")
+        self._schedule_reconnect()
+
+    def _schedule_reconnect(self):
+        """재시도 간격을 점점 늘림 - 서버가 오래 죽어 있을 때 계속 두드리지 않도록"""
+        self._reconnect_attempt += 1
+        if self._reconnect_attempt > RECONNECT_MAX_ATTEMPTS:
+            self._reconnecting = False
+            self._notify_all_channels(
+                "다시 연결하지 못했습니다. 로그인 화면에서 다시 접속해 주세요."
+            )
+            return
+        delay = min(RECONNECT_BASE_MS * self._reconnect_attempt, RECONNECT_MAX_MS)
+        self._notify_all_channels(
+            f"다시 연결 시도 {self._reconnect_attempt}/{RECONNECT_MAX_ATTEMPTS}"
+            f" ({delay // 1000}초 후)"
+        )
+        self._reconnect_timer.start(delay)
+
+    def _try_reconnect(self):
+        if not self._reconnecting:
+            return
+        protocol = self._protocol_mode
+        self.client.abort()
+        self.client.set_mode(protocol)
+        # 세션을 새로 만들어야 이전 연결의 채널/멤버 상태가 섞이지 않음
+        transport = self.client.send_irc if protocol == "irc" else self.client.send_cmd
+        self.session = build_session(
+            protocol, self._host, self._port,
+            transport=transport, on_event=self._on_domain_event,
+        )
+        self._auth_mode = "login"
+        self._connecting = True
+        # 타임아웃을 걸어둬야 "연결도 실패도 안 되고 매달려 있는" 경우에 다음 시도로 넘어감
+        # (방화벽이 조용히 버리는 경우가 그렇다 - 실패 신호가 영영 안 온다)
+        self._connect_timer.start(CONNECT_TIMEOUT_MS)
+        self.client.connect_to_server(
+            self._host, self._port, self._pending_cert_path, self._pending_ssl
+        )
+
+    def _on_reconnect_logged_in(self):
+        """재접속 후 로그인까지 성공했을 때 - 보던 채널로 다시 들어감"""
+        self._stop_connecting()
+        self._reconnecting = False
+        self._reconnect_attempt = 0
+        self._notify_all_channels("다시 연결되었습니다.")
+        # 세션을 새로 만들었으므로 내 아이콘 기억도 새로 심어줘야 함. 안 그러면 재접속
+        # 뒤 IRC에서 남들에게 내 아이콘이 안 뿌려지고 프로필 창도 비어 보임
+        self.session.restore_my_profile(avatar_store.load_avatars().get(self.session.my_id))
+        for channel in self._channels_to_restore:
+            self.session.join_channel(channel)
+        self._channels_to_restore = []
+
+    def _cancel_reconnect(self):
+        self._reconnect_timer.stop()
+        self._reconnecting = False
+        self._reconnect_attempt = 0
+        self._channels_to_restore = []
+
+    def _notify_all_channels(self, text: str):
+        """지금 열어둔 모든 채널에 안내를 남김. 채널이 없으면 로그인 화면에 표시."""
+        channels = self.chat_page.open_channels()
+        if not channels:
+            # 아직 채널에 안 들어간 상태(채널 선택 화면)에서 끊긴 경우 - 지금 보고 있는
+            # 화면에 띄워야 보임
+            page = self.channel_page if self.stack.currentWidget() is self.channel_page else self.login_page
+            page.show_status(text, error=False)
+            return
+        for channel in channels:
+            self.chat_page.append_system(channel, text)
+
     def _handle_all_channels_left(self):
         """마지막 채널까지 나가면 채널 선택 화면으로 돌아감(빈 채팅 화면에 갇히지 않게).
         연결은 그대로 유지하므로 바로 다른 채널에 들어갈 수 있음"""
@@ -212,6 +311,8 @@ class MainWindow(QMainWindow):
         들어가버려서 계정을 바꿀 수가 없음).
         """
         self._auto_login_suppressed = True
+        self._cancel_reconnect()
+        self._intentional_close = True  # 일부러 끊는 것이므로 자동 재접속 대상이 아님
         self._stop_connecting()
         self.client.abort()
         self.session = build_session(
@@ -254,6 +355,13 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(icon)
         if self._title_bar is not None:
             self._title_bar.set_icon(icon)
+
+    def closeEvent(self, event):
+        # 종료하면서 소켓이 끊기는 것도 disconnected로 오므로, 여기서 미리 막지 않으면
+        # 앱이 닫히는 중에 재접속 타이머가 걸림
+        self._intentional_close = True
+        self._cancel_reconnect()
+        super().closeEvent(event)
 
     def changeEvent(self, event):
         # 버튼 클릭이 아니라 더블클릭/에어로 스냅 등 다른 경로로 최대화 상태가
@@ -316,6 +424,8 @@ class MainWindow(QMainWindow):
             return
 
         self._auth_mode = mode  # "login" 또는 "register" - 연결 완료 후 어느 쪽을 보낼지
+        self._cancel_reconnect()
+        self._intentional_close = False  # 이제부터 예기치 않게 끊기면 다시 붙어야 함
         self.chat_page.set_protocol_mode(protocol)
         self._pending_user_id = values["user_id"]
         self._pending_password = values["password"]
@@ -403,6 +513,9 @@ class MainWindow(QMainWindow):
         was_auth_phase = self._auth_phase
         self._stop_connecting()
         self.client.abort()
+        if self._reconnecting:
+            self._schedule_reconnect()  # 붙긴 했는데 로그인 응답이 없음 - 다음 간격에 다시
+            return
         if was_auth_phase:
             # 소켓/TLS 연결은 됐지만 로그인 응답이 안 온 경우 - 우리 채팅 서버가 아니거나
             # (예: 진짜 IRC 서버 등 다른 프로토콜) 서버가 멈춰있을 가능성이 큼
@@ -447,6 +560,9 @@ class MainWindow(QMainWindow):
             # 사용자가 취소했거나 타임아웃으로 이미 처리된 경우 - 중복 메시지 방지
             return
         self._stop_connecting()
+        if self._reconnecting:
+            self._schedule_reconnect()  # 서버가 아직 안 살아났음 - 다음 간격에 다시
+            return
         if self._is_pre_login():
             friendly = _friendly_connection_error(err, self._pending_ssl, self.client._pinned_cert)
             self.login_page.show_status(friendly)
@@ -523,6 +639,9 @@ class MainWindow(QMainWindow):
 
         if isinstance(event, domain_events.LoggedIn):
             self.chat_page.my_id = event.user_id
+            if self._reconnecting:
+                self._on_reconnect_logged_in()
+                return
             # 아직 로그인 단계에 있을 때만 채널 화면으로 넘어감. IRC 닉네임 변경도
             # LoggedIn을 발생시키는데(내 식별자가 바뀌는 건 같으므로), 그때는 이미 채팅
             # 중이라 화면을 되돌리면 안 됨.
@@ -543,17 +662,27 @@ class MainWindow(QMainWindow):
 
         elif isinstance(event, domain_events.AuthFailed):
             self._stop_connecting()
+            if self._reconnecting:
+                # 재접속했는데 로그인이 거절됨(비번 변경/계정 삭제 등) - 다시 시도해도 소용없음
+                self._cancel_reconnect()
+                self._notify_all_channels(f"다시 로그인하지 못했습니다: {event.text}")
+                return
             self.login_page.show_status(event.text)
 
         elif isinstance(event, domain_events.ChannelCreated):
             self.channel_page.show_status("채널 생성 완료! 입장 버튼을 눌러주세요.", error=False)
 
         elif isinstance(event, domain_events.ChannelJoined):
+            # 이미 화면에 있는 채널로 다시 들어온 것 = 재접속 후 복구. 안내와 지난 기록을
+            # 또 쌓으면 대화가 두 번 보임(응답이 늦게 오므로 시간 기준 플래그로는 못 거름)
+            rejoining = self.chat_page.has_channel(event.channel)
             first_time = self.stack.currentWidget() is self.channel_page
             self.chat_page.add_channel(event.channel, activate=True)
             if first_time:
                 self.stack.setCurrentWidget(self.chat_page)
                 self.chat_page.focus_input()
+            if rejoining:
+                return
             self.chat_page.append_system(event.channel, event.text)
             self.chat_page.load_history(event.channel, event.history)
 

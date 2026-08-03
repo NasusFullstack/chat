@@ -147,6 +147,41 @@ def _build_system_label(text: str) -> QLabel:
     return label
 
 
+class _ChatLogContent(QWidget):
+    """메시지들이 담기는 안쪽 위젯. 높이를 '폭에 따라' 계산해야 한다.
+
+    QScrollArea(widgetResizable)는 기본적으로 폭과 무관한 sizeHint로 안쪽 위젯 높이를
+    잡는다. 그런데 말풍선 글자는 폭에 따라 줄 수가 달라지므로(word wrap), 그 sizeHint는
+    실제로 필요한 높이와 어긋난다. 어긋난 만큼이 그대로 **채팅 맨 아래 빈 공간**으로 남는다
+    (실측: 창 폭 880에서 76px, 700으로 좁히면 778px). 새 메시지가 오면 잠깐 맞았다가
+    창 크기를 만지면 다시 벌어져서 "됐다 안 됐다" 하는 것처럼 보였다.
+
+    기본 QWidget.sizeHint()는 레이아웃의 totalSizeHint()를 쓰는데, 그 값은 '말풍선이
+    한 줄로 다 들어가는 넓은 폭'을 가정하고 계산돼서 지금 폭에서 실제로 필요한 높이와
+    다르다. 반면 레이아웃의 sizeHint()는 (말풍선 라벨에 최대폭을 이미 지정해두므로)
+    지금 폭 기준 값이라 실측과 정확히 일치했다. 그래서 그 값을 그대로 쓴다.
+    """
+
+    def sizeHint(self):
+        layout = self.layout()
+        if layout is None:
+            return super().sizeHint()
+        return layout.sizeHint()
+
+    def heightForWidth(self, width: int) -> int:
+        """QScrollArea(widgetResizable)가 안쪽 위젯 높이를 정할 때 실제로 보는 값.
+
+        기본 구현(레이아웃의 totalHeightForWidth)은 실제로 배치된 높이보다 크게 나온다
+        (실측: 배치 결과 7990인데 8047, 창을 좁히면 7840인데 8695). 그 차이가 그대로
+        맨 아래 빈 공간이 된다. 말풍선 라벨에는 set_wrap_width()로 이미 최대폭을 지정해두므로
+        레이아웃의 sizeHint가 '지금 폭 기준으로 실제 필요한 높이'와 일치한다 - 그 값을 쓴다.
+        """
+        layout = self.layout()
+        if layout is None:
+            return super().heightForWidth(width)
+        return layout.sizeHint().height()
+
+
 class ChannelLogView(QScrollArea):
     """채널 하나의 메시지 목록 - 메시지마다 개별 위젯으로 쌓음 (QTextEdit HTML 방식 대체)"""
 
@@ -171,7 +206,7 @@ class ChannelLogView(QScrollArea):
         self.viewport().setStyleSheet(
             "QWidget#chatLogViewport { background: transparent; border: none; }")
 
-        content = QWidget()
+        content = _ChatLogContent()
         content.setObjectName("chatLogContent")
         content.setAutoFillBackground(False)
         content.setStyleSheet("QWidget#chatLogContent { background: transparent; }")
@@ -218,9 +253,11 @@ class ChannelLogView(QScrollArea):
         widget.set_wrap_width(self._effective_width())
         self._layout.addWidget(widget)
         self._messages.append(widget)
+        self.sync_content_height()
 
     def append_system(self, text: str):
         self._layout.addWidget(_build_system_label(text))
+        self.sync_content_height()
 
     def set_container_width(self, width: int):
         """ChatPage가 (항상 보이는 self.tabs 기준으로) 미리 계산해서 알려주는 폭.
@@ -235,6 +272,28 @@ class ChannelLogView(QScrollArea):
         width = self._effective_width()
         for widget in self._messages:
             widget.set_wrap_width(width)
+        self.sync_content_height()
+
+    def sync_content_height(self):
+        """안쪽 위젯 높이를 지금 필요한 높이로 맞춘다.
+
+        말풍선 글자는 폭에 따라 줄 수가 달라지는데(word wrap), 폭이 바뀌어 줄 수가 바뀌어도
+        QScrollArea가 안쪽 위젯 높이를 다시 잡아주지 않는 경우가 있다. 그러면 예전 높이가
+        그대로 남아 **채팅 맨 아래에 빈 공간**이 생긴다(실측: 창 폭 880에서 57px,
+        700으로 좁히면 837px). 대화가 길수록 어긋남도 커지고, 새 메시지가 오면 잠깐
+        맞았다가 창을 만지면 다시 벌어져서 "됐다 안 됐다" 하는 것처럼 보였다.
+        """
+        content = self.widget()
+        if content is None:
+            return
+        layout = content.layout()
+        if layout is None:
+            return
+        layout.activate()  # 아래에서 읽을 sizeHint가 최신값이 되도록
+        # 내용이 화면보다 짧으면 배경이 끊겨 보이지 않게 화면 높이만큼은 채운다
+        needed = max(content.sizeHint().height(), self.viewport().height())
+        if content.height() != needed:
+            content.resize(content.width(), needed)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

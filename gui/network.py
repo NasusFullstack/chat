@@ -22,6 +22,12 @@ class ChatClient(QSslSocket):
         self.readyRead.connect(self._on_ready_read)
         self.errorOccurred.connect(self._on_error)
         self.sslErrors.connect(self._on_ssl_errors)
+        # 끊김을 알려주는 경로가 없어서, 서버가 죽어도 화면상으론 멀쩡해 보였음
+        self.disconnected.connect(self._on_disconnected)
+
+    def _on_disconnected(self):
+        # 다시 붙을 때 이전 연결의 남은 조각이 섞이지 않도록 버퍼를 비움
+        self._buffer = b""
 
     def set_mode(self, mode: str):
         """연결 시작 전에 호출: "custom"(친구 채팅 서버 JSON) 또는 "irc"(실제 IRC 서버)"""
