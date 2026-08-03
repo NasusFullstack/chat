@@ -69,6 +69,14 @@ class IrcProtocol(CommonCommands):
     def normalize_channel(self, channel: str) -> str:
         return irc_protocol.normalize_channel(channel)
 
+    def request_unfurl(self, session, url: str) -> None:
+        """실제 IRC 서버는 남의 서버라 대신 링크를 가져와 달라고 시킬 수 없음.
+
+        클라이언트가 직접 가져오는 방법도 있지만, 그러면 채널 인원수만큼 요청이 나가고
+        참여자 전원의 IP가 링크 주인에게 노출됨(unfurl.py 설명 참고). 그래서 IRC 모드
+        에서는 미리보기 없이 하이퍼링크만 남김 - 아무 것도 안 하는 게 맞음."""
+        return None
+
     # ---------- 슬래시 명령 ----------
     def command_specs(self):
         return _SPECS

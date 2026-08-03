@@ -36,6 +36,30 @@ def _format_ts(ts: float) -> str:
 
 _URL_PATTERN = re.compile(r'((?:https?://|www\.)[^\s<>"]+)')
 
+# 한 메시지에서 미리보기를 만들 최대 개수. 링크를 잔뜩 붙인 메시지 하나가 채팅창을
+# 통째로 차지하거나 네트워크 요청을 몰아치게 하지 않도록 상한을 둠
+MAX_PREVIEW_URLS = 3
+
+
+def extract_urls(text: str) -> list[str]:
+    """원문(이스케이프 전) 텍스트에서 미리보기를 시도할 URL들을 뽑음.
+
+    _linkify와 같은 패턴을 쓰되, 문장 끝의 마침표/괄호는 링크에서 떼어냄
+    (안 떼면 '...입니다.' 같은 문장에서 마침표까지 주소에 붙어 요청이 실패함).
+    """
+    urls = []
+    for raw in _URL_PATTERN.findall(text):
+        while raw and raw[-1] in ".,!?)]}'\"":
+            raw = raw[:-1]
+        if not raw:
+            continue
+        url = raw if raw.startswith("http") else f"http://{raw}"
+        if url not in urls:
+            urls.append(url)
+        if len(urls) >= MAX_PREVIEW_URLS:
+            break
+    return urls
+
 
 def _linkify(escaped_text: str) -> str:
     """이미 &lt;/&gt;로 이스케이프된 텍스트 안의 URL을 클릭 가능한 링크로 감쌈."""

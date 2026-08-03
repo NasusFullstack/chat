@@ -33,9 +33,14 @@ from gui.helpers import (
     _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert, _hashed_avatar_pixmap,
 )
 from gui.theme import (
-    ADD_TAB_LABEL, APP_TITLE, AVATAR_LIST_PX, AVATAR_MSG_PX, DEFAULT_PLAIN_PORT,
-    DEFAULT_SSL_PORT, UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
+    ADD_TAB_LABEL, APP_TITLE, AVATAR_LIST_PX, AVATAR_MSG_PX, CHANNEL_TAB_HEIGHT,
+    DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT, UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT,
+    UNREAD_BLINK_INTERVAL_MS,
 )
+
+# 카드(채팅/참여자) 아래와 그 밑 컨트롤(입력창/프로필 버튼) 사이 간격.
+# 좌우 열이 같은 값을 써야 아래쪽 버튼 줄이 나란히 놓임
+_CARD_TO_CONTROL_GAP = 6
 from version import APP_VERSION
 from gui.cheat_overlay import CheatOverlay
 from gui.battlecruiser import BattlecruiserOverlay
@@ -379,9 +384,13 @@ class ChannelPage(QWidget):
 class ChatPage(QWidget):
     """여러 채널을 탭으로 동시에 열어둘 수 있음"""
 
-    def __init__(self, on_send, on_add_channel, on_leave_channel, on_set_avatar, on_all_channels_left=None):
+    def __init__(self, on_send, on_add_channel, on_leave_channel, on_set_avatar,
+                 on_all_channels_left=None, on_request_unfurl=None):
         super().__init__()
         self.on_send = on_send
+        # 링크 미리보기 정보를 서버에 요청하는 콜백(MainWindow -> ChatSession).
+        # 안 주면 미리보기를 아예 시도하지 않음 - 테스트/오프라인에서 안전
+        self.on_request_unfurl = on_request_unfurl
         self.on_add_channel = on_add_channel
         self.on_leave_channel = on_leave_channel
         self.on_set_avatar = on_set_avatar
@@ -451,10 +460,18 @@ class ChatPage(QWidget):
         center_widget.setLayout(center)
 
         right = QVBoxLayout()
-        right.addWidget(QLabel("참여자"))
+        # 오른쪽 헤더를 왼쪽 탭 줄과 같은 높이로 고정해야 두 카드(채팅/참여자)의 위쪽 선이
+        # 같은 높이에서 시작함. 안 맞추면 카드 상단이 14px쯤 어긋나 어설퍼 보였음
+        right.setSpacing(0)
+        member_header = QLabel("참여자")
+        member_header.setFixedHeight(CHANNEL_TAB_HEIGHT)
+        member_header.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        right.addWidget(member_header)
         self.user_list = QListWidget()
         self.user_list.setIconSize(QSize(AVATAR_LIST_PX, AVATAR_LIST_PX))
         right.addWidget(self.user_list)
+        # 아래쪽도 왼쪽(채팅 카드 -> 입력창) 간격과 같은 값이어야 버튼 줄이 나란히 놓임
+        right.addSpacing(_CARD_TO_CONTROL_GAP)
         self.avatar_btn = QPushButton("프로필 변경")
         self.avatar_btn.setObjectName("secondary")
         self.avatar_btn.clicked.connect(lambda: self.on_set_avatar())
@@ -533,15 +550,18 @@ class ChatPage(QWidget):
         self.msg_input.setEnabled(bool(self._active_channel))
 
     def _make_close_button(self, channel: str) -> QPushButton:
-        """빨간 X 대신 테마에 맞는 수수한 × 기호 - 기본 탭 닫기 아이콘 대신 직접 그림"""
+        """빨간 X 대신 테마에 맞는 수수한 × 기호 - 기본 탭 닫기 아이콘 대신 직접 그림.
+
+        평소엔 흐릿하게 두고 마우스를 올렸을 때만 또렷해지게 함 - 탭마다 ×가 진하게 박혀
+        있으면 채널 이름보다 버튼이 먼저 눈에 들어와 어수선해 보임."""
         btn = QPushButton("×")
         btn.setFlat(True)
-        btn.setFixedSize(16, 16)
+        btn.setFixedSize(18, 18)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setStyleSheet(
-            "QPushButton { background: transparent; color: #9a9cad; border: none;"
-            " font-weight: bold; padding: 0px; }"
-            "QPushButton:hover { color: #ffffff; }"
+            "QPushButton { background: transparent; color: #6e7185; border: none;"
+            " border-radius: 9px; font-size: 14px; font-weight: bold; padding: 0px; }"
+            "QPushButton:hover { background: #565a72; color: #ffffff; }"
         )
         btn.setToolTip(f"'{channel}' 채널 나가기")
         btn.clicked.connect(lambda: self._request_close_channel(channel))
@@ -558,6 +578,8 @@ class ChatPage(QWidget):
             self.tabs.tabBar().setTabButton(
                 index, QTabBar.ButtonPosition.RightSide, self._make_close_button(channel)
             )
+            # 탭 폭이 고정이라 긴 이름은 말줄임(...)으로 잘리므로, 전체 이름은 툴팁으로 보여줌
+            self.tabs.setTabToolTip(index, channel)
             self._center_stack.setCurrentWidget(self.tabs)
         if activate:
             self.set_active_channel(channel)
@@ -822,18 +844,34 @@ class ChatPage(QWidget):
         return base.scaled(px, px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
 
     def append_message(self, channel: str, sender: str, text: str, mine: bool, ts: float,
-                       is_mention: bool = False, kind: str = "chat"):
-        """is_mention/kind는 도메인 코어가 이미 판단해서 넘겨줌 - 화면은 그리기만 하면 됨"""
+                       is_mention: bool = False, kind: str = "chat", preview: bool = True):
+        """is_mention/kind는 도메인 코어가 이미 판단해서 넘겨줌 - 화면은 그리기만 하면 됨.
+
+        preview=False는 지난 기록을 다시 그릴 때 씀(load_history 참고)."""
         view = self._log_views.get(channel)
         if view is None:
             return
-        view.append_message(
+        widget = view.append_message(
             self._display_name_for(sender), text, mine, ts,
             self._avatar_for(sender, AVATAR_MSG_PX), kind=kind,
+            preview=preview and self.on_request_unfurl is not None,
         )
+        # 링크가 있으면 서버에 "이 주소 정보 좀 가져다줘"라고 요청해둠. 결과는 나중에
+        # apply_unfurl()로 돌아와 카드가 채워짐(안 오면 하이퍼링크만 남음)
+        if widget is not None and widget.preview_urls and self.on_request_unfurl is not None:
+            for url in widget.preview_urls:
+                self.on_request_unfurl(url)
         self._mark_unread(channel)
         if is_mention:
             self._trigger_mention_alert()
+
+    def apply_unfurl(self, url: str, title: str, description: str = "", thumb_b64: str = ""):
+        """서버가 보내준 링크 정보를 그 링크를 기다리던 메시지에 반영.
+
+        어느 채널의 메시지였는지는 서버 응답에 없으므로 모든 채널을 훑음 - 같은 링크가
+        여러 채널에 붙어 있을 수도 있고, 어차피 채널 수가 많지 않아 부담이 없음."""
+        for view in self._log_views.values():
+            view.apply_unfurl(url, title, description, thumb_b64)
 
     def _trigger_mention_alert(self):
         """지금 그 채널을 보고 있는지와 무관하게 항상 작업표시줄 깜빡임 + 창 흔들림"""
@@ -849,13 +887,19 @@ class ChatPage(QWidget):
         view.append_system(text)
 
     def load_history(self, channel: str, entries: list[dict]):
+        """지난 대화 기록을 다시 그림 - 여기서는 링크 미리보기를 만들지 않는다.
+
+        기록은 채널당 최대 200개라, 그걸 전부 미리보기 대상으로 삼으면 채널에 들어갈
+        때마다 수백 건의 요청이 한꺼번에 나가서 입장이 느려지고, 옛날 링크 주인들에게
+        들어갈 때마다 접속 사실이 다시 알려진다. 지난 링크는 눌러서 열면 됨."""
         if not entries:
             return
         self.append_system(channel, "── 이전 대화 기록 ──")
         for entry in entries:
             mine = entry.get("from") == self.my_id
             self.append_message(
-                channel, entry.get("from", "?"), entry.get("text", ""), mine, entry.get("ts", 0)
+                channel, entry.get("from", "?"), entry.get("text", ""), mine,
+                entry.get("ts", 0), preview=False,
             )
         self.append_system(channel, "── 여기까지 이전 기록 ──")
 

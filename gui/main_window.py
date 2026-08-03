@@ -121,6 +121,7 @@ class MainWindow(QMainWindow):
         self.chat_page = ChatPage(
             self._handle_send, self._handle_add_channel, self._handle_leave_channel,
             self._handle_set_avatar, self._handle_all_channels_left,
+            on_request_unfurl=self._handle_request_unfurl,
         )
 
         self.stack.addWidget(self.startup_page)
@@ -195,6 +196,14 @@ class MainWindow(QMainWindow):
         # 자동로그인은 로그인 화면이 실제로 보이는 상태에서 시작해야 "연결 중..." 표시와
         # '연결 취소' 버튼이 정상적으로 보임
         QTimer.singleShot(100, self._maybe_auto_login)
+
+    def _handle_request_unfurl(self, url: str):
+        """채팅에 링크가 오면 서버에 미리보기 정보를 대신 가져와 달라고 요청.
+
+        클라이언트가 직접 접속하지 않는 이유는 unfurl.py 설명 참고(참여자 수만큼 요청이
+        나가고 각자의 IP가 링크 주인에게 노출됨). 실제 IRC 서버 모드에서는 대신 가져와 줄
+        주체가 없어서 코어가 조용히 아무 것도 하지 않고, 미리보기 없이 하이퍼링크만 남음."""
+        self.session.request_unfurl(url)
 
     def _handle_all_channels_left(self):
         """마지막 채널까지 나가면 채널 선택 화면으로 돌아감(빈 채팅 화면에 갇히지 않게).
@@ -612,6 +621,11 @@ class MainWindow(QMainWindow):
         elif isinstance(event, domain_events.CheatBlocked):
             self.chat_page.show_mention_notice(
                 f"치트는 {event.remaining_sec}초 후에 다시 사용할 수 있습니다."
+            )
+
+        elif isinstance(event, domain_events.UnfurlResult):
+            self.chat_page.apply_unfurl(
+                event.url, event.title, event.description, event.thumb_b64
             )
 
         elif isinstance(event, domain_events.CommandHelp):

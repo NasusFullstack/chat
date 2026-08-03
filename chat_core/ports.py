@@ -69,6 +69,13 @@ class ProtocolPort(Protocol):
     def normalize_channel(self, channel: str) -> str:
         ...
 
+    def request_unfurl(self, session: Any, url: str) -> None:
+        """링크 미리보기 정보를 요청(결과는 events.UnfurlResult로 발행).
+
+        누가 링크를 실제로 가져오는지는 프로토콜마다 다름 - 우리 서버는 서버가 대신
+        가져다주고, 남의 IRC 서버는 그럴 수 없으니 아무 것도 하지 않는 게 정상."""
+        ...
+
     def command_specs(self) -> Any:
         """이 프로토콜이 지원하는 슬래시 명령 명세 목록(chat_core.commands.CommandSpec).
 

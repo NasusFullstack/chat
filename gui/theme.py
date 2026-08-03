@@ -21,7 +21,12 @@ UNREAD_BLINK_INTERVAL_MS = 350
 UNREAD_BLINK_COUNT = 4  # 안 보는 채널에 새 메시지가 오면 이 횟수만큼 반짝인 뒤 밝은 색으로 고정됨
 UNREAD_DOT_PX = 9
 
-CHANNEL_TAB_FIXED_WIDTH = 110  # 채널 탭은 글자 수와 무관하게 항상 이 폭으로 고정
+# 채널 탭은 글자 수와 무관하게 항상 같은 크기로 고정(들쭉날쭉해 보이지 않게).
+# 폭은 "채널명 + 닫기(×) 버튼 + 좌우 여백"이 서로 안 겹치게 잡은 값 - 예전 110px은
+# 닫기 버튼이 테두리에 딱 붙고 이름이 뭉텅 잘려서 엉성해 보였음
+CHANNEL_TAB_FIXED_WIDTH = 140
+CHANNEL_TAB_HEIGHT = 34
+ADD_TAB_WIDTH = 40  # '+' 탭은 아이콘만 있으므로 정사각형에 가깝게
 ADD_TAB_LABEL = "+"
 
 MENTION_COOLDOWN_SEC = 60  # 같은 채널에서 같은 사람을 다시 @호출하려면 이만큼 기다려야 함
@@ -196,38 +201,56 @@ QTabWidget::pane {
     top: 0px;
 }
 /* 탭은 사방이 닫힌 '칩' 모양으로 두고 채팅 카드와 살짝 띄움. 예전처럼 탭 아래를 열어두면
-   그 아래를 지나는 카드 테두리 선과 만나 선이 끊긴 것처럼 보임 */
+   그 아래를 지나는 카드 테두리 선과 만나 선이 끊긴 것처럼 보임.
+   좌우 여백(padding)은 닫기(×) 버튼 자리를 침범하지 않도록 오른쪽을 넉넉히 둠 */
 QTabBar::tab {
-    background-color: #22232e;
+    background-color: #23242f;
     color: #9a9cad;
-    padding: 6px 14px;
-    border: 1px solid #3d3f52;
+    padding: 0px 8px 0px 12px;
+    border: 1px solid #34364a;
     border-radius: 8px;
-    margin-right: 4px;
-    margin-bottom: 6px;
+    margin-right: 6px;
+    margin-bottom: 8px;
 }
+/* 선택된 탭은 테두리 색만 바꾸는 정도로는 눈에 잘 안 띄어서, 면색까지 강조색 계열로
+   채워 "지금 보고 있는 채널"이 한눈에 들어오게 함 */
 QTabBar::tab:selected {
-    background-color: #16171f;
+    background-color: #3a3560;
     color: #ffffff;
     border: 1px solid #7c6cf0;
+    font-weight: bold;
 }
 QTabBar::tab:hover:!selected {
     background-color: #2f3140;
     color: #cfd0da;
+    border: 1px solid #4a4d63;
 }
-/* 채팅 로그 - 참여자 목록(QListWidget)과 같은 면색/테두리/모서리로 통일 */
+/* 채팅 로그 - 참여자 목록(QListWidget)과 같은 면색/테두리/모서리로 통일.
+   viewport와 그 안의 내용 위젯은 반드시 투명해야 함: 불투명하면 사각형인 자식 위젯이
+   둥근 모서리 위를 덮어 그려서 모서리가 잘려나간 것처럼 보임(실제로 그 증상이 났었음) */
 QScrollArea#chatLog {
     background-color: #16171f;
     border: 1px solid #3d3f52;
     border-radius: 10px;
 }
+QScrollArea#chatLog > QWidget > QWidget {
+    background: transparent;
+}
 /* '+' 채널 추가 탭 - 항상 마지막 탭이라는 설계상의 불변조건을 이용해 :last로 구분함
    (disabled로 구분하려 했으나 disabled 탭은 마우스 이벤트 자체를 못 받아 클릭이 아예
    안 먹혔던 문제가 있어서 enabled로 바꿈) */
 QTabBar::tab:last {
-    background-color: #22232e;
-    color: #9a9cad;
+    background-color: transparent;
+    color: #7f8296;
+    border: 1px dashed #3d3f52;
+    padding: 0px;
     font-weight: bold;
+    font-size: 16px;
+}
+QTabBar::tab:last:hover {
+    background-color: #2f3140;
+    color: #ffffff;
+    border: 1px dashed #7c6cf0;
 }
 QScrollBar:vertical {
     background: transparent;
@@ -295,6 +318,45 @@ QPushButton#titleBarMinBtn:hover, QPushButton#titleBarMaxBtn:hover {
 QPushButton#titleBarCloseBtn:hover {
     background-color: #e0454b;
     color: #ffffff;
+}
+/* 링크 미리보기 - 채팅 말풍선 안에 들어가는 작은 카드.
+   면색을 채팅 배경(#16171f)보다 한 단계 밝게 둬서 "메시지에 딸린 것"으로 보이게 함 */
+QFrame#linkCard {
+    background-color: #22232e;
+    border: 1px solid #3d3f52;
+    border-radius: 8px;
+}
+QFrame#linkCard:hover {
+    border: 1px solid #7c6cf0;
+}
+/* 카드 안 글자들은 hover 테두리 규칙을 물려받지 않게 테두리를 명시적으로 없앰 */
+QLabel#linkCardTitle {
+    color: #e6e6e6;
+    font-weight: bold;
+    border: none;
+    background: transparent;
+}
+QLabel#linkCardDesc {
+    color: #9a9cad;
+    font-size: 12px;
+    border: none;
+    background: transparent;
+}
+QLabel#linkCardHost {
+    color: #6e7185;
+    font-size: 11px;
+    border: none;
+    background: transparent;
+}
+QLabel#linkCardThumb {
+    background-color: #16171f;
+    border: none;
+    border-radius: 6px;
+}
+QLabel#linkImagePreview {
+    background: transparent;
+    border: 1px solid #3d3f52;
+    border-radius: 8px;
 }
 /* 팝업(프로필 변경/채널 추가/확인창) - 테두리 색을 다른 창들과 같은 #3d3f52로 통일함.
    원래는 본창과 구분하려고 보라색을 썼는데, 팝업만 색이 튀어서 오히려 이질적이었음.
