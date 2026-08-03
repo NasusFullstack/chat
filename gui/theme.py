@@ -184,6 +184,11 @@ QProgressBar::chunk {
 QLabel#status_err {
     color: #ff6b6b;
 }
+/* 오류가 아닌 진행/안내 문구 - 서버가 보내는 접속 안내나 "연결 중..." 같은 것들.
+   이것까지 빨갛게 보여주면 아무 문제 없는데도 오류가 난 것처럼 보임 */
+QLabel#status_info {
+    color: #9a9cad;
+}
 /* font-size 값은 TIMESTAMP_BADGE_FONT_PX 상수와 반드시 일치시킬 것 (아래에서 .replace()로 실제로 대입함) */
 QLabel#timestampBadge {
     background-color: rgba(154, 156, 173, 100);
