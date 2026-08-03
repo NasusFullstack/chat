@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from chat_core.commands import KIND_ACTION, KIND_CHAT, KIND_NOTICE
-from gui.helpers import _format_ts, _linkify, extract_urls
+from gui.helpers import _format_ts, _linkify, extract_urls, text_is_only_urls
 from gui.theme import (
     ADD_TAB_LABEL, ADD_TAB_WIDTH, AVATAR_MSG_PX, CHANNEL_TAB_FIXED_WIDTH, CHANNEL_TAB_HEIGHT,
     TIMESTAMP_BADGE_HEIGHT_PX,
@@ -77,13 +77,20 @@ class MessageWidget(QWidget):
         body.addWidget(text_label)
         self._text_label = text_label
 
-        # 링크 미리보기 자리. 이미지 직링크는 바로 받아오고, 그 외 링크는 서버가 보내줄
-        # 메타데이터를 기다렸다가 카드로 채워짐(못 받으면 높이 0이라 평소와 똑같이 보임)
+        # 링크 미리보기 자리. 못 받으면 높이 0이라 평소 메시지와 똑같이 보임
         self.preview_area = None
         self.preview_urls = extract_urls(text) if preview else []
+        # 링크만 있는 메시지는 미리보기가 뜨면 주소 문자열을 지움 - 긴 주소가 몇 줄씩
+        # 차지하기만 하고, 그림/카드를 눌러 열 수 있어서 주소가 없어도 못 여는 일이 없음.
+        # 미리보기를 끝내 못 받으면 콜백이 안 불려서 주소가 그대로 남음
+        self._sender_only_html = _message_html(sender, "", mine, kind).rstrip(": ")
+        self._link_only = bool(self.preview_urls) and text_is_only_urls(text)
         if self.preview_urls:
             from gui.link_preview import LinkPreviewArea
-            self.preview_area = LinkPreviewArea(self.preview_urls, image_fetcher, self)
+            self.preview_area = LinkPreviewArea(
+                self.preview_urls, image_fetcher, self,
+                on_preview_shown=self._hide_url_text if self._link_only else None,
+            )
             body.addWidget(self.preview_area)
 
         badge_row = QHBoxLayout()
@@ -96,6 +103,12 @@ class MessageWidget(QWidget):
         body.addLayout(badge_row)
 
         layout.addLayout(body, 1)
+
+    def _hide_url_text(self):
+        """미리보기가 떴으니 주소 문자열은 지우고 보낸 사람만 남김.
+
+        라벨을 통째로 숨기지 않는 이유: 누가 보낸 건지는 남아야 하기 때문."""
+        self._text_label.setText(self._sender_only_html)
 
     def set_wrap_width(self, view_width: int):
         """네트워크로 비동기로 도착한 메시지는 QScrollArea 레이아웃이 아직 완전히
