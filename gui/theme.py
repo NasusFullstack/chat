@@ -25,6 +25,7 @@ UNREAD_DOT_PX = 9
 # 채널이 늘면 폭이 모자라 이름이 잘리고 탭이 들쭉날쭉해 보였음
 CHANNEL_SIDEBAR_WIDTH = 190
 CHANNEL_ROW_HEIGHT = 44
+CHANNEL_ROW_GAP = 6  # QSS의 QListWidget#channelList::item margin-bottom과 값을 맞출 것
 ADD_TAB_LABEL = "+"
 
 # 아래 둘은 예전 가로 탭 시절 값 - 남아있는 참조가 있어 유지만 함
@@ -264,12 +265,13 @@ QListWidget#channelList::item:selected {
     border: 1px solid #7c6cf0;
     font-weight: bold;
 }
+/* 채널 추가 - 마지막 채널 바로 아래에 네모 없이 '+' 기호만.
+   채널 항목과 같은 폭을 차지하되 배경/테두리가 없어서 기호만 떠 있는 것처럼 보임 */
 QPushButton#addChannelBtn {
-    background-color: #23242f;
-    color: #9a9cad;
-    border: 1px solid #34364a;
-    border-radius: 10px;
-    font-size: 18px;
+    background: transparent;
+    color: #7f8296;
+    border: none;
+    font-size: 20px;
     font-weight: bold;
     padding: 0px;
 }
@@ -281,9 +283,9 @@ QLabel#channelHeader {
     background: transparent;
 }
 QPushButton#addChannelBtn:hover {
-    background-color: #2f3140;
+    background: transparent;
     color: #ffffff;
-    border: 1px solid #7c6cf0;
+    border: none;
 }
 /* 채팅 로그 - 참여자 목록(QListWidget)과 같은 면색/테두리/모서리로 통일.
    viewport와 그 안의 내용 위젯은 반드시 투명해야 함: 불투명하면 사각형인 자식 위젯이
