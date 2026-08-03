@@ -1,5 +1,9 @@
 """서버와의 TLS 소켓 통신 (커스텀 JSON 프로토콜 / 실제 IRC 프로토콜 둘 다 지원)."""
 import json
+from collections import deque
+
+# 사고 직전에 서버가 뭘 보냈는지 알아보려고 남겨두는 줄 수
+RECENT_LINE_COUNT = 40
 
 from PySide6.QtCore import Signal
 from PySide6.QtNetwork import QSslSocket, QSslCertificate, QSslConfiguration, QSslError
@@ -17,6 +21,10 @@ class ChatClient(QSslSocket):
     def __init__(self):
         super().__init__()
         self._buffer = b""
+        # 서버에서 받은 마지막 줄들. 채널에서 빠지거나 화면이 비는 사고가 났을 때
+        # "그 직전에 서버가 뭘 보냈는지"를 알아야 원인을 찾을 수 있다(재현이 안 되는
+        # 증상이라 이 기록이 유일한 단서다). 개수를 제한해서 메모리는 늘지 않는다.
+        self._recent = deque(maxlen=RECENT_LINE_COUNT)
         self._mode = "custom"
         self._pinned_cert = False
         self.readyRead.connect(self._on_ready_read)
@@ -24,6 +32,10 @@ class ChatClient(QSslSocket):
         self.sslErrors.connect(self._on_ssl_errors)
         # 끊김을 알려주는 경로가 없어서, 서버가 죽어도 화면상으론 멀쩡해 보였음
         self.disconnected.connect(self._on_disconnected)
+
+    def recent_lines(self) -> list[str]:
+        """서버에서 받은 마지막 줄들(오래된 것부터). 사고 원인을 찾을 때 씀."""
+        return list(self._recent)
 
     def _on_disconnected(self):
         # 다시 붙을 때 이전 연결의 남은 조각이 섞이지 않도록 버퍼를 비움
@@ -96,6 +108,7 @@ class ChatClient(QSslSocket):
             text = line.decode("utf-8", errors="replace")
             if not text.strip():
                 continue
+            self._recent.append(text[:200])
             msg = irc_protocol.parse_line(text)
             if msg.command == "PING":
                 # 연결 유지의 핵심 - UI 상태와 무관하게 즉시 응답해야 서버가 끊지 않음

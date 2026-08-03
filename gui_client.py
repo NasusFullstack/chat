@@ -49,6 +49,7 @@ from PySide6.QtWidgets import QApplication
 
 import server_registry
 import irc_protocol
+import error_log
 import history_store
 import avatar_store
 import login_prefs
@@ -84,6 +85,11 @@ if IS_WINDOWS:
 
 
 def main():
+    # 배포된 앱은 콘솔이 없어서 예외 트레이스백이 어디에도 안 남는다. PySide6는 슬롯 안에서
+    # 예외가 나도 앱을 죽이지 않고 넘어가기 때문에, 화면 갱신이 중간에 끊겨 "채팅과 참여자가
+    # 빈 공간으로 보이는" 식의 증상만 남고 원인은 알 수 없게 된다. 파일로 남겨둔다.
+    error_log.install()
+
     if IS_WINDOWS:
         # 작업표시줄이 python.exe 기본 아이콘 대신 우리 아이콘/앱 이름으로 묶이게 함
         try:

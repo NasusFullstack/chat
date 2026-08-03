@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 import avatar_store
+import error_log
 import irc_protocol
 import login_prefs
 from chat_core import constants, events as domain_events
@@ -693,6 +694,14 @@ class MainWindow(QMainWindow):
                 gui_client.themed_warning(self, "채널 입장 실패", event.text)
 
         elif isinstance(event, domain_events.ChannelLeft):
+            # 채널에서 빠지면 채팅이 통째로 사라지고 입력창까지 잠긴다. 내가 나가기를
+            # 누른 게 아닌데 이 일이 벌어지면 원인을 알 방법이 없으므로, 그 직전에 서버가
+            # 보낸 줄들을 같이 남긴다(재현이 안 되는 사고의 유일한 단서)
+            error_log.log_text(
+                f"채널 {event.channel}에서 빠짐. 직전 수신 내용:\n  "
+                + "\n  ".join(self.client.recent_lines()[-15:]),
+                tag="채널 이탈",
+            )
             self.chat_page.remove_channel(event.channel)
 
         elif isinstance(event, domain_events.ChannelLeaveFailed):
