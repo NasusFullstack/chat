@@ -11,7 +11,10 @@
 
 그래서 트레이스백을 파일에 남긴다. 재현이 안 되는 증상은 기록이 없으면 영영 못 고친다.
 
-로그 위치는 update_log_path()와 같은 곳(임시 폴더)이라 사용자가 찾아 보내기 쉽다.
+로그는 앱 데이터(history.json/avatars.json)와 같은 폴더에 둔다. 시스템 임시 폴더는 쓰지
+않는다 - 압축 프로그램 같은 게 TEMP 경로를 자기 폴더로 바꿔놓는 경우가 있어서(실제로
+`...\ESTsoft\CreatorTemp\`로 잡혀 있었다) 남의 폴더에 우리 기록이 쌓이고 찾기도 어렵다.
+(업데이트 배치 로그는 예외로 TEMP에 둔다 - 인스톨러가 설치 폴더를 갈아엎는 중에 쓰므로.)
 """
 import datetime
 import os
@@ -25,8 +28,21 @@ _installed = False
 _lock = threading.Lock()
 
 
+def _app_dir() -> str:
+    """앱 데이터가 모여 있는 폴더(설치 폴더 / 소스 실행 시 저장소 루트)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def error_log_path() -> str:
-    return os.path.join(tempfile.gettempdir(), "friendchat_error.log")
+    try:
+        path = os.path.join(_app_dir(), "friendchat_error.log")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return path
+    except OSError:
+        # 설치 폴더에 못 쓰는 환경(권한 등)이면 기록 자체를 포기하지 말고 임시 폴더로
+        return os.path.join(tempfile.gettempdir(), "friendchat_error.log")
 
 
 def log_text(text: str, tag: str = "오류"):
