@@ -172,16 +172,44 @@ def download_update(download_url: str, progress_cb=None, suffix: str = ".zip") -
     return tmp_path
 
 
+def _write_batch(path: str, script: str) -> None:
+    """배치 파일을 UTF-8 BOM으로 저장.
+
+    BOM은 반드시 필요하다. 설치 경로에 한글("춥채팅")이 들어가는데, BOM 없이 저장하면
+    cmd가 그 한글을 cp949로 잘못 읽어 경로가 깨진다(실측: '占�' is not recognized).
+    대신 cmd는 BOM을 '첫 명령의 일부'로 읽어버려서 첫 줄이 반드시 하나 깨진다 - 그래서
+    스크립트 첫 줄은 깨져도 되는 더미로 두고 진짜 명령은 둘째 줄부터 시작한다
+    (build_installer_batch 참고).
+    """
+    with open(path, "w", encoding="utf-8-sig", newline="\r\n") as f:
+        f.write(script)
+
+
 def build_installer_batch(installer_path: str, current_exe: str, pid: int) -> str:
     """인스톨러 실행 + 앱 재시작을 담당하는 배치 스크립트 내용.
 
     실제로 돌려보고 검증할 수 있도록 apply_installer_and_relaunch()에서 분리해둠
     (여기 로직이 틀리면 "패치는 됐는데 앱이 안 켜지는" 증상이 나는데, 눈으로 읽어서는
     잘 안 보인다).
+
+    첫 줄이 왜 의미 없는 `@rem`인가:
+    파일을 BOM으로 저장하는데(한글 설치 경로 때문에 필수 - _write_batch 참고) cmd가 그
+    BOM을 첫 명령의 일부로 읽어버려서 첫 줄은 무조건 하나 깨진다. 그 자리에 `@echo off`를
+    두면 echo가 안 꺼져서 이후 모든 명령이 화면에 찍히므로, 깨져도 되는 더미를 앞에 세우고
+    `@echo off`는 둘째 줄에 둔다.
+
+    배치 안의 주석을 영어로 쓰는 이유: 스크립트에 비ASCII를 늘리지 않기 위함(왜 이렇게
+    돼 있는지에 대한 설명은 이 파이썬 소스에 한글로 남긴다).
+
+    - `start`를 인스톨러 실행에 쓰면 안 된다. `start`는 cmd 내장 명령이라 콘솔이 필요한데
+      이 배치는 CREATE_NO_WINDOW로 돌기 때문에 멈춘다. 직접 호출하면 cmd가 원래 끝날
+      때까지 기다리므로 `/wait` 없이도 순서가 보장된다.
+    - 인스톨러 뒤의 `ping`(대기)은 군더더기가 아니다. 리턴 후에도 파일 잠금 해제가 덜 끝나
+      있을 수 있어서, 이걸 지웠더니 "패치는 됐는데 앱이 안 켜지는" 증상이 났다.
+    - 지연에 `timeout /t`를 쓰면 안 된다. 콘솔 없는 환경에서 즉시 실패한다.
     """
-    # chcp 65001 + UTF-8 BOM 저장: 설치 경로에 한글("춥채팅")이 들어가므로 필수
-    # ping을 딜레이로 쓰는 이유: timeout /t는 콘솔 없는 환경에서 즉시 실패함
-    return f"""@echo off
+    return f"""@rem BOM guard - this line is expected to be eaten by the UTF-8 BOM
+@echo off
 chcp 65001 >nul
 :wait
 tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
@@ -190,18 +218,13 @@ if not errorlevel 1 (
     goto wait
 )
 
-rem 여기서 start를 쓰면 안 됨. start는 cmd 내장 명령이라 콘솔이 필요한데 이 배치는
-rem 콘솔 없이(CREATE_NO_WINDOW) 실행되므로 멈춰버림. 프로그램을 직접 호출하면 cmd가
-rem 원래 끝날 때까지 기다리므로 /wait 없이도 순서가 보장됨
+rem Run the installer directly (no "start"): cmd waits for it to finish.
 "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
-rem 인스톨러가 리턴해도 파일 잠금 해제나 뒷정리가 덜 끝나 있을 수 있음.
-rem "동기 실행이니 기다릴 필요 없다"고 판단해 이 여유를 지웠더니 "패치는 됐는데 앱이
-rem 안 켜지는" 증상이 났음(바로가기로 직접 실행하면 정상). 검증 없이 지우지 말 것.
+rem Settle time: the installer can return before file locks are released.
 ping -n 4 127.0.0.1 >nul
 
-rem --post-update: 방금 업데이트로 실행된 것이라 새 앱이 업데이트 확인을 또 하지 않게 함.
-rem 실행 파일이 아직 안 준비돼 실패할 수 있으므로, 준비될 때까지 잠깐씩 기다리며 재시도함
+rem Relaunch, retrying until the exe is in place.
 set RETRY=0
 :launch
 if exist "{current_exe}" goto doLaunch
@@ -234,8 +257,7 @@ def apply_installer_and_relaunch(installer_path: str):
     bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="friendchat_setup_")
     os.close(bat_fd)
     script = build_installer_batch(installer_path, sys.executable, os.getpid())
-    with open(bat_path, "w", encoding="utf-8-sig") as f:
-        f.write(script)
+    _write_batch(bat_path, script)
     subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
     sys.exit(0)
 
@@ -372,7 +394,6 @@ exit /b
 start "" "{current_exe}"
 del "%~f0"
 """
-    with open(bat_path, "w", encoding="utf-8-sig") as f:
-        f.write(script)
+    _write_batch(bat_path, script)
     subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
     sys.exit(0)
