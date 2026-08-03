@@ -123,10 +123,11 @@ class ChatSession:
             self._history.append_message(
                 self.protocol.name, self.host, self.port, channel, sender, body, ts
             )
-        # 치트 문구는 그 채널을 보고 있는 모두에게 효과가 떠야 하므로, 보낸 사람 여부와
-        # 무관하게(내가 친 것도 포함) 메시지가 도착하면 이벤트를 발행함
+        # 치트 효과를 누가 보는지는 치트마다 다름(CheatSpec.for_everyone).
+        # 보여주는 연출은 채널 전원이 보고, 조종하는 것은 친 사람만 봄 - 여기에
+        # 치트별 분기를 두지 않고 명세를 그대로 따름
         cheat = find_cheat(body)
-        if cheat is not None:
+        if cheat is not None and (cheat.for_everyone or mine):
             self._emit(events.CheatActivated(channel, cheat.id))
 
     def replace_members(self, channel: str, users) -> None:
