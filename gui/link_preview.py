@@ -246,11 +246,15 @@ class LinkPreviewArea(QWidget):
     fetcher를 안 주면 아무 요청도 하지 않는다(테스트/오프라인에서 안전).
     """
 
-    def __init__(self, urls, fetcher: "ImageFetcher | None" = None, parent=None):
+    def __init__(self, urls, fetcher: "ImageFetcher | None" = None, parent=None,
+                 on_preview_shown=None):
         super().__init__(parent)
         self.setObjectName("linkPreviewArea")
         self.setStyleSheet("QWidget#linkPreviewArea { background: transparent; }")
         self._fetcher = fetcher
+        # 미리보기가 실제로 하나라도 그려졌을 때 알려주는 콜백(메시지가 주소 문자열을
+        # 지울지 판단하는 데 씀). 끝내 아무것도 못 받으면 호출되지 않으므로 주소가 남음
+        self._on_preview_shown = on_preview_shown
         self._filled = set()
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -275,6 +279,11 @@ class LinkPreviewArea(QWidget):
             return
         self._filled.add(url)
         self._layout.addWidget(preview)
+        self._notify_shown()
+
+    def _notify_shown(self):
+        if self._on_preview_shown is not None:
+            self._on_preview_shown()
 
     def _on_html(self, url: str, data):
         """받아온 HTML에서 메타태그를 뽑아 카드를 만듦. 제목이 없으면 아무 것도 안 함."""
@@ -287,6 +296,7 @@ class LinkPreviewArea(QWidget):
         self._filled.add(url)
         card = LinkCard(url, info["title"], info.get("description", ""), self)
         self._layout.addWidget(card)
+        self._notify_shown()
         image_url = info.get("image_url", "")
         if image_url:
             self._fetcher.fetch(image_url, lambda d: self._on_card_image(card, d))

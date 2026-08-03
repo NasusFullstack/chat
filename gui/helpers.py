@@ -41,6 +41,18 @@ _URL_PATTERN = re.compile(r'((?:https?://|www\.)[^\s<>"]+)')
 MAX_PREVIEW_URLS = 3
 
 
+def text_is_only_urls(text: str) -> bool:
+    """메시지가 링크(들)로만 이루어져 있는지.
+
+    이런 메시지는 미리보기가 뜨고 나면 주소 문자열을 굳이 같이 보여줄 이유가 없다
+    (긴 주소가 몇 줄씩 차지하기만 함). 미리보기 그림/카드를 눌러 열 수 있으므로
+    주소를 지워도 못 여는 일은 없다."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return not _URL_PATTERN.sub(" ", stripped).strip()
+
+
 def extract_urls(text: str) -> list[str]:
     """원문(이스케이프 전) 텍스트에서 미리보기를 시도할 URL들을 뽑음.
 
