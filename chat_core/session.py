@@ -77,6 +77,9 @@ class ChatSession:
         self.irc_password = ""
         self.irc_identified = False
         self.irc_names_buffer: dict[str, list[str]] = {}
+        # (보낸사람, 전송id) -> {조각번호: 조각}. IRC는 한 줄이 512바이트로 제한돼서
+        # 아이콘을 여러 줄로 나눠 받기 때문에 다 모일 때까지 여기 담아둠
+        self.irc_avatar_chunks: dict[tuple[str, str], dict[int, str]] = {}
         self.irc_nick_retries = 0
         self.nick_change_pending = False
 
