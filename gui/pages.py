@@ -1,4 +1,4 @@
-"""로그인/채널입장/채팅 화면 (LoginPage, ChannelPage, ChatPage).
+﻿"""로그인/채널입장/채팅 화면 (LoginPage, ChannelPage, ChatPage).
 
 이 모듈은 themed_get_text/themed_question(gui.themed_dialogs)와 _flash_taskbar_icon/
 _shake_window(gui.mention_alerts)를 호출하는데, 이 4개는 테스트가 g.themed_question =
@@ -33,9 +33,9 @@ from gui.helpers import (
     _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert, _hashed_avatar_pixmap,
 )
 from gui.theme import (
-    ADD_TAB_LABEL, APP_TITLE, AVATAR_LIST_PX, AVATAR_MSG_PX, CHANNEL_ROW_HEIGHT,
-    CHANNEL_SIDEBAR_WIDTH, DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT, UNREAD_BLINK_COLOR,
-    UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
+    ADD_TAB_LABEL, APP_TITLE, AVATAR_LIST_PX, AVATAR_MSG_PX, CHANNEL_ROW_GAP,
+    CHANNEL_ROW_HEIGHT, CHANNEL_SIDEBAR_WIDTH, DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT,
+    UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
 )
 from version import APP_VERSION
 from gui.cheat_overlay import CheatOverlay
@@ -451,6 +451,9 @@ class ChatPage(QWidget):
 
         center = QVBoxLayout()
         center.setSpacing(0)
+        # 세 열(채널 사이드바 / 채팅 / 참여자)의 여백을 0으로 통일해야 세로 시작점이 같아짐.
+        # 기본 여백이 붙은 열만 9px쯤 아래에서 시작해 윗선이 어긋났음
+        center.setContentsMargins(0, 0, 0, 0)
         # 지금 보고 있는 채널 이름. 오른쪽 "참여자" 헤더와 같은 높이로 두면 채팅 카드와
         # 참여자 카드의 위쪽 선이 같은 높이에서 시작함(채널 목록이 왼쪽으로 옮겨가면서
         # 채팅창 위가 비어 카드 상단이 어긋났었음)
@@ -501,6 +504,7 @@ class ChatPage(QWidget):
         # 오른쪽 헤더 높이를 고정해야 채팅 카드와 참여자 카드의 위쪽 선이 같은 높이에서
         # 시작함. 안 맞추면 카드 상단이 어긋나 어설퍼 보였음
         right.setSpacing(0)
+        right.setContentsMargins(0, 0, 0, 0)
         member_header = QLabel("참여자")
         member_header.setFixedHeight(MEMBER_HEADER_HEIGHT)
         member_header.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -569,30 +573,47 @@ class ChatPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(8)
+        # 채팅창 위의 채널명 헤더와 같은 높이만큼 비워둬야 첫 채널 항목의 윗선이
+        # 채팅 카드 윗선과 같은 높이에서 시작함
+        outer.addSpacing(MEMBER_HEADER_HEIGHT)
 
         self.channel_list = QListWidget()
         self.channel_list.setObjectName("channelList")
         self.channel_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.channel_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.channel_list.setFrameShape(QFrame.Shape.NoFrame)
         self.channel_list.currentRowChanged.connect(self._on_channel_row_changed)
         # 우클릭 나가기
         self.channel_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.channel_list.customContextMenuRequested.connect(self._show_channel_menu)
-        top.addWidget(self.channel_list, 1)
+        outer.addWidget(self.channel_list, 0)
 
+        # '+'는 마지막 채널 바로 아래에, 네모 없이 기호만. 채널 항목과 같은 폭을 차지하게
+        # 두고 그 안에서 가운데 정렬해야 항목들과 세로 중심선이 맞음
         self.add_channel_btn = QPushButton(ADD_TAB_LABEL)
         self.add_channel_btn.setObjectName("addChannelBtn")
-        self.add_channel_btn.setFixedSize(CHANNEL_ROW_HEIGHT, CHANNEL_ROW_HEIGHT)
+        self.add_channel_btn.setFixedHeight(CHANNEL_ROW_HEIGHT)
         self.add_channel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_channel_btn.setToolTip("새 채널에 입장합니다")
         self.add_channel_btn.clicked.connect(lambda: self.on_add_channel())
-        top.addWidget(self.add_channel_btn, 0, Qt.AlignmentFlag.AlignTop)
+        outer.addWidget(self.add_channel_btn, 0)
 
-        outer.addLayout(top, 1)
+        outer.addStretch(1)
         return sidebar
+
+    def _sync_channel_list_height(self):
+        """채널 목록이 딱 항목 수만큼만 높이를 차지하게 함.
+
+        목록이 남는 공간을 다 먹으면 '+'가 마지막 채널 바로 아래가 아니라 사이드바
+        맨 아래로 밀려난다."""
+        count = self.channel_list.count()
+        if count == 0:
+            self.channel_list.setFixedHeight(0)
+            return
+        row = self.channel_list.visualItemRect(self.channel_list.item(0))
+        # 항목 사이 간격(QSS의 margin-bottom)까지 포함해야 마지막 줄이 안 잘림
+        step = row.height() + CHANNEL_ROW_GAP
+        self.channel_list.setFixedHeight(step * count)
 
     def _channel_row(self, channel: str) -> int:
         """사이드바에서 그 채널이 몇 번째 줄인지. 없으면 -1"""
@@ -677,6 +698,7 @@ class ChatPage(QWidget):
             item.setSizeHint(QSize(0, CHANNEL_ROW_HEIGHT))
             item.setToolTip(f"{channel}\n우클릭하면 나가기")
             self.channel_list.addItem(item)
+            self._sync_channel_list_height()
             self._center_stack.setCurrentWidget(self.tabs)
         if activate:
             self.set_active_channel(channel)
@@ -693,6 +715,7 @@ class ChatPage(QWidget):
         row = self._channel_row(channel)
         if row >= 0:
             self.channel_list.takeItem(row)
+            self._sync_channel_list_height()
         view.deleteLater()
         if not self._log_views:
             self._active_channel = ""
@@ -1009,3 +1032,4 @@ class ChatPage(QWidget):
         if self._active_channel:
             self.user_list.clear()
             self._add_userlist_items(self._members.get(self._active_channel, []))
+

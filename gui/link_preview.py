@@ -151,20 +151,40 @@ class ImagePreview(QLabel):
         # 원본을 들고 있어야 창 크기가 바뀔 때 다시 줄일 수 있음(한 번 줄인 걸 또 줄이면
         # 화질이 계속 나빠지고, 창을 다시 넓혀도 작은 채로 남음)
         self._source = None
+        # 움짤은 QMovie가 원본을 안 돌려주므로(scaledSize를 주면 그 크기로만 답함)
+        # 처음 읽은 원본 프레임 크기를 따로 기억해둠
+        self._source_size = None
         self._max_width = 0
 
     def set_max_width(self, width: int):
-        """채팅창에서 쓸 수 있는 폭이 바뀌었을 때 그 안에 들어오게 다시 맞춤."""
+        """채팅창에서 쓸 수 있는 폭이 바뀌었을 때 그 안에 들어오게 다시 맞춤.
+
+        반드시 '원본 크기'에서 다시 계산할 것. 지금 그려지는 크기(currentPixmap)를
+        기준으로 줄이면 창 크기를 만질 때마다 겹겹이 축소돼서 그림이 계속 작아진다
+        (실제로 "가로를 줄이면 세로가 점점 줄어든다"는 증상으로 나타났음).
+
+        그리고 크기를 바꿨으면 라벨 자신의 크기도 같이 맞춰야 한다. 안 맞추면 라벨은
+        예전 크기 그대로라 그림이 잘리거나(라벨이 작을 때) 아래가 비어 보인다(클 때).
+        """
         if width <= 0 or width == self._max_width:
             return
         self._max_width = width
-        if self._movie is not None:
-            size = self._movie.currentPixmap().size()
-            if size.width() > 0:
-                self._movie.setScaledSize(
-                    _preview_size(size.width(), size.height(), width))
+        self._apply_size()
+
+    def _apply_size(self):
+        """지금 폭 제한에 맞춰 그림 크기와 라벨 크기를 함께 맞춤."""
+        if self._movie is not None and self._source_size is not None:
+            size = _preview_size(self._source_size.width(), self._source_size.height(),
+                                 self._max_width)
+            self._movie.setScaledSize(size)
+            self.setFixedSize(size)
         elif self._source is not None:
-            self.setPixmap(_scaled_for_preview(self._source, width))
+            pixmap = _scaled_for_preview(self._source, self._max_width)
+            self.setPixmap(pixmap)
+            self.setFixedSize(pixmap.size())
+        else:
+            return
+        self.updateGeometry()
 
     def set_image_data(self, data: bytes) -> bool:
         """받은 바이트로 이미지를 세팅. 못 읽으면 False(호출자가 미리보기를 지움)."""
@@ -176,7 +196,7 @@ class ImagePreview(QLabel):
         if not pixmap.loadFromData(data) or pixmap.isNull():
             return False
         self._source = pixmap
-        self.setPixmap(_scaled_for_preview(pixmap, self._max_width))
+        self._apply_size()
         return True
 
     def _set_animated(self, data: bytes) -> bool:
@@ -192,10 +212,13 @@ class ImagePreview(QLabel):
             return False
         movie.jumpToFrame(0)
         size = movie.currentPixmap().size()
-        if size.width() > 0:
-            movie.setScaledSize(_preview_size(size.width(), size.height(), self._max_width))
+        if size.width() <= 0:
+            return False
+        # scaledSize를 준 뒤에는 currentPixmap이 그 크기로만 답하므로, 원본 크기를 지금 기억
+        self._source_size = size
         self._movie = movie
         self.setMovie(movie)
+        self._apply_size()
         movie.start()
         return True
 
