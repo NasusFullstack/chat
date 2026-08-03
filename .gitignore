@@ -15,6 +15,9 @@ avatars.json
 login_prefs.json
 servers.json
 update_attempts.json
+update_attempt_state.json
+# 오류 기록 - 소스로 실행하면 저장소 루트에 생김(앱 데이터와 같은 자리)
+friendchat_error.log
 
 __pycache__/
 *.pyc
@@ -22,3 +25,6 @@ build/
 dist/
 installer_output/
 *.spec
+
+# 테스트가 만들어내는 결과물(캡처 등)
+tests/*.png
