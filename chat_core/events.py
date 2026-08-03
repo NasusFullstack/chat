@@ -125,19 +125,6 @@ class CommandError:
 
 
 @dataclass(frozen=True)
-class UnfurlResult:
-    """서버가 대신 읽어 준 링크 메타데이터.
-
-    image_url은 미리보기 그림의 '주소'일 뿐이다 - 그림 자체는 서버가 중계하지 않고
-    어댑터가 그 주소에서 직접 받아온다. 미리보기 그림이 없는 링크면 비어 있다.
-    아무것도 못 가져왔으면 title이 비어 있으니 어댑터는 미리보기를 만들지 않으면 됨."""
-    url: str
-    title: str = ""
-    description: str = ""
-    image_url: str = ""
-
-
-@dataclass(frozen=True)
 class CommandHelp:
     """/help 결과 - 어댑터가 목록을 자기 방식대로 출력(GUI는 채팅창, CLI는 print)"""
     channel: str

@@ -1,22 +1,28 @@
-"""채팅에 붙은 링크의 미리보기.
+"""채팅에 붙은 링크의 미리보기 - **전부 클라이언트에서 처리한다**.
 
-역할 분담(서버 unfurl.py와 짝):
-- **서버**: 페이지 HTML을 읽어 og 태그에서 제목/설명/이미지주소만 뽑아 준다(글자만, 1KB 미만).
-- **여기(클라이언트)**: 서버가 알려준 이미지 주소로 직접 접속해 그림을 받아 그린다.
-  서버는 그림을 중계하지 않는다 - 서버 대역폭을 이미지에 쓰지 않기 위함.
+서버는 이 기능에 전혀 관여하지 않는다(서버 자원을 쓰지 않기 위함). 그래서 서버를
+새로 갱신할 필요도 없고, 실제 IRC 서버에 접속한 모드에서도 똑같이 동작한다.
 
-이미지 직링크(.png/.gif 등)는 서버에 물어볼 것도 없이 그 주소가 곧 그림이므로 바로 받는다.
+흐름:
+- 이미지 직링크(.png/.gif 등) -> 주소가 곧 그림이므로 바로 받아서 보여줌
+- 그 외 링크 -> HTML의 <head>만 받아 og 태그에서 제목/설명/이미지주소를 뽑고,
+  그 이미지 주소로 그림을 한 번 더 받아 카드에 붙임
 
 미리보기 이미지가 있으면 보여주고, 없으면 글자만(또는 아무 것도) 보여준다.
 어느 단계에서 실패하든 조용히 포기하고 평소의 하이퍼링크만 남긴다 - 미리보기는 덤이라
 실패했다고 오류 문구를 채팅에 남기면 오히려 지저분해진다.
-"""
-import re
 
+알아둘 성질: 링크가 오면 그 채널에 있는 사람들의 앱이 각자 그 주소에 접속한다.
+그래서 링크 주인에게는 접속자들이 보인다. 대신 사설망 주소는 아예 요청하지 않는다
+(link_meta.is_safe_public_url) - 누가 http://192.168.0.1/ 을 올려 남의 공유기를
+두드리게 만드는 걸 막기 위함.
+"""
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QMovie, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+
+import link_meta
 
 # 이미지 미리보기 최대 크기. 원본이 크면 이 안에 들어오게 비율대로 줄여서 보여줌
 IMAGE_PREVIEW_WIDTH = 320
@@ -28,29 +34,29 @@ CARD_THUMB_PX = 80
 CARD_MAX_WIDTH = 360
 
 DOWNLOAD_LIMIT_BYTES = 8 * 1024 * 1024  # 이보다 크면 받다가 중단(거대 파일로 앱 멈춤 방지)
+HTML_LIMIT_BYTES = 256 * 1024           # og 태그는 <head>에 있어 앞부분만 있으면 충분
 REQUEST_TIMEOUT_MS = 10000              # 죽은 링크가 계속 붙잡고 있지 않게
 
 USER_AGENT = b"Mozilla/5.0 (compatible; FriendChat/1.0)"
 
-_IMAGE_EXT_RE = re.compile(r"\.(png|jpe?g|gif|webp|bmp)(?:[?#].*)?$", re.IGNORECASE)
-
-
-def is_image_url(url: str) -> bool:
-    """확장자로 이미지 직링크인지 판단.
-
-    확장자가 없는 이미지 서비스는 웹페이지로 취급되는데, 그런 곳은 대개 og:image를
-    갖고 있어서 서버가 카드로 만들어 주므로 문제되지 않음."""
-    return bool(_IMAGE_EXT_RE.search(url))
+is_image_url = link_meta.is_image_url
 
 
 class ImageFetcher:
-    """이미지를 받아오는 얇은 래퍼. 위젯과 분리해서 테스트하기 쉽게 둠."""
+    """주소 하나를 비동기로 받아오는 얇은 래퍼. 위젯과 분리해서 테스트하기 쉽게 둠.
+
+    이름은 ImageFetcher지만 HTML도 같은 방법으로 받는다(둘 다 그냥 GET이라)."""
 
     def __init__(self, parent=None):
         self._manager = QNetworkAccessManager(parent)
 
-    def fetch(self, url: str, on_done):
-        """url을 받아 on_done(bytes | None) 호출. 실패/초과/타임아웃이면 None."""
+    def fetch(self, url: str, on_done, limit: int = DOWNLOAD_LIMIT_BYTES):
+        """url을 받아 on_done(bytes | None) 호출. 실패/초과/타임아웃이면 None.
+
+        접속하면 안 되는 주소(사설망 등)는 아예 요청하지 않고 바로 None."""
+        if not link_meta.is_safe_public_url(url):
+            on_done(None)
+            return None
         request = QNetworkRequest(QUrl(url))
         request.setRawHeader(b"User-Agent", USER_AGENT)
         request.setAttribute(QNetworkRequest.Attribute.RedirectPolicyAttribute,
@@ -67,7 +73,7 @@ class ImageFetcher:
             on_done(data)
 
         def on_progress(received, _total):
-            if received > DOWNLOAD_LIMIT_BYTES:
+            if received > limit:
                 reply.abort()  # 다 받기 전에 끊음
 
         def on_finished():
@@ -75,7 +81,7 @@ class ImageFetcher:
                 finish(None)
                 return
             data = bytes(reply.readAll())
-            finish(data if len(data) <= DOWNLOAD_LIMIT_BYTES else None)
+            finish(data[:limit] if data else None)
 
         timer = QTimer(self._manager)
         timer.setSingleShot(True)
@@ -230,13 +236,14 @@ class LinkCard(QFrame):
 
 
 class LinkPreviewArea(QWidget):
-    """메시지 하나에 딸린 미리보기들을 담는 칸.
+    """메시지 하나에 딸린 미리보기들을 담는 칸. 받아오는 일까지 전부 여기서 한다.
 
     - 이미지 직링크: 주소가 곧 그림이므로 바로 받아서 보여줌
-    - 그 외 링크: 서버가 메타데이터를 보내줄 때까지 비워두고, 오면 카드를 만든 뒤
-      거기 적힌 이미지 주소로 그림을 받아 채움
+    - 그 외 링크: HTML을 받아 og 태그를 읽고 카드를 만든 뒤, 거기 적힌 이미지 주소로
+      그림을 한 번 더 받아 붙임
 
-    끝까지 아무 것도 안 오면 계속 높이 0이라 평소 메시지와 똑같이 보인다.
+    끝까지 아무 것도 못 받으면 계속 높이 0이라 평소 메시지와 똑같이 보인다.
+    fetcher를 안 주면 아무 요청도 하지 않는다(테스트/오프라인에서 안전).
     """
 
     def __init__(self, urls, fetcher: "ImageFetcher | None" = None, parent=None):
@@ -244,23 +251,23 @@ class LinkPreviewArea(QWidget):
         self.setObjectName("linkPreviewArea")
         self.setStyleSheet("QWidget#linkPreviewArea { background: transparent; }")
         self._fetcher = fetcher
-        self._pending = set(urls)
         self._filled = set()
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(4)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
+        if fetcher is None:
+            return
         for url in urls:
-            if is_image_url(url) and fetcher is not None:
-                self._start_direct_image(url)
-
-    def _start_direct_image(self, url: str):
-        self._pending.discard(url)  # 서버 응답을 기다릴 필요 없는 종류
-        self._fetcher.fetch(url, lambda data: self._on_direct_image(url, data))
+            if is_image_url(url):
+                fetcher.fetch(url, lambda data, u=url: self._on_direct_image(u, data))
+            else:
+                fetcher.fetch(url, lambda data, u=url: self._on_html(u, data),
+                              limit=HTML_LIMIT_BYTES)
 
     def _on_direct_image(self, url: str, data):
-        if url in self._filled:
+        if url in self._filled or not data:
             return
         preview = ImagePreview(url, self)
         if not preview.set_image_data(data):
@@ -269,20 +276,20 @@ class LinkPreviewArea(QWidget):
         self._filled.add(url)
         self._layout.addWidget(preview)
 
-    def wants(self, url: str) -> bool:
-        """이 메시지가 서버 응답을 기다리고 있는 링크인지"""
-        return url in self._pending and url not in self._filled
-
-    def apply_result(self, url: str, title: str, description: str, image_url: str = ""):
-        """서버가 보내준 메타데이터로 카드를 만듦. 제목이 없으면 아무 것도 안 함."""
-        if not self.wants(url) or not title:
+    def _on_html(self, url: str, data):
+        """받아온 HTML에서 메타태그를 뽑아 카드를 만듦. 제목이 없으면 아무 것도 안 함."""
+        if url in self._filled or not data:
             return
+        info = link_meta.parse_meta(
+            link_meta.decode_html(link_meta.head_only(data)), base_url=url)
+        if not info.get("title"):
+            return  # 보여줄 게 없으면 하이퍼링크만 남김
         self._filled.add(url)
-        card = LinkCard(url, title, description, self)
+        card = LinkCard(url, info["title"], info.get("description", ""), self)
         self._layout.addWidget(card)
-        # 그림은 서버가 아니라 우리가 그 주소에서 직접 받아옴
-        if image_url and self._fetcher is not None:
-            self._fetcher.fetch(image_url, lambda data: self._on_card_image(card, data))
+        image_url = info.get("image_url", "")
+        if image_url:
+            self._fetcher.fetch(image_url, lambda d: self._on_card_image(card, d))
 
     @staticmethod
     def _on_card_image(card: LinkCard, data):

@@ -37,15 +37,15 @@ from gui.theme import (
     DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT, UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT,
     UNREAD_BLINK_INTERVAL_MS,
 )
-
-# 카드(채팅/참여자) 아래와 그 밑 컨트롤(입력창/프로필 버튼) 사이 간격.
-# 좌우 열이 같은 값을 써야 아래쪽 버튼 줄이 나란히 놓임
-_CARD_TO_CONTROL_GAP = 6
 from version import APP_VERSION
 from gui.cheat_overlay import CheatOverlay
 from gui.battlecruiser import BattlecruiserOverlay
 from gui.link_preview import ImageFetcher
 from gui.widgets import ChannelLogView, _ChannelTabBar
+
+# 카드(채팅/참여자) 아래와 그 밑 컨트롤(입력창/프로필 버튼) 사이 간격.
+# 좌우 열이 같은 값을 써야 아래쪽 버튼 줄이 나란히 놓임
+_CARD_TO_CONTROL_GAP = 6
 
 
 class LoginPage(QWidget):
@@ -386,12 +386,9 @@ class ChatPage(QWidget):
     """여러 채널을 탭으로 동시에 열어둘 수 있음"""
 
     def __init__(self, on_send, on_add_channel, on_leave_channel, on_set_avatar,
-                 on_all_channels_left=None, on_request_unfurl=None):
+                 on_all_channels_left=None):
         super().__init__()
         self.on_send = on_send
-        # 링크 미리보기 정보를 서버에 요청하는 콜백(MainWindow -> ChatSession).
-        # 안 주면 미리보기를 아예 시도하지 않음 - 테스트/오프라인에서 안전
-        self.on_request_unfurl = on_request_unfurl
         self.on_add_channel = on_add_channel
         self.on_leave_channel = on_leave_channel
         self.on_set_avatar = on_set_avatar
@@ -856,29 +853,13 @@ class ChatPage(QWidget):
         view = self._log_views.get(channel)
         if view is None:
             return
-        widget = view.append_message(
+        view.append_message(
             self._display_name_for(sender), text, mine, ts,
-            self._avatar_for(sender, AVATAR_MSG_PX), kind=kind,
-            preview=preview and self.on_request_unfurl is not None,
+            self._avatar_for(sender, AVATAR_MSG_PX), kind=kind, preview=preview,
         )
-        # 링크가 있으면 서버에 "이 주소 정보 좀 가져다줘"라고 요청해둠. 결과는 나중에
-        # apply_unfurl()로 돌아와 카드가 채워짐(안 오면 하이퍼링크만 남음)
-        if widget is not None and widget.preview_urls and self.on_request_unfurl is not None:
-            for url in widget.preview_urls:
-                self.on_request_unfurl(url)
         self._mark_unread(channel)
         if is_mention:
             self._trigger_mention_alert()
-
-    def apply_unfurl(self, url: str, title: str, description: str = "", image_url: str = ""):
-        """서버가 보내준 링크 메타데이터를 그 링크를 기다리던 메시지에 반영.
-
-        image_url은 '주소'일 뿐이고, 그림은 카드가 만들어진 뒤 여기서 직접 받아옴.
-
-        어느 채널의 메시지였는지는 서버 응답에 없으므로 모든 채널을 훑음 - 같은 링크가
-        여러 채널에 붙어 있을 수도 있고, 어차피 채널 수가 많지 않아 부담이 없음."""
-        for view in self._log_views.values():
-            view.apply_unfurl(url, title, description, image_url)
 
     def _trigger_mention_alert(self):
         """지금 그 채널을 보고 있는지와 무관하게 항상 작업표시줄 깜빡임 + 창 흔들림"""

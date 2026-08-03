@@ -11,7 +11,6 @@ import json
 import ssl
 import sys
 import time
-import unfurl
 from store import Store
 from certs import ensure_certificate
 
@@ -201,23 +200,6 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                         {"type": "member_nickname", "channel": channel, "user_id": user_id, "nickname": nickname},
                         exclude=user_id,
                     )
-
-            elif cmd == "unfurl":
-                # 링크 미리보기를 서버가 대신 가져옴. 클라이언트가 각자 접속하면 채널
-                # 인원수만큼 요청이 나가고 참여자 IP가 링크 주인에게 전부 노출되므로,
-                # 서버가 한 번만 받아 캐시해두고 결과만 나눠줌(unfurl.py 설명 참고).
-                if not user_id:
-                    await send(writer, {"type": "error", "text": "먼저 로그인하세요."})
-                    continue
-                url = msg.get("url", "")
-                if not url or not unfurl.check_rate_limit(user_id):
-                    # 도배로 서버 자원을 소모하지 못하게 막음. 조용히 무시하면 되고
-                    # (미리보기는 덤이라) 오류를 채팅에 남길 필요는 없음
-                    continue
-                # 네트워크 요청이라 오래 걸릴 수 있음 - 별도 스레드로 돌려서 다른
-                # 사용자들의 채팅이 그 사이 멈추지 않게 함
-                info = await asyncio.to_thread(unfurl.unfurl, url)
-                await send(writer, {"type": "unfurl_result", "url": url, **info})
 
             else:
                 await send(writer, {"type": "error", "text": f"알 수 없는 명령: {cmd}"})
