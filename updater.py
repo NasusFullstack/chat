@@ -185,7 +185,17 @@ def _write_batch(path: str, script: str) -> None:
         f.write(script)
 
 
-def build_installer_batch(installer_path: str, current_exe: str, pid: int) -> str:
+def update_log_path() -> str:
+    """업데이트 배치가 진행 상황을 적는 파일.
+
+    이 배치는 창 없이 돌아서 무슨 일이 있었는지 볼 방법이 없다. "패치는 됐는데 앱이
+    안 켜진다"를 추측으로 고치다 두 번 헛짚었기 때문에, 어디까지 갔는지 기록을 남긴다.
+    """
+    return os.path.join(tempfile.gettempdir(), "friendchat_update.log")
+
+
+def build_installer_batch(installer_path: str, current_exe: str, pid: int,
+                          log_path: str = "") -> str:
     """인스톨러 실행 + 앱 재시작을 담당하는 배치 스크립트 내용.
 
     실제로 돌려보고 검증할 수 있도록 apply_installer_and_relaunch()에서 분리해둠
@@ -208,18 +218,23 @@ def build_installer_batch(installer_path: str, current_exe: str, pid: int) -> st
       있을 수 있어서, 이걸 지웠더니 "패치는 됐는데 앱이 안 켜지는" 증상이 났다.
     - 지연에 `timeout /t`를 쓰면 안 된다. 콘솔 없는 환경에서 즉시 실패한다.
     """
+    log_path = log_path or update_log_path()
     return f"""@rem BOM guard - this line is expected to be eaten by the UTF-8 BOM
 @echo off
 chcp 65001 >nul
+set LOG="{log_path}"
+echo [start] %DATE% %TIME%> %LOG%
 :wait
 tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
 if not errorlevel 1 (
     ping -n 2 127.0.0.1 >nul
     goto wait
 )
+echo [app closed] %TIME%>> %LOG%
 
 rem Run the installer directly (no "start"): cmd waits for it to finish.
 "{installer_path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+echo [installer done] exit=%errorlevel% %TIME%>> %LOG%
 
 rem Settle time: the installer can return before file locks are released.
 ping -n 4 127.0.0.1 >nul
@@ -229,14 +244,18 @@ set RETRY=0
 :launch
 if exist "{current_exe}" goto doLaunch
 set /a RETRY+=1
+echo [waiting for exe] try=%RETRY% %TIME%>> %LOG%
 if %RETRY% LSS 10 (
     ping -n 3 127.0.0.1 >nul
     goto launch
 )
+echo [FAILED] exe never appeared: {current_exe}>> %LOG%
 goto launched
 
 :doLaunch
+echo [launching] {current_exe}>> %LOG%
 start "" "{current_exe}" {POST_UPDATE_FLAG}
+echo [launched] errorlevel=%errorlevel% %TIME%>> %LOG%
 
 :launched
 del "{installer_path}" >nul 2>nul

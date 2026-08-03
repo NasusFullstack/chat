@@ -341,7 +341,8 @@ class MainWindow(QMainWindow):
             return
 
         mode_label = "SSL" if values["ssl"] else "평문(암호화 없음)"
-        self.login_page.show_status(f"연결 중... ({mode_label}, 최대 10초, 언제든 '연결 취소' 가능)")
+        self.login_page.show_status(
+            f"연결 중... ({mode_label}, 최대 10초, 언제든 '연결 취소' 가능)", error=False)
         self.login_page.set_connecting(True)
         self._connecting = True
         self._pending_ssl = values["ssl"]
@@ -394,7 +395,7 @@ class MainWindow(QMainWindow):
             return
         self._stop_connecting()
         self.client.abort()
-        self.login_page.show_status("연결을 취소했습니다.")
+        self.login_page.show_status("연결을 취소했습니다.", error=False)
 
     def _on_connect_timeout(self):
         if not self._connecting:
@@ -432,9 +433,9 @@ class MainWindow(QMainWindow):
         self.login_page.set_connecting(True)
         self._connect_timer.start(CONNECT_TIMEOUT_MS)
         if self._protocol_mode == "irc":
-            self.login_page.show_status("서버 접속 중... (언제든 '연결 취소' 가능)")
+            self.login_page.show_status("서버 접속 중... (언제든 '연결 취소' 가능)", error=False)
         else:
-            self.login_page.show_status("로그인 확인 중... (언제든 '연결 취소' 가능)")
+            self.login_page.show_status("로그인 확인 중... (언제든 '연결 취소' 가능)", error=False)
         # IRC는 회원가입 개념이 없어서 login()이 곧 등록 핸드셰이크임(프로토콜 전략이 처리)
         if self._auth_mode == "register":
             self.session.register(self._pending_user_id, self._pending_password)
@@ -538,14 +539,14 @@ class MainWindow(QMainWindow):
 
         elif isinstance(event, domain_events.RegisterSucceeded):
             self._stop_connecting()
-            self.login_page.show_status("회원가입 완료! 이제 로그인하세요.")
+            self.login_page.show_status("회원가입 완료! 이제 로그인하세요.", error=False)
 
         elif isinstance(event, domain_events.AuthFailed):
             self._stop_connecting()
             self.login_page.show_status(event.text)
 
         elif isinstance(event, domain_events.ChannelCreated):
-            self.channel_page.show_status("채널 생성 완료! 입장 버튼을 눌러주세요.")
+            self.channel_page.show_status("채널 생성 완료! 입장 버튼을 눌러주세요.", error=False)
 
         elif isinstance(event, domain_events.ChannelJoined):
             first_time = self.stack.currentWidget() is self.channel_page
@@ -578,7 +579,9 @@ class MainWindow(QMainWindow):
             if not event.channel:
                 # 등록 전 NOTICE 등 - 채널이 없으면 로그인 화면 상태줄에 표시
                 if self._is_pre_login():
-                    self.login_page.show_status(event.text)
+                    # 서버가 보내는 접속 안내(예: hostname을 못 찾아 IP를 대신 쓴다는
+                    # 문구)는 오류가 아니므로 빨간색으로 보여주면 안 됨
+                    self.login_page.show_status(event.text, error=False)
                 return
             self.chat_page.append_system(event.channel, event.text)
 
@@ -596,7 +599,7 @@ class MainWindow(QMainWindow):
 
         elif isinstance(event, domain_events.NicknameRetrying):
             self.login_page.show_status(
-                f"닉네임이 사용 중이라 '{event.new_nickname}'(으)로 재시도합니다."
+                f"닉네임이 사용 중이라 '{event.new_nickname}'(으)로 재시도합니다.", error=False
             )
 
         elif isinstance(event, domain_events.CheatActivated):

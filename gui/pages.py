@@ -299,8 +299,23 @@ class LoginPage(QWidget):
         if path:
             self.cert_input.setText(path)
 
-    def show_status(self, text: str):
+    def show_status(self, text: str, error: bool = True):
+        """상태 문구 표시. error=False면 오류색(빨강) 대신 안내색(회색)으로 보여줌.
+
+        구분이 필요한 이유: IRC 서버가 접속 중에 보내는 안내(예: "hostname을 못 찾아
+        IP 주소를 대신 씁니다")나 "연결 중..." 같은 진행 문구까지 빨간 글씨로 나와서
+        아무 문제가 없는데도 오류가 난 것처럼 보였음.
+
+        기본값을 True로 둔 이유: 새로 추가되는 호출부가 표시를 빠뜨렸을 때 진짜 오류를
+        조용히 감추는 쪽보다, 안내가 좀 눈에 띄는 쪽이 안전하기 때문.
+        """
         self.status_label.setText(text)
+        name = "status_err" if error else "status_info"
+        if self.status_label.objectName() != name:
+            self.status_label.setObjectName(name)
+            # objectName을 바꾸면 스타일시트를 다시 먹여야 색이 반영됨
+            self.status_label.style().unpolish(self.status_label)
+            self.status_label.style().polish(self.status_label)
 
     def set_connecting(self, connecting: bool):
         self.login_btn.setEnabled(not connecting)
@@ -377,8 +392,23 @@ class ChannelPage(QWidget):
     def set_mode(self, protocol: str):
         self.create_btn.setVisible(protocol != "irc")
 
-    def show_status(self, text: str):
+    def show_status(self, text: str, error: bool = True):
+        """상태 문구 표시. error=False면 오류색(빨강) 대신 안내색(회색)으로 보여줌.
+
+        구분이 필요한 이유: IRC 서버가 접속 중에 보내는 안내(예: "hostname을 못 찾아
+        IP 주소를 대신 씁니다")나 "연결 중..." 같은 진행 문구까지 빨간 글씨로 나와서
+        아무 문제가 없는데도 오류가 난 것처럼 보였음.
+
+        기본값을 True로 둔 이유: 새로 추가되는 호출부가 표시를 빠뜨렸을 때 진짜 오류를
+        조용히 감추는 쪽보다, 안내가 좀 눈에 띄는 쪽이 안전하기 때문.
+        """
         self.status_label.setText(text)
+        name = "status_err" if error else "status_info"
+        if self.status_label.objectName() != name:
+            self.status_label.setObjectName(name)
+            # objectName을 바꾸면 스타일시트를 다시 먹여야 색이 반영됨
+            self.status_label.style().unpolish(self.status_label)
+            self.status_label.style().polish(self.status_label)
 
     def get_values(self):
         return {
