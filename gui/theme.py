@@ -21,13 +21,16 @@ UNREAD_BLINK_INTERVAL_MS = 350
 UNREAD_BLINK_COUNT = 4  # 안 보는 채널에 새 메시지가 오면 이 횟수만큼 반짝인 뒤 밝은 색으로 고정됨
 UNREAD_DOT_PX = 9
 
-# 채널 탭은 글자 수와 무관하게 항상 같은 크기로 고정(들쭉날쭉해 보이지 않게).
-# 폭은 "채널명 + 닫기(×) 버튼 + 좌우 여백"이 서로 안 겹치게 잡은 값 - 예전 110px은
-# 닫기 버튼이 테두리에 딱 붙고 이름이 뭉텅 잘려서 엉성해 보였음
+# 채널 목록은 왼쪽 사이드바에 세로로 쌓는다. 예전엔 채팅창 위쪽 가로 탭이었는데,
+# 채널이 늘면 폭이 모자라 이름이 잘리고 탭이 들쭉날쭉해 보였음
+CHANNEL_SIDEBAR_WIDTH = 190
+CHANNEL_ROW_HEIGHT = 44
+ADD_TAB_LABEL = "+"
+
+# 아래 둘은 예전 가로 탭 시절 값 - 남아있는 참조가 있어 유지만 함
 CHANNEL_TAB_FIXED_WIDTH = 140
 CHANNEL_TAB_HEIGHT = 34
-ADD_TAB_WIDTH = 40  # '+' 탭은 아이콘만 있으므로 정사각형에 가깝게
-ADD_TAB_LABEL = "+"
+ADD_TAB_WIDTH = 40
 
 MENTION_COOLDOWN_SEC = 60  # 같은 채널에서 같은 사람을 다시 @호출하려면 이만큼 기다려야 함
 
@@ -229,6 +232,58 @@ QTabBar::tab:hover:!selected {
     background-color: #2f3140;
     color: #cfd0da;
     border: 1px solid #4a4d63;
+}
+/* ---- 왼쪽 채널 사이드바 ---- */
+QWidget#channelSidebar {
+    background: transparent;
+}
+/* 채널 목록은 테두리 없는 투명 배경 위에 '알약' 항목만 떠 있는 형태.
+   참여자 목록처럼 카드로 감싸지 않는 이유: 감싸면 채팅 카드와 나란히 두 겹으로 보임 */
+QListWidget#channelList {
+    background: transparent;
+    border: none;
+    padding: 0px;
+    outline: none;
+}
+QListWidget#channelList::item {
+    background-color: #23242f;
+    color: #cfd0da;
+    border: 1px solid #34364a;
+    border-radius: 10px;
+    padding: 0px 12px;
+    margin-bottom: 6px;
+}
+QListWidget#channelList::item:hover {
+    background-color: #2f3140;
+    color: #ffffff;
+}
+/* 지금 보고 있는 채널 - 면색까지 강조색으로 채워 한눈에 들어오게 */
+QListWidget#channelList::item:selected {
+    background-color: #5b52d9;
+    color: #ffffff;
+    border: 1px solid #7c6cf0;
+    font-weight: bold;
+}
+QPushButton#addChannelBtn {
+    background-color: #23242f;
+    color: #9a9cad;
+    border: 1px solid #34364a;
+    border-radius: 10px;
+    font-size: 18px;
+    font-weight: bold;
+    padding: 0px;
+}
+/* 채팅창 위에 지금 보고 있는 채널 이름 */
+QLabel#channelHeader {
+    color: #e6e6e6;
+    font-size: 15px;
+    font-weight: bold;
+    background: transparent;
+}
+QPushButton#addChannelBtn:hover {
+    background-color: #2f3140;
+    color: #ffffff;
+    border: 1px solid #7c6cf0;
 }
 /* 채팅 로그 - 참여자 목록(QListWidget)과 같은 면색/테두리/모서리로 통일.
    viewport와 그 안의 내용 위젯은 반드시 투명해야 함: 불투명하면 사각형인 자식 위젯이

@@ -1,20 +1,17 @@
-"""채팅 메시지/로그/채널 탭바 위젯 (MessageWidget/ChannelLogView/_ChannelTabBar).
+"""채팅 메시지/로그 위젯 (MessageWidget / ChannelLogView).
 
 이름들은 몽키패치 대상이 아니라 어디서든 자유롭게 직접 import해도 안전함
 (gui_client.py의 순환참조 노트 참고 - 그 규칙은 다른 5개 함수에만 적용됨).
 """
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QTabBar, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from chat_core.commands import KIND_ACTION, KIND_CHAT, KIND_NOTICE
 from gui.helpers import _format_ts, _linkify, extract_urls, text_is_only_urls
-from gui.theme import (
-    ADD_TAB_LABEL, ADD_TAB_WIDTH, AVATAR_MSG_PX, CHANNEL_TAB_FIXED_WIDTH, CHANNEL_TAB_HEIGHT,
-    TIMESTAMP_BADGE_HEIGHT_PX,
-)
+from gui.theme import AVATAR_MSG_PX, TIMESTAMP_BADGE_HEIGHT_PX
 
 
 # 폭 계산에 두는 여유. 스크롤바가 나타나는 순간 viewport가 그만큼 좁아지는데, 그 폭을
@@ -243,26 +240,3 @@ class ChannelLogView(QScrollArea):
         super().resizeEvent(event)
         # 사용자가 실제로 창 크기를 바꿀 때는 지금 보이는 탭 기준 실측값으로 보정
         self.refresh_wrap_widths()
-
-
-class _ChannelTabBar(QTabBar):
-    """채널 탭은 글자 수와 무관하게 항상 같은 크기, 맨 끝의 '+' 탭만 작은 정사각형."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        # 탭 아래를 가로지르는 기본 밑줄(base line)을 끄지 않으면 탭 위쪽으로 짧은 선분이
-        # 삐져나오고, 아래로는 채팅 카드 테두리와 별개인 줄이 하나 더 그어져 지저분해짐
-        self.setDrawBase(False)
-        # 긴 채널명은 잘라내는 대신 말줄임(...)으로 - 그냥 잘리면 글자가 반쯤 남아 엉성함
-        self.setElideMode(Qt.TextElideMode.ElideRight)
-        self.setExpanding(False)
-        self.setUsesScrollButtons(True)
-
-    def tabSizeHint(self, index: int) -> QSize:
-        if self.tabText(index) == ADD_TAB_LABEL:
-            return QSize(ADD_TAB_WIDTH, CHANNEL_TAB_HEIGHT)
-        return QSize(CHANNEL_TAB_FIXED_WIDTH, CHANNEL_TAB_HEIGHT)
-
-    def minimumTabSizeHint(self, index: int) -> QSize:
-        # 이걸 안 주면 탭이 많아졌을 때 Qt가 제멋대로 줄여서 크기가 들쭉날쭉해짐
-        return self.tabSizeHint(index)

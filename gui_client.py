@@ -72,7 +72,7 @@ from gui.themed_dialogs import (
 )
 from gui.mention_alerts import _flash_taskbar_icon, _shake_window
 from gui.network import ChatClient
-from gui.widgets import ChannelLogView, MessageWidget, _build_system_label, _ChannelTabBar
+from gui.widgets import ChannelLogView, MessageWidget, _build_system_label
 from gui.title_bar import TitleBar
 from gui.profile_dialog import ColorPickerDialog, ProfileDialog, _AvatarGridWidget
 from gui.pages import ChannelPage, ChatPage, LoginPage
