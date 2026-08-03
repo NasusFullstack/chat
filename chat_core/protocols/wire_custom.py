@@ -14,7 +14,6 @@ TYPE_SYSTEM = "system"
 TYPE_USERLIST = "userlist"
 TYPE_MEMBER_AVATAR = "member_avatar"
 TYPE_MEMBER_NICKNAME = "member_nickname"
-TYPE_UNFURL_RESULT = "unfurl_result"
 TYPE_ERROR = "error"
 
 # 클라이언트 -> 서버 (msg["cmd"])
@@ -26,7 +25,6 @@ CMD_MSG = "msg"
 CMD_LEAVE = "leave"
 CMD_SET_AVATAR = "set_avatar"
 CMD_SET_NICKNAME = "set_nickname"
-CMD_UNFURL = "unfurl"
 
 
 def format_register(user_id: str, password: str) -> dict:
@@ -59,11 +57,3 @@ def format_set_avatar(avatar_b64: str) -> dict:
 
 def format_set_nickname(nickname: str) -> dict:
     return {"cmd": CMD_SET_NICKNAME, "nickname": nickname}
-
-
-def format_unfurl(url: str) -> dict:
-    """링크 미리보기 정보를 서버가 대신 가져와 달라는 요청.
-
-    클라이언트가 직접 그 주소에 접속하지 않는 이유는 unfurl.py 맨 위 설명 참고
-    (참여자 수만큼 요청이 나가고 각자의 IP가 링크 주인에게 노출되는 문제)."""
-    return {"cmd": CMD_UNFURL, "url": url}

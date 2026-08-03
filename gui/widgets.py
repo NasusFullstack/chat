@@ -177,20 +177,6 @@ class ChannelLogView(QScrollArea):
         widget.set_wrap_width(self._effective_width())
         self._layout.addWidget(widget)
         self._messages.append(widget)
-        return widget
-
-    def apply_unfurl(self, url: str, title: str, description: str, image_url: str) -> bool:
-        """서버가 보내준 링크 정보를 그 링크를 기다리던 메시지들에 반영.
-
-        같은 링크가 여러 메시지에 있을 수 있으므로 전부 훑음. 뒤에서부터 찾는 이유는
-        방금 온 메시지가 기다리고 있을 가능성이 가장 높기 때문."""
-        applied = False
-        for widget in reversed(self._messages):
-            area = widget.preview_area
-            if area is not None and area.wants(url):
-                area.apply_result(url, title, description, image_url)
-                applied = True
-        return applied
 
     def append_system(self, text: str):
         self._layout.addWidget(_build_system_label(text))

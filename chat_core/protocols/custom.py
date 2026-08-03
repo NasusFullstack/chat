@@ -46,9 +46,6 @@ class CustomProtocol(CommonCommands):
     def normalize_channel(self, channel: str) -> str:
         return channel
 
-    def request_unfurl(self, session, url: str) -> None:
-        session.transport(wire.format_unfurl(url))
-
     # ---------- 슬래시 명령 ----------
     # 커스텀 서버(server.py)는 IRC처럼 NOTICE/WHOIS/MODE 같은 개념이 없어서, 서버를
     # 고치지 않고 흉내낼 수 있는 것만 지원한다. 지원 목록에 없는 명령은 세션이
@@ -141,14 +138,6 @@ class CustomProtocol(CommonCommands):
         if user_id:
             session.apply_nickname(user_id, msg.get("nickname"))
 
-    def _on_unfurl_result(self, session, msg: dict):
-        session.emit(events.UnfurlResult(
-            url=msg.get("url", ""),
-            title=msg.get("title", ""),
-            description=msg.get("description", ""),
-            image_url=msg.get("image_url", ""),
-        ))
-
     def _on_error(self, session, msg: dict):
         session.emit(events.GenericError(msg.get("text", "오류")))
 
@@ -161,7 +150,6 @@ class CustomProtocol(CommonCommands):
         wire.TYPE_USERLIST: _on_userlist,
         wire.TYPE_MEMBER_AVATAR: _on_member_avatar,
         wire.TYPE_MEMBER_NICKNAME: _on_member_nickname,
-        wire.TYPE_UNFURL_RESULT: _on_unfurl_result,
         wire.TYPE_ERROR: _on_error,
     }
 
