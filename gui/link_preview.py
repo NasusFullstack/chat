@@ -96,20 +96,25 @@ def _looks_like_gif(data: bytes) -> bool:
     return data[:6] in (b"GIF87a", b"GIF89a")
 
 
-def _preview_size(width: int, height: int) -> QSize:
+def _preview_size(width: int, height: int, max_width: int = 0) -> QSize:
     """상한 안에 들어가도록 비율을 유지해 줄인 크기.
 
+    max_width는 지금 채팅창에서 실제로 쓸 수 있는 폭. 이걸 안 지키면 채팅창이 좁을 때
+    이미지가 밖으로 삐져나가 가로 스크롤이 생기고 시간 배지까지 화면 밖으로 밀린다.
+
     1.0을 못 넘게 막는 이유: 작은 이미지를 억지로 키우면 뭉개지므로 원본 크기 유지."""
+    limit = IMAGE_PREVIEW_WIDTH if max_width <= 0 else min(IMAGE_PREVIEW_WIDTH, max_width)
+    limit = max(1, limit)
     if width <= 0 or height <= 0:
-        return QSize(IMAGE_PREVIEW_WIDTH, IMAGE_PREVIEW_WIDTH)
-    scale = min(IMAGE_PREVIEW_WIDTH / width, IMAGE_PREVIEW_MAX_HEIGHT / height, 1.0)
+        return QSize(limit, limit)
+    scale = min(limit / width, IMAGE_PREVIEW_MAX_HEIGHT / height, 1.0)
     # int()로 버리면 320이 319가 되고, 거기에 KeepAspectRatio가 한 번 더 맞추면서 318까지
     # 줄어들었음. 반올림 + 아래의 IgnoreAspectRatio 조합으로 목표 크기에 정확히 맞춤
     return QSize(max(1, round(width * scale)), max(1, round(height * scale)))
 
 
-def _scaled_for_preview(pixmap: QPixmap) -> QPixmap:
-    size = _preview_size(pixmap.width(), pixmap.height())
+def _scaled_for_preview(pixmap: QPixmap, max_width: int = 0) -> QPixmap:
+    size = _preview_size(pixmap.width(), pixmap.height(), max_width)
     if size == pixmap.size():
         return pixmap
     return pixmap.scaled(size, Qt.AspectRatioMode.IgnoreAspectRatio,
@@ -143,6 +148,23 @@ class ImagePreview(QLabel):
         self._url = url
         self._movie = None
         self._buffer = None
+        # 원본을 들고 있어야 창 크기가 바뀔 때 다시 줄일 수 있음(한 번 줄인 걸 또 줄이면
+        # 화질이 계속 나빠지고, 창을 다시 넓혀도 작은 채로 남음)
+        self._source = None
+        self._max_width = 0
+
+    def set_max_width(self, width: int):
+        """채팅창에서 쓸 수 있는 폭이 바뀌었을 때 그 안에 들어오게 다시 맞춤."""
+        if width <= 0 or width == self._max_width:
+            return
+        self._max_width = width
+        if self._movie is not None:
+            size = self._movie.currentPixmap().size()
+            if size.width() > 0:
+                self._movie.setScaledSize(
+                    _preview_size(size.width(), size.height(), width))
+        elif self._source is not None:
+            self.setPixmap(_scaled_for_preview(self._source, width))
 
     def set_image_data(self, data: bytes) -> bool:
         """받은 바이트로 이미지를 세팅. 못 읽으면 False(호출자가 미리보기를 지움)."""
@@ -153,7 +175,8 @@ class ImagePreview(QLabel):
         pixmap = QPixmap()
         if not pixmap.loadFromData(data) or pixmap.isNull():
             return False
-        self.setPixmap(_scaled_for_preview(pixmap))
+        self._source = pixmap
+        self.setPixmap(_scaled_for_preview(pixmap, self._max_width))
         return True
 
     def _set_animated(self, data: bytes) -> bool:
@@ -170,7 +193,7 @@ class ImagePreview(QLabel):
         movie.jumpToFrame(0)
         size = movie.currentPixmap().size()
         if size.width() > 0:
-            movie.setScaledSize(_preview_size(size.width(), size.height()))
+            movie.setScaledSize(_preview_size(size.width(), size.height(), self._max_width))
         self._movie = movie
         self.setMovie(movie)
         movie.start()
@@ -256,6 +279,9 @@ class LinkPreviewArea(QWidget):
         # 지울지 판단하는 데 씀). 끝내 아무것도 못 받으면 호출되지 않으므로 주소가 남음
         self._on_preview_shown = on_preview_shown
         self._filled = set()
+        # 채팅창에서 쓸 수 있는 폭. 나중에 도착하는 미리보기에도 그대로 적용해야
+        # 좁은 창에서 이미지가 삐져나가지 않음
+        self._max_width = 0
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(4)
@@ -270,10 +296,21 @@ class LinkPreviewArea(QWidget):
                 fetcher.fetch(url, lambda data, u=url: self._on_html(u, data),
                               limit=HTML_LIMIT_BYTES)
 
+    def set_max_width(self, width: int):
+        """채팅창 폭이 바뀌었을 때 - 이미 그려진 미리보기와 앞으로 올 것 모두에 적용."""
+        if width <= 0 or width == self._max_width:
+            return
+        self._max_width = width
+        for child in self.findChildren(ImagePreview):
+            child.set_max_width(width)
+        for card in self.findChildren(LinkCard):
+            card.setMaximumWidth(min(CARD_MAX_WIDTH, width))
+
     def _on_direct_image(self, url: str, data):
         if url in self._filled or not data:
             return
         preview = ImagePreview(url, self)
+        preview.set_max_width(self._max_width)
         if not preview.set_image_data(data):
             preview.deleteLater()
             return
@@ -282,6 +319,21 @@ class LinkPreviewArea(QWidget):
         self._notify_shown()
 
     def _notify_shown(self):
+        # 미리보기는 네트워크로 나중에 도착하므로, 그때 이 칸의 크기가 바뀐다는 걸
+        # 위쪽 레이아웃에 명시적으로 알려야 한다. 안 알리면 메시지 높이가 도착 전 값으로
+        # 굳어 그림이 잘리거나 아래에 빈 공간이 남는다(이 코드베이스에서 이미 한 번 난
+        # 사고 유형 - CLAUDE.md의 "줄바꿈 폭" 항목과 같은 뿌리).
+        self.updateGeometry()
+        parent = self.parentWidget()
+        while parent is not None:
+            parent.updateGeometry()
+            layout = parent.layout()
+            if layout is not None:
+                layout.invalidate()
+            if parent.objectName() == "chatLogContent":
+                parent.adjustSize()
+                break
+            parent = parent.parentWidget()
         if self._on_preview_shown is not None:
             self._on_preview_shown()
 
@@ -295,6 +347,8 @@ class LinkPreviewArea(QWidget):
             return  # 보여줄 게 없으면 하이퍼링크만 남김
         self._filled.add(url)
         card = LinkCard(url, info["title"], info.get("description", ""), self)
+        if self._max_width > 0:
+            card.setMaximumWidth(min(CARD_MAX_WIDTH, self._max_width))
         self._layout.addWidget(card)
         self._notify_shown()
         image_url = info.get("image_url", "")

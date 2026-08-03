@@ -17,6 +17,11 @@ from gui.theme import (
 )
 
 
+# 폭 계산에 두는 여유. 스크롤바가 나타나는 순간 viewport가 그만큼 좁아지는데, 그 폭을
+# 미리 빼두지 않으면 "넘침 -> 스크롤바 등장 -> 더 좁아져서 또 넘침"이 반복됨
+_WRAP_SAFETY_PX = 4
+
+
 def _message_html(sender: str, safe_text: str, mine: bool, kind: str) -> str:
     """메시지 종류별 표시 형식 - IRC 클라이언트들의 관행을 그대로 따름.
 
@@ -107,8 +112,12 @@ class MessageWidget(QWidget):
     def _hide_url_text(self):
         """미리보기가 떴으니 주소 문자열은 지우고 보낸 사람만 남김.
 
-        라벨을 통째로 숨기지 않는 이유: 누가 보낸 건지는 남아야 하기 때문."""
+        라벨을 통째로 숨기지 않는 이유: 누가 보낸 건지는 남아야 하기 때문.
+        글자가 줄어들면 높이도 줄어드는데, 그걸 레이아웃에 알리지 않으면 예전 높이가
+        그대로 남아 아래에 빈 공간이 생긴다."""
         self._text_label.setText(self._sender_only_html)
+        self._text_label.updateGeometry()
+        self.updateGeometry()
 
     def set_wrap_width(self, view_width: int):
         """네트워크로 비동기로 도착한 메시지는 QScrollArea 레이아웃이 아직 완전히
@@ -117,8 +126,19 @@ class MessageWidget(QWidget):
         (내가 직접 보낸 메시지는 항상 창이 안정된 상태에서 추가돼서 이 문제가 안 드러남).
         Qt의 자동 계산에 기대는 대신 뷰포트 폭을 직접 계산해서 넘겨주면 타이밍과
         무관하게 항상 정확히 줄바꿈됨."""
-        inner_width = max(40, view_width - AVATAR_MSG_PX - 24)
+        # 빼야 할 폭을 상수로 어림잡지 말고 실제 레이아웃 값에서 계산할 것.
+        # 예전엔 24로 어림했는데 실제 여백/간격 합과 안 맞아서, 좁은 창에서 그림이
+        # 10px쯤 삐져나가 가로 스크롤이 생기고 오른쪽이 잘려 보였음
+        row = self.layout()
+        margins = row.contentsMargins()
+        overhead = (AVATAR_MSG_PX + margins.left() + margins.right() + row.spacing()
+                    + _WRAP_SAFETY_PX)
+        inner_width = max(40, view_width - overhead)
         self._text_label.setMaximumWidth(inner_width)
+        # 미리보기 그림/카드도 같은 폭 안에 들어와야 함. 안 그러면 채팅창이 좁을 때
+        # 그림이 밖으로 삐져나가 가로 스크롤이 생기고 시간 배지까지 화면 밖으로 밀림
+        if self.preview_area is not None:
+            self.preview_area.set_max_width(inner_width)
 
 
 def _build_system_label(text: str) -> QLabel:
@@ -181,7 +201,18 @@ class ChannelLogView(QScrollArea):
         self.verticalScrollBar().setValue(maximum)
 
     def _effective_width(self) -> int:
-        return self._container_width or self.viewport().width()
+        """메시지 하나가 쓸 수 있는 폭 - 이 스크롤 영역의 좌우 여백을 뺀 값.
+
+        여백을 안 빼면 메시지가 딱 그 여백만큼 넘쳐서 가로 스크롤이 생긴다.
+        기준 폭은 탭바 쪽에서 밀어준 값을 쓰되(숨은 탭은 자기 viewport 폭이 부정확함),
+        실제로 보이는 상태라면 viewport를 넘지 않게 한 번 더 눌러준다.
+        """
+        base = self._container_width or self.viewport().width()
+        visible = self.viewport().width()
+        if visible > 0:
+            base = min(base, visible)
+        margins = self._layout.contentsMargins()
+        return max(40, base - margins.left() - margins.right())
 
     def append_message(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap,
                        kind: str = KIND_CHAT, preview: bool = True):
