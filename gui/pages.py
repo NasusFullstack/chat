@@ -21,7 +21,7 @@ from PySide6.QtCore import Qt, QSize, QStringListModel, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QCompleter, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QPushButton, QScrollArea, QStackedWidget, QTabBar,
+    QListWidget, QListWidgetItem, QMenu, QPushButton, QScrollArea, QStackedWidget,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -33,24 +33,22 @@ from gui.helpers import (
     _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert, _hashed_avatar_pixmap,
 )
 from gui.theme import (
-    ADD_TAB_LABEL, APP_TITLE, AVATAR_LIST_PX, AVATAR_MSG_PX, CHANNEL_TAB_HEIGHT,
-    DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT, UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT,
-    UNREAD_BLINK_INTERVAL_MS,
+    ADD_TAB_LABEL, APP_TITLE, AVATAR_LIST_PX, AVATAR_MSG_PX, CHANNEL_ROW_HEIGHT,
+    CHANNEL_SIDEBAR_WIDTH, DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT, UNREAD_BLINK_COLOR,
+    UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
 )
 from version import APP_VERSION
 from gui.cheat_overlay import CheatOverlay
 from gui.battlecruiser import BattlecruiserOverlay
 from gui.link_preview import ImageFetcher
-from gui.widgets import ChannelLogView, _ChannelTabBar
+from gui.widgets import ChannelLogView
+
+# 참여자 헤더 높이 - 채팅 카드 상단과 참여자 카드 상단을 같은 높이에 두기 위한 값
+MEMBER_HEADER_HEIGHT = 34
 
 # 카드(채팅/참여자) 아래와 그 밑 컨트롤(입력창/프로필 버튼) 사이 간격.
 # 좌우 열이 같은 값을 써야 아래쪽 버튼 줄이 나란히 놓임
 _CARD_TO_CONTROL_GAP = 6
-
-# 탭 닫기(×) 버튼 크기와, 탭 오른쪽 테두리에서 띄울 거리.
-# Qt는 탭 버튼을 오른쪽 끝에서 1px만 띄우고 붙여버려서(실측) 여백을 직접 줘야 함
-TAB_CLOSE_BTN_PX = 18
-TAB_CLOSE_RIGHT_MARGIN = 8
 
 
 class LoginPage(QWidget):
@@ -449,30 +447,36 @@ class ChatPage(QWidget):
         self._pending_input_text = ""
 
         layout = QHBoxLayout()
+        layout.addWidget(self._build_channel_sidebar())
 
         center = QVBoxLayout()
+        center.setSpacing(0)
+        # 지금 보고 있는 채널 이름. 오른쪽 "참여자" 헤더와 같은 높이로 두면 채팅 카드와
+        # 참여자 카드의 위쪽 선이 같은 높이에서 시작함(채널 목록이 왼쪽으로 옮겨가면서
+        # 채팅창 위가 비어 카드 상단이 어긋났었음)
+        self.channel_header = QLabel("")
+        self.channel_header.setObjectName("channelHeader")
+        self.channel_header.setFixedHeight(MEMBER_HEADER_HEIGHT)
+        self.channel_header.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        center.addWidget(self.channel_header)
+
         self._center_stack = QStackedWidget()
         self._empty_label = QLabel("입장한 채널이 없습니다.\n'+ 채널 추가' 버튼으로 입장하세요.")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._center_stack.addWidget(self._empty_label)
 
+        # 채널 목록은 왼쪽 사이드바(_build_channel_sidebar)로 옮겼고, 여기 QTabWidget은
+        # 채널별 대화 내용을 겹쳐 담아두는 용도로만 남겨둠(탭 막대는 숨김).
+        # 이렇게 두면 채널 추가/제거/전환을 다루는 기존 코드가 그대로 살아있고,
+        # 사이드바는 그 위에 얹힌 '보여주는 방식'만 담당하게 됨
         self.tabs = QTabWidget()
-        self.tabs.setTabBar(_ChannelTabBar())
+        self.tabs.tabBar().hide()
+        self.tabs.setDocumentMode(True)
         self.tabs.currentChanged.connect(self._on_tab_changed)
-        self.tabs.tabBarClicked.connect(self._on_tab_bar_clicked)
-        # '+' 채널 추가 버튼을 코너에 따로 두는 대신, 항상 맨 오른쪽에 붙어있는 '+' 탭
-        # 자체로 구현 - 마지막 채널 탭 바로 뒤에 절반 크기로 붙어서 자연스럽게 이어짐.
-        # 처음에는 setTabEnabled(False)로 막아뒀었는데, disabled 탭은 Qt에서 마우스
-        # 이벤트 자체를 안 받아서(진짜 클릭으로 검증하고서야 발견함 - 핸들러를 직접
-        # 호출하는 테스트로는 이 문제가 안 잡혔음) 실제로는 눌러도 아무 반응이 없었음.
-        # 그래서 그냥 enabled로 두고, 클릭으로 "선택"되는 순간 곧바로 원래 활성 채널로
-        # 되돌리는 방식으로 바꿈 - 같은 이벤트 처리 안에서 되돌아가므로 화면 깜빡임 없음
-        self._add_tab_placeholder = QWidget()
-        self.tabs.addTab(self._add_tab_placeholder, ADD_TAB_LABEL)
-        self.tabs.setTabToolTip(0, "새 채널에 입장합니다")
         self._center_stack.addWidget(self.tabs)
 
-        center.addWidget(self._center_stack)
+        center.addWidget(self._center_stack, 1)
 
         # @호출이 쿨타임 중일 때만 나(보낸 사람)한테만 잠깐 보이는 안내문 - 채팅창에는 안 남음
         self._mention_notice = QLabel("")
@@ -480,6 +484,7 @@ class ChatPage(QWidget):
         self._mention_notice.setVisible(False)
         center.addWidget(self._mention_notice)
 
+        center.addSpacing(_CARD_TO_CONTROL_GAP)
         input_row = QHBoxLayout()
         self.msg_input = QLineEdit()
         self.msg_input.setPlaceholderText("메시지 입력 후 Enter (@닉네임으로 호출 가능)")
@@ -493,11 +498,11 @@ class ChatPage(QWidget):
         center_widget.setLayout(center)
 
         right = QVBoxLayout()
-        # 오른쪽 헤더를 왼쪽 탭 줄과 같은 높이로 고정해야 두 카드(채팅/참여자)의 위쪽 선이
-        # 같은 높이에서 시작함. 안 맞추면 카드 상단이 14px쯤 어긋나 어설퍼 보였음
+        # 오른쪽 헤더 높이를 고정해야 채팅 카드와 참여자 카드의 위쪽 선이 같은 높이에서
+        # 시작함. 안 맞추면 카드 상단이 어긋나 어설퍼 보였음
         right.setSpacing(0)
         member_header = QLabel("참여자")
-        member_header.setFixedHeight(CHANNEL_TAB_HEIGHT)
+        member_header.setFixedHeight(MEMBER_HEADER_HEIGHT)
         member_header.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         right.addWidget(member_header)
         self.user_list = QListWidget()
@@ -548,6 +553,77 @@ class ChatPage(QWidget):
         # 지금 프로토콜이 지원하는 슬래시 명령 목록 - 세션이 알려주면 갱신됨
         self._command_tokens: list[str] = []
 
+    def _build_channel_sidebar(self) -> QWidget:
+        """왼쪽 채널 목록 - 세로로 쌓이는 알약 모양 항목 + 오른쪽 위 '+' 버튼.
+
+        예전엔 채팅창 위쪽에 가로 탭으로 뒀는데, 채널이 늘면 폭이 모자라고 이름이 잘렸다.
+        세로 목록은 채널이 몇 개든 같은 폭으로 온전히 보인다.
+
+        나가기는 항목을 우클릭해서 고른다 - 항목마다 x를 박아두면 채널 이름보다 버튼이
+        먼저 눈에 들어와 어수선해지기 때문.
+        """
+        sidebar = QWidget()
+        sidebar.setObjectName("channelSidebar")
+        sidebar.setFixedWidth(CHANNEL_SIDEBAR_WIDTH)
+        outer = QVBoxLayout(sidebar)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(8)
+
+        self.channel_list = QListWidget()
+        self.channel_list.setObjectName("channelList")
+        self.channel_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.channel_list.setFrameShape(QFrame.Shape.NoFrame)
+        self.channel_list.currentRowChanged.connect(self._on_channel_row_changed)
+        # 우클릭 나가기
+        self.channel_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.channel_list.customContextMenuRequested.connect(self._show_channel_menu)
+        top.addWidget(self.channel_list, 1)
+
+        self.add_channel_btn = QPushButton(ADD_TAB_LABEL)
+        self.add_channel_btn.setObjectName("addChannelBtn")
+        self.add_channel_btn.setFixedSize(CHANNEL_ROW_HEIGHT, CHANNEL_ROW_HEIGHT)
+        self.add_channel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_channel_btn.setToolTip("새 채널에 입장합니다")
+        self.add_channel_btn.clicked.connect(lambda: self.on_add_channel())
+        top.addWidget(self.add_channel_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        outer.addLayout(top, 1)
+        return sidebar
+
+    def _channel_row(self, channel: str) -> int:
+        """사이드바에서 그 채널이 몇 번째 줄인지. 없으면 -1"""
+        for row in range(self.channel_list.count()):
+            if self.channel_list.item(row).data(Qt.ItemDataRole.UserRole) == channel:
+                return row
+        return -1
+
+    def _on_channel_row_changed(self, row: int):
+        """사이드바에서 채널을 고르면 그 채널 대화창을 앞으로 가져옴"""
+        if row < 0:
+            return
+        channel = self.channel_list.item(row).data(Qt.ItemDataRole.UserRole)
+        view = self._log_views.get(channel)
+        if view is None:
+            return
+        index = self.tabs.indexOf(view)
+        if index >= 0 and index != self.tabs.currentIndex():
+            self.tabs.setCurrentIndex(index)
+
+    def _show_channel_menu(self, pos):
+        item = self.channel_list.itemAt(pos)
+        if item is None:
+            return
+        channel = item.data(Qt.ItemDataRole.UserRole)
+        menu = QMenu(self.channel_list)
+        leave = menu.addAction(f"'{channel}' 나가기")
+        chosen = menu.exec(self.channel_list.mapToGlobal(pos))
+        if chosen is leave:
+            self._request_close_channel(channel)
+
     def show_resource_cheat(self):
         """'show me the money'가 채널에 떴을 때 - 자원 오버레이를 채팅창 가운데에 잠깐 표시"""
         self._cheat_overlay.start()
@@ -586,76 +662,24 @@ class ChatPage(QWidget):
     def _update_input_enabled(self):
         self.msg_input.setEnabled(bool(self._active_channel))
 
-    def _make_close_button(self, channel: str) -> QWidget:
-        """탭의 닫기(×) 버튼. 색은 앱의 보조 텍스트/호버 색을 그대로 씀.
-
-        여백용 래퍼에 담아서 돌려주는 이유: Qt는 탭 버튼을 탭 오른쪽 끝에 1px만 띄우고
-        붙여버리고, QSS의 padding-right는 탭 버튼 배치에 적용되지 않는다(실측으로 확인).
-        래퍼에 오른쪽 여백을 주면 그만큼 안쪽으로 들어와 테두리에 붙지 않는다.
-
-        평소엔 흐릿하게 두고 마우스를 올렸을 때만 또렷해지게 함 - 탭마다 ×가 진하게 박혀
-        있으면 채널 이름보다 버튼이 먼저 눈에 들어와 어수선해 보임."""
-        btn = QPushButton("×")
-        btn.setFlat(True)
-        btn.setFixedSize(TAB_CLOSE_BTN_PX, TAB_CLOSE_BTN_PX)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setStyleSheet(
-            # #9a9cad / #4a4d63 는 앱 전체가 쓰는 보조 텍스트색과 호버 면색(theme.py 참고)
-            "QPushButton { background: transparent; color: #9a9cad; border: none;"
-            f" border-radius: {TAB_CLOSE_BTN_PX // 2}px;"
-            " font-size: 14px; font-weight: bold; padding: 0px; }"
-            "QPushButton:hover { background: #4a4d63; color: #ffffff; }"
-        )
-        btn.setToolTip(f"'{channel}' 채널 나가기")
-        btn.clicked.connect(lambda: self._request_close_channel(channel))
-
-        wrapper = QWidget()
-        wrapper.setObjectName("tabCloseWrap")
-        wrapper.setStyleSheet("QWidget#tabCloseWrap { background: transparent; }")
-        layout = QHBoxLayout(wrapper)
-        layout.setContentsMargins(0, 0, TAB_CLOSE_RIGHT_MARGIN, 0)
-        layout.setSpacing(0)
-        layout.addWidget(btn)
-        return wrapper
-
     def add_channel(self, channel: str, activate: bool = True):
         if channel not in self._log_views:
             view = ChannelLogView(channel, image_fetcher=self._image_fetcher)
             view.set_container_width(self.tabs.width())
             self._log_views[channel] = view
             self._members[channel] = []
-            insert_at = self.tabs.count() - 1  # 맨 끝의 '+' 탭 바로 앞에 끼워넣음
-            index = self.tabs.insertTab(insert_at, view, channel)
-            self.tabs.tabBar().setTabButton(
-                index, QTabBar.ButtonPosition.RightSide, self._make_close_button(channel)
-            )
-            # 탭 폭이 고정이라 긴 이름은 말줄임(...)으로 잘리므로, 전체 이름은 툴팁으로 보여줌
-            self.tabs.setTabToolTip(index, channel)
+            self.tabs.addTab(view, channel)
+
+            item = QListWidgetItem(channel)
+            # 표시 이름과 별개로 실제 채널명을 들고 있게 함(나중에 안읽음 표시 등으로
+            # 보이는 글자가 바뀌어도 어떤 채널인지 잃지 않도록)
+            item.setData(Qt.ItemDataRole.UserRole, channel)
+            item.setSizeHint(QSize(0, CHANNEL_ROW_HEIGHT))
+            item.setToolTip(f"{channel}\n우클릭하면 나가기")
+            self.channel_list.addItem(item)
             self._center_stack.setCurrentWidget(self.tabs)
         if activate:
             self.set_active_channel(channel)
-
-    def _on_tab_bar_clicked(self, index: int):
-        if self.tabs.widget(index) is self._add_tab_placeholder:
-            self.on_add_channel()
-            # tabBarClicked 신호는 Qt 내부의 QTabBar::mouseReleaseEvent가 끝나기 "전에"
-            # 방출되는데, 그 신호 처리 직후 Qt가 자체적으로 한 번 더 setCurrentIndex를
-            # 호출해서 우리가 여기서 바로 되돌려도 곧바로 다시 덮어써버림(실측으로 확인함
-            # - 되돌린 직후엔 값이 맞다가 mouseClick이 완전히 리턴된 뒤엔 다시 '+' 탭으로
-            # 돌아가 있었음). 다음 이벤트 루프 틱으로 미뤄서 Qt의 내부 처리가 완전히
-            # 끝난 뒤에 되돌리면 확실히 반영됨
-            QTimer.singleShot(0, self._restore_active_tab)
-
-    def _restore_active_tab(self):
-        """'+' 탭이 클릭되면서 currentChanged로 잠깐 선택된 상태를 원래 활성 채널로
-        되돌려서 버튼처럼 동작하게 함. 아직 입장한 채널이 하나도 없으면(활성 채널 없음)
-        되돌릴 곳이 없으니 그냥 '+' 탭에 그대로 둠"""
-        view = self._log_views.get(self._active_channel)
-        if view is None:
-            return
-        index = self.tabs.indexOf(view)
-        if index >= 0:
-            self.tabs.setCurrentIndex(index)
 
     def remove_channel(self, channel: str):
         view = self._log_views.pop(channel, None)
@@ -666,9 +690,13 @@ class ChatPage(QWidget):
         index = self.tabs.indexOf(view)
         if index >= 0:
             self.tabs.removeTab(index)  # 남은 탭이 있으면 currentChanged가 자동으로 활성 채널을 갱신함
+        row = self._channel_row(channel)
+        if row >= 0:
+            self.channel_list.takeItem(row)
         view.deleteLater()
         if not self._log_views:
             self._active_channel = ""
+            self.channel_header.setText("")
             self._center_stack.setCurrentWidget(self._empty_label)
             self.user_list.clear()
             if self.on_all_channels_left is not None:
@@ -705,9 +733,16 @@ class ChatPage(QWidget):
         if index < 0:
             return
         view = self.tabs.widget(index)
-        if view is None or view is self._add_tab_placeholder:
+        if view is None:
             return
         self._active_channel = view.channel_name
+        self.channel_header.setText(view.channel_name)
+        # 사이드바 선택도 같이 옮김. 여기서 다시 신호가 돌아오는 걸 막으려고 잠시 끊음
+        row = self._channel_row(view.channel_name)
+        if row >= 0 and row != self.channel_list.currentRow():
+            self.channel_list.blockSignals(True)
+            self.channel_list.setCurrentRow(row)
+            self.channel_list.blockSignals(False)
         self._stop_blink(view.channel_name)
         self.user_list.clear()
         self._add_userlist_items(self._members.get(self._active_channel, []))
@@ -723,15 +758,15 @@ class ChatPage(QWidget):
             self.on_leave_channel(channel)
 
     def _mark_unread(self, channel: str):
-        """탭에 작은 점 아이콘이 UNREAD_BLINK_COUNT번 깜빡인 뒤, 탭을 보기 전까지는
-        점을 그대로 유지함 (글자색 깜빡임은 QTabBar::tab { color: ... } 스타일시트가
-        항상 우선 적용돼서 안 먹혔음 - 아이콘은 스타일시트 영향을 안 받아 확실히 보임)"""
+        """사이드바 채널 항목에 작은 점 아이콘이 UNREAD_BLINK_COUNT번 깜빡인 뒤,
+        그 채널을 보기 전까지는 점을 그대로 유지함.
+
+        글자색을 깜빡이는 방식은 못 씀 - 스타일시트의 색 지정이 항상 우선 적용돼서
+        코드로 바꾼 글자색이 안 먹힘(예전 탭에서 이미 겪은 문제). 아이콘은 스타일시트
+        영향을 안 받아 확실히 보인다."""
         if channel == self._active_channel:
             return
-        view = self._log_views.get(channel)
-        if view is None:
-            return
-        if self.tabs.indexOf(view) < 0:
+        if self._channel_row(channel) < 0:
             return
         if channel in self._unread_timers:
             return  # 이미 깜빡이는 중
@@ -744,9 +779,8 @@ class ChatPage(QWidget):
         self._toggle_blink(channel)  # 바로 한 번 켜서 즉각 반응하는 느낌을 줌
 
     def _toggle_blink(self, channel: str):
-        view = self._log_views.get(channel)
-        index = self.tabs.indexOf(view) if view is not None else -1
-        if view is None or index < 0 or channel == self._active_channel:
+        row = self._channel_row(channel)
+        if row < 0 or channel == self._active_channel:
             self._stop_blink(channel)
             return
         step = self._unread_blink_step.get(channel, 0) + 1
@@ -754,7 +788,7 @@ class ChatPage(QWidget):
         on = not self._unread_blink_on.get(channel, False)
         self._unread_blink_on[channel] = on
         icon = _build_unread_dot_icon(UNREAD_BLINK_COLOR) if on else QIcon()
-        self.tabs.tabBar().setTabIcon(index, icon)
+        self.channel_list.item(row).setIcon(icon)
         if on and step >= 2 * UNREAD_BLINK_COUNT - 1:
             # 지정된 횟수만큼 깜빡였으니 타이머만 멈추고 밝은 색은 그대로 유지
             # (실제로 탭을 봐야만 _stop_blink에서 기본 색으로 되돌아감)
@@ -770,11 +804,9 @@ class ChatPage(QWidget):
             timer.deleteLater()
         self._unread_blink_on.pop(channel, None)
         self._unread_blink_step.pop(channel, None)
-        view = self._log_views.get(channel)
-        if view is not None:
-            index = self.tabs.indexOf(view)
-            if index >= 0:
-                self.tabs.tabBar().setTabIcon(index, QIcon())
+        row = self._channel_row(channel)
+        if row >= 0:
+            self.channel_list.item(row).setIcon(QIcon())
 
     def _submit(self):
         """입력창 내용을 그대로 상위(MainWindow -> ChatSession)로 넘김.
