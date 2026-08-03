@@ -126,14 +126,15 @@ class CommandError:
 
 @dataclass(frozen=True)
 class UnfurlResult:
-    """서버가 대신 가져와 준 링크 미리보기 정보.
+    """서버가 대신 읽어 준 링크 메타데이터.
 
-    thumb_b64는 서버가 이미지 기능을 켰을 때만 채워짐(기본은 꺼져 있어 제목/설명만 옴).
+    image_url은 미리보기 그림의 '주소'일 뿐이다 - 그림 자체는 서버가 중계하지 않고
+    어댑터가 그 주소에서 직접 받아온다. 미리보기 그림이 없는 링크면 비어 있다.
     아무것도 못 가져왔으면 title이 비어 있으니 어댑터는 미리보기를 만들지 않으면 됨."""
     url: str
     title: str = ""
     description: str = ""
-    thumb_b64: str = ""
+    image_url: str = ""
 
 
 @dataclass(frozen=True)

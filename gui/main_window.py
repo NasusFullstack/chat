@@ -625,7 +625,7 @@ class MainWindow(QMainWindow):
 
         elif isinstance(event, domain_events.UnfurlResult):
             self.chat_page.apply_unfurl(
-                event.url, event.title, event.description, event.thumb_b64
+                event.url, event.title, event.description, event.image_url
             )
 
         elif isinstance(event, domain_events.CommandHelp):

@@ -1,9 +1,12 @@
-"""서버가 대신 링크 정보를 가져와 주는 모듈 (카톡/슬랙이 하는 'unfurl').
+"""서버가 링크의 '메타데이터'만 대신 읽어 주는 모듈 (카톡/슬랙이 하는 'unfurl').
 
-왜 서버가 대신 하는가:
-클라이언트가 각자 링크에 접속하면 (1) 채널에 5명이면 대상 사이트에 요청이 5번 가고,
-(2) 링크 주인에게 참여자 전원의 IP가 노출되고, (3) 각자 원본 이미지(수 MB)를 통째로
-받게 된다. 서버가 한 번만 받아서 캐시해두고 결과만 나눠주면 셋 다 해결된다.
+역할 분담:
+- **서버(이 파일)**: 페이지 HTML을 받아 og 태그에서 제목/설명/이미지주소를 뽑아 준다.
+  글자만 오가므로 응답이 1KB도 안 되고, 캐시가 있어 같은 링크는 다시 안 받는다.
+- **클라이언트**: 서버가 알려준 이미지 주소로 직접 접속해 그림을 받아 그린다.
+  서버는 이미지를 중계하지 않는다(서버 대역폭을 이미지에 쓰지 않기 위함).
+
+그래서 이미지가 있는 링크면 그림이 나오고, 없으면 글자만 나오거나 아무 것도 안 나온다.
 
 **서버가 '아무 URL이나 대신 접속해주는 기계'가 된다는 점을 반드시 의식할 것.**
 그대로 두면 채팅에 http://192.168.0.1/ 을 올리는 것만으로 서버가 자기 집 내부망에
@@ -11,8 +14,9 @@
 리다이렉트를 따라간 뒤에도 다시 검사해야 한다(공개 주소로 시작해 사설 주소로 튕기는
 우회가 가능하므로).
 
-이미지(썸네일)는 코드는 다 있지만 IMAGES_ENABLED로 꺼둔 상태다. 서버 관리자가 트래픽
-부담을 확인한 뒤 켜면 된다. 꺼져 있으면 제목/설명만 반환한다.
+같은 이유로 클라이언트에게 넘겨줄 이미지 주소도 걸러야 한다. 악의적인 페이지가
+og:image를 내부망 주소로 적어두면, 그걸 그대로 넘길 경우 이번엔 '클라이언트'들이
+자기 내부망을 두드리게 된다.
 """
 import html as html_mod
 import ipaddress
@@ -23,18 +27,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-# 서버 관리자가 트래픽 부담을 확인한 뒤 켜는 스위치.
-# 켜면 og:image를 받아 작은 썸네일(JPEG base64)까지 함께 내려줌.
-IMAGES_ENABLED = False
-
 USER_AGENT = "Mozilla/5.0 (compatible; FriendChat-unfurl/1.0)"
 
-HTML_LIMIT_BYTES = 256 * 1024    # og 태그는 <head>에 있으므로 앞부분만 받으면 충분
-IMAGE_LIMIT_BYTES = 5 * 1024 * 1024
+# og 태그는 <head> 안에 있으므로 </head>가 보이면 거기서 끊는다. 아래 값은 그마저도
+# 안 나올 때의 안전장치 - 본문이 아무리 길어도 이 이상은 안 받음.
+# 실제로는 대부분 수십 KB 안에서 끝나서 서버가 쓰는 대역폭이 링크당 그 정도뿐이다.
+HTML_LIMIT_BYTES = 64 * 1024
+HTML_CHUNK_BYTES = 8 * 1024
 TIMEOUT_SEC = 8
 MAX_REDIRECTS = 3
 
-THUMB_PX = 80          # 썸네일 한 변 (원본이 아무리 커도 이 크기로 줄임)
 TITLE_MAX = 120        # 지나치게 긴 제목이 채팅창을 밀어내지 않게 자름
 DESC_MAX = 200
 
@@ -99,6 +101,19 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _read_head(response, limit: int) -> bytes:
+    """</head>가 나오면 거기서 읽기를 멈춤 - 본문까지 받을 이유가 없어 대역폭을 아낌."""
+    buf = bytearray()
+    while len(buf) < limit:
+        chunk = response.read(min(HTML_CHUNK_BYTES, limit - len(buf)))
+        if not chunk:
+            break
+        buf += chunk
+        if b"</head>" in buf.lower():
+            break
+    return bytes(buf)
+
+
 def _open(url: str, limit: int):
     """리다이렉트를 직접 따라가며 매 단계 주소를 검사하고, limit 바이트까지만 읽음."""
     opener = urllib.request.build_opener(_NoRedirect)
@@ -107,7 +122,7 @@ def _open(url: str, limit: int):
         request = urllib.request.Request(current, headers={"User-Agent": USER_AGENT})
         try:
             with opener.open(request, timeout=TIMEOUT_SEC) as response:
-                return response.read(limit + 1)[:limit], current
+                return _read_head(response, limit), current
         except urllib.error.HTTPError as exc:
             if exc.code in (301, 302, 303, 307, 308):
                 location = exc.headers.get("Location")
@@ -184,32 +199,21 @@ def _clean(text: str, limit: int) -> str:
 
 # ==================== 썸네일 (기본 꺼짐) ====================
 
-def make_thumbnail_b64(image_bytes: bytes) -> str:
-    """원본 이미지를 THUMB_PX 정사각 JPEG로 줄여 base64로 반환. 실패하면 빈 문자열.
+def safe_image_url(base_url: str, image_url: str) -> str:
+    """og:image 주소를 절대주소로 만들고, 클라이언트에게 넘겨도 되는지 검사.
 
-    IMAGES_ENABLED가 켜져야만 호출된다. Pillow가 없으면 조용히 포기(서버에 무거운
-    의존성을 강제하지 않으려는 것 - 썸네일은 어디까지나 덤).
+    이 주소로 접속하는 건 서버가 아니라 클라이언트들이다. 악의적인 페이지가 og:image에
+    내부망 주소(예: http://192.168.0.1/)를 적어두면 그걸 받은 사람들이 자기 집 공유기를
+    두드리게 되므로, 넘기기 전에 서버가 한 번 걸러 준다. 문제가 있으면 빈 문자열.
     """
-    try:
-        import base64
-        import io
-        from PIL import Image
-    except ImportError:
+    if not image_url:
         return ""
+    absolute = urllib.parse.urljoin(base_url, image_url)
     try:
-        img = Image.open(io.BytesIO(image_bytes))
-        img = img.convert("RGB")
-        # 가운데를 정사각으로 잘라야 카드 높이가 항상 일정함(단순 축소는 납작해짐)
-        edge = min(img.size)
-        left = (img.width - edge) // 2
-        top = (img.height - edge) // 2
-        img = img.crop((left, top, left + edge, top + edge))
-        img = img.resize((THUMB_PX, THUMB_PX), Image.LANCZOS)
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=75)
-        return base64.b64encode(buf.getvalue()).decode("ascii")
-    except Exception:
+        _check_url_allowed(absolute)
+    except UnfurlError:
         return ""
+    return absolute
 
 
 # ==================== 캐시 + 속도 제한 ====================
@@ -252,13 +256,15 @@ def check_rate_limit(user_id: str) -> bool:
 # ==================== 진입점 ====================
 
 def unfurl(url: str) -> dict:
-    """링크 정보를 반환. 실패하면 {} (호출자는 그냥 미리보기를 안 만들면 됨).
+    """링크의 메타데이터를 반환. 보여줄 게 없으면 {}.
 
-    반환 키: title, description, thumb_b64 (있는 것만)
+    반환 키(있는 것만): title, description, image_url
+    image_url은 '주소'일 뿐이고 그림 자체는 클라이언트가 직접 받아 온다.
     """
     cached = _cache_get(url)
     if cached is not None:
         return cached
+
     try:
         raw, final_url = _open(url, HTML_LIMIT_BYTES)
     except UnfurlError:
@@ -266,18 +272,12 @@ def unfurl(url: str) -> dict:
         return {}
 
     info = parse_open_graph(decode_html(raw))
-    image_url = info.pop("image_url", "")
-    result = {k: v for k, v in info.items() if v}
-
-    if IMAGES_ENABLED and image_url and result:
-        try:
-            absolute = urllib.parse.urljoin(final_url, image_url)
-            image_bytes, _ = _open(absolute, IMAGE_LIMIT_BYTES)
-            thumb = make_thumbnail_b64(image_bytes)
-            if thumb:
-                result["thumb_b64"] = thumb
-        except UnfurlError:
-            pass  # 썸네일은 덤이라 실패해도 제목/설명은 그대로 보냄
+    result = {k: v for k, v in info.items() if v and k != "image_url"}
+    image_url = safe_image_url(final_url, info.get("image_url", ""))
+    if image_url:
+        result["image_url"] = image_url
+    if not result.get("title"):
+        result = {}  # 제목조차 없으면 카드를 만들 게 없음
 
     _cache_put(url, result)
     return result
