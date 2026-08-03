@@ -22,6 +22,20 @@ MAX_NICK_RETRIES = 3
 CTCP_DELIM = "\x01"
 AVATAR_CTCP_TAG = "FCAVATAR"
 
+# IRC 한 줄은 CR-LF 포함 512바이트를 넘을 수 없다(RFC 1459). 실제 서버는 넘는 줄을
+# 그냥 잘라버리므로, 아바타를 한 줄에 다 실으면 조용히 깨진다(실측: 2028바이트를
+# 보내면 510바이트로 잘려서 도착 -> 아이콘도 안 오고 잘린 쓰레기가 채팅에 그대로 뜸).
+# 그래서 base64를 여러 조각으로 나눠 보내고 받는 쪽에서 다시 합친다.
+#
+# 조각 하나에 실을 payload 길이는 보수적으로 잡음. 서버가 붙이는 프리픽스
+# (:nick!user@host )는 우리가 길이를 모르고 호스트명이 길면 100바이트가 넘기도 함:
+#   512 - CRLF(2) - 프리픽스(~106) - "PRIVMSG <채널> :"(~60) - CTCP 부대비용(~21) ≈ 323
+AVATAR_CHUNK_PAYLOAD = 300
+IRC_LINE_LIMIT = 512
+
+# 실측(16x16 아이콘): 단색 144자, 보통 그림 188자 -> 대부분 한 조각으로 끝남.
+# 전 픽셀이 다른 색인 최악의 경우에만 5조각 정도가 됨.
+
 
 @dataclass
 class IrcMessage:
@@ -168,16 +182,52 @@ def normalize_channel(name: str) -> str:
     return name
 
 
-def format_ctcp_avatar(target: str, avatar_b64: str) -> str:
-    return format_privmsg(target, f"{CTCP_DELIM}{AVATAR_CTCP_TAG} {avatar_b64}{CTCP_DELIM}")
+def format_ctcp_avatar(target: str, avatar_b64: str) -> list[str]:
+    """아바타를 512바이트 안에 들어가는 여러 줄로 나눠 반환.
+
+    형식: \\x01FCAVATAR <전송id> <번호>/<총개수> <조각>\\x01
+    대부분의 아이콘은 한 줄로 끝나고, 큰 것만 여러 줄이 된다.
+    """
+    chunks = [avatar_b64[i:i + AVATAR_CHUNK_PAYLOAD]
+              for i in range(0, len(avatar_b64), AVATAR_CHUNK_PAYLOAD)] or [""]
+    # 같은 사람이 아이콘을 연달아 바꿔도 이전 전송과 안 섞이게 하는 짧은 식별자
+    transfer_id = f"{abs(hash(avatar_b64)) % 0xFFFF:04x}"
+    total = len(chunks)
+    return [
+        format_privmsg(
+            target,
+            f"{CTCP_DELIM}{AVATAR_CTCP_TAG} {transfer_id} {index}/{total} {chunk}{CTCP_DELIM}",
+        )
+        for index, chunk in enumerate(chunks, start=1)
+    ]
 
 
-def parse_ctcp_avatar(text: str) -> str | None:
-    """PRIVMSG의 trailing 텍스트가 우리 아이콘 CTCP 태그면 base64 부분을 반환, 아니면 None"""
+def is_ctcp_frame(text: str) -> bool:
+    """우리끼리 쓰는 숨김 프레임인지. 잘려서 해석에 실패해도 채팅으로 새면 안 되므로,
+    '완성된 프레임인지'가 아니라 '프레임처럼 생겼는지'로 판단한다."""
+    return text.startswith(CTCP_DELIM)
+
+
+def parse_ctcp_avatar(text: str) -> tuple[str, int, int, str] | None:
+    """아이콘 CTCP 프레임을 (전송id, 번호, 총개수, 조각)으로 분해. 아니면 None.
+
+    예전 버전이 보내던 조각 없는 형식(\\x01FCAVATAR <b64>\\x01)도 그대로 받아준다
+    (그 경우 1/1짜리 전송으로 취급). 안 그러면 구버전 친구의 아이콘이 안 보임.
+    """
     if len(text) < 2 or not (text.startswith(CTCP_DELIM) and text.endswith(CTCP_DELIM)):
         return None
     inner = text[1:-1]
     prefix = AVATAR_CTCP_TAG + " "
     if not inner.startswith(prefix):
         return None
-    return inner[len(prefix):]
+    body = inner[len(prefix):]
+
+    parts = body.split(" ", 2)
+    if len(parts) == 3 and "/" in parts[1]:
+        index_text, _, total_text = parts[1].partition("/")
+        if index_text.isdigit() and total_text.isdigit():
+            index, total = int(index_text), int(total_text)
+            if 1 <= index <= total:
+                return parts[0], index, total, parts[2]
+    # 구버전 형식: 조각 정보 없이 base64만 들어있음
+    return "legacy", 1, 1, body

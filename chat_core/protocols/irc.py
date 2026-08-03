@@ -12,6 +12,10 @@ from chat_core.protocols.common_commands import CommonCommands
 
 # 서버가 명령에 대한 답으로 돌려주는 숫자 응답 중 사용자에게 그대로 보여줄 것들.
 # (MOTD/서버통계 같은 접속 직후 잡음은 여기 없으므로 조용히 무시됨)
+# 아직 다 안 온 아이콘 전송을 몇 건까지 들고 있을지. 조각이 유실되면 그 전송은 영영
+# 완성되지 않으므로, 상한 없이 두면 조용히 메모리가 쌓임
+MAX_PENDING_AVATARS = 32
+
 INFO_NUMERICS = {
     "301",  # RPL_AWAY - 상대가 자리비움
     "305", "306",  # 내 자리비움 해제/설정
@@ -58,7 +62,16 @@ class IrcProtocol(CommonCommands):
         # 실제 IRC 서버는 아이콘 개념이 없으므로 PRIVMSG 안에 CTCP처럼 숨겨서
         # 우리 클라이언트끼리만 알아보게 보냄(내가 입장한 모든 채널에)
         for channel in session.joined_channels:
-            session.transport(irc_protocol.format_ctcp_avatar(channel, avatar_b64))
+            self._send_avatar(session, channel, avatar_b64)
+
+    @staticmethod
+    def _send_avatar(session, target: str, avatar_b64: str) -> None:
+        """아이콘을 512바이트에 맞춰 나눠 보냄. 대부분 한 줄로 끝남(실측 144~188자).
+
+        조각이 여러 개여도 한 번에 내보냄 - 아이콘 변경은 자주 일어나는 일이 아니고,
+        최악의 경우에도 5줄이라 IRC 서버의 연속 전송 허용치 안에 들어감."""
+        for line in irc_protocol.format_ctcp_avatar(target, avatar_b64):
+            session.transport(line)
 
     def publish_nickname(self, session, nickname: str) -> None:
         # IRC는 닉네임이 곧 접속 식별자라 서버가 승인해야 확정됨 - 낙관적으로 먼저 바꾸지 않고
@@ -270,14 +283,14 @@ class IrcProtocol(CommonCommands):
             my_avatar = session.avatars.get(session.my_id)
             if my_avatar:
                 # 방금 입장한 채널의 기존 멤버들에게 내 아이콘을 알려줌
-                session.transport(irc_protocol.format_ctcp_avatar(channel, my_avatar))
+                self._send_avatar(session, channel, my_avatar)
         else:
             session.add_member(channel, nick)
             session.emit(events.SystemNotice(channel, f"{nick}님이 입장했습니다."))
             my_avatar = session.avatars.get(session.my_id)
             if my_avatar:
                 # 새로 들어온 사람에게만 1:1로 알려줌(채널 전체에 다시 뿌릴 필요 없음)
-                session.transport(irc_protocol.format_ctcp_avatar(nick, my_avatar))
+                self._send_avatar(session, nick, my_avatar)
 
     def _on_part(self, session, msg):
         nick = msg.source_nick
@@ -314,11 +327,12 @@ class IrcProtocol(CommonCommands):
         sender = msg.source_nick
         target = msg.params[0] if msg.params else ""
         text = msg.trailing
-        avatar_b64 = irc_protocol.parse_ctcp_avatar(text)
-        if avatar_b64 is not None:
-            # 아이콘 교환용 CTCP - 채팅으로 표시하거나 기록에 남기지 않고 캐시만 갱신.
-            # (예전 CLI는 이 검사가 없어서 이 프레임이 깨진 채팅 텍스트로 그대로 샜음)
-            session.apply_avatar(sender, avatar_b64)
+        if irc_protocol.is_ctcp_frame(text):
+            # 우리끼리 쓰는 숨김 프레임은 채팅으로 표시하거나 기록에 남기지 않음.
+            # 해석에 실패해도 여기서 끝내는 게 중요함 - 서버가 512바이트에서 잘라버린
+            # 프레임을 그냥 흘려보내면 잘린 base64 쓰레기가 채널에 그대로 뜬다
+            # (실측으로 확인한 실제 증상)
+            self._handle_avatar_frame(session, sender, text)
             return
         ts = time.time()
         if target == session.my_id:
@@ -330,6 +344,32 @@ class IrcProtocol(CommonCommands):
                 )
         else:
             session.deliver_message(target, sender, text, mine=False, ts=ts)
+
+    def _handle_avatar_frame(self, session, sender: str, text: str):
+        """조각난 아이콘 프레임을 모아서 다 오면 반영.
+
+        조각이 하나라도 빠지면(잘렸거나 유실) 아무 것도 하지 않는다 - 아이콘이 안 보이는
+        건 사소하지만, 깨진 데이터를 아이콘이라고 우기면 더 이상하므로.
+        """
+        parsed = irc_protocol.parse_ctcp_avatar(text)
+        if parsed is None:
+            return  # 잘렸거나 우리가 모르는 CTCP - 조용히 버림(채팅으로 새면 안 됨)
+        transfer_id, index, total, chunk = parsed
+        if total == 1:
+            session.apply_avatar(sender, chunk)
+            return
+
+        key = (sender, transfer_id)
+        parts = session.irc_avatar_chunks.setdefault(key, {})
+        parts[index] = chunk
+        if len(parts) < total:
+            # 아직 덜 왔음. 미완성 전송이 계속 쌓이면 메모리를 먹으므로 상한을 둠
+            if len(session.irc_avatar_chunks) > MAX_PENDING_AVATARS:
+                oldest = next(iter(session.irc_avatar_chunks))
+                session.irc_avatar_chunks.pop(oldest, None)
+            return
+        session.irc_avatar_chunks.pop(key, None)
+        session.apply_avatar(sender, "".join(parts[i] for i in range(1, total + 1)))
 
     def _on_notice(self, session, msg):
         # 등록 전에는 채널이 없으므로 빈 채널로 보냄 - 어댑터가 로그인 화면 등에 표시
