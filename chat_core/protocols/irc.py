@@ -253,17 +253,38 @@ class IrcProtocol(CommonCommands):
         else:
             session.emit(events.AuthFailed("사용 가능한 닉네임이 없습니다. 다른 닉네임으로 다시 시도하세요."))
 
+    @staticmethod
+    def _names_key(session, channel: str) -> str:
+        """IRC 채널 이름은 대소문자를 구분하지 않는다.
+
+        서버가 353과 366에서 다른 표기로 돌려주면(`#pdlab` / `#PDLab`) 버퍼 키가 어긋나
+        모아둔 이름이 통째로 유실된다. 내가 들어가 있는 채널 이름으로 맞춰준다.
+        """
+        for joined in session.joined_channels:
+            if joined.lower() == channel.lower():
+                return joined
+        return channel
+
     def _on_namreply(self, session, msg):
         channel = msg.params[2] if len(msg.params) > 2 else ""
-        session.irc_names_buffer.setdefault(channel, []).extend(irc_protocol.parse_names_reply(msg))
+        key = self._names_key(session, channel)
+        session.irc_names_buffer.setdefault(key, []).extend(irc_protocol.parse_names_reply(msg))
 
     def _on_endofnames(self, session, msg):
         # NAMREPLY는 여러 줄로 쪼개져 오므로 모아뒀다가 ENDOFNAMES에서 한 번에 확정함.
         # 이 버퍼링을 안 하고 NAMREPLY마다 누적만 하면(예전 CLI가 그랬음) 채널을 나간 사람이
         # 멤버 목록에서 영영 안 지워지는 버그가 생김
         channel = msg.params[1] if len(msg.params) > 1 else ""
-        members = session.irc_names_buffer.pop(channel, [])
-        session.replace_members(channel, sorted(set(members)))
+        key = self._names_key(session, channel)
+        members = session.irc_names_buffer.pop(key, [])
+        if not members:
+            # 353 없이 366만 날아오는 경우가 있다(다른 데서 NAMES를 부르거나, 요청이
+            # 겹쳐서 두 번째 366이 빈 버퍼를 만나거나). 그걸 그대로 반영하면 **참여자
+            # 목록이 통째로 비어버린다** - "참여자가 다 사라져서 빈 공간으로 보인다"는
+            # 제보의 원인. 내가 들어가 있는 채널이 빈 목록일 수는 없으므로(최소한 내가
+            # 있다) 빈 결과는 반영하지 않는다.
+            return
+        session.replace_members(key, sorted(set(members)))
 
     def _on_join(self, session, msg):
         nick = msg.source_nick
