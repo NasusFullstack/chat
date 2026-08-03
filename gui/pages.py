@@ -44,6 +44,7 @@ _CARD_TO_CONTROL_GAP = 6
 from version import APP_VERSION
 from gui.cheat_overlay import CheatOverlay
 from gui.battlecruiser import BattlecruiserOverlay
+from gui.link_preview import ImageFetcher
 from gui.widgets import ChannelLogView, _ChannelTabBar
 
 
@@ -485,6 +486,10 @@ class ChatPage(QWidget):
         self.setLayout(layout)
         self._update_input_enabled()
 
+        # 미리보기 이미지를 받아오는 담당자(모든 채널 공유). 서버는 이미지 '주소'만
+        # 알려주고 그림 자체는 여기서 직접 받아옴 - gui/link_preview.py 설명 참고
+        self._image_fetcher = ImageFetcher(self)
+
         # 치트 오버레이는 레이아웃에 넣지 않고 채팅 영역 위에 겹쳐 띄움(테두리/배경 없이)
         self._cheat_overlay = CheatOverlay(self._center_stack)
         self._battlecruiser = BattlecruiserOverlay(self._center_stack)
@@ -569,7 +574,7 @@ class ChatPage(QWidget):
 
     def add_channel(self, channel: str, activate: bool = True):
         if channel not in self._log_views:
-            view = ChannelLogView(channel)
+            view = ChannelLogView(channel, image_fetcher=self._image_fetcher)
             view.set_container_width(self.tabs.width())
             self._log_views[channel] = view
             self._members[channel] = []
@@ -865,13 +870,15 @@ class ChatPage(QWidget):
         if is_mention:
             self._trigger_mention_alert()
 
-    def apply_unfurl(self, url: str, title: str, description: str = "", thumb_b64: str = ""):
-        """서버가 보내준 링크 정보를 그 링크를 기다리던 메시지에 반영.
+    def apply_unfurl(self, url: str, title: str, description: str = "", image_url: str = ""):
+        """서버가 보내준 링크 메타데이터를 그 링크를 기다리던 메시지에 반영.
+
+        image_url은 '주소'일 뿐이고, 그림은 카드가 만들어진 뒤 여기서 직접 받아옴.
 
         어느 채널의 메시지였는지는 서버 응답에 없으므로 모든 채널을 훑음 - 같은 링크가
         여러 채널에 붙어 있을 수도 있고, 어차피 채널 수가 많지 않아 부담이 없음."""
         for view in self._log_views.values():
-            view.apply_unfurl(url, title, description, thumb_b64)
+            view.apply_unfurl(url, title, description, image_url)
 
     def _trigger_mention_alert(self):
         """지금 그 채널을 보고 있는지와 무관하게 항상 작업표시줄 깜빡임 + 창 흔들림"""

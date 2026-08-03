@@ -34,7 +34,7 @@ class MessageWidget(QWidget):
     """채팅 메시지 한 개 - 왼쪽에 아바타, 오른쪽 아래에 시간 타원 배지"""
 
     def __init__(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap,
-                 parent=None, kind: str = KIND_CHAT, preview: bool = False):
+                 parent=None, kind: str = KIND_CHAT, preview: bool = False, image_fetcher=None):
         super().__init__(parent)
         # 말풍선 배경은 채팅 카드 면색이 그대로 비쳐야 함. objectName으로 한정하지 않으면
         # 이 규칙이 자식(링크 미리보기 카드 등)까지 상속돼 그쪽 배경/테두리를 지워버림
@@ -77,14 +77,13 @@ class MessageWidget(QWidget):
         body.addWidget(text_label)
         self._text_label = text_label
 
-        # 링크 미리보기 자리. 서버에 요청을 넣어두고 결과가 오면 그때 채워짐
-        # (못 받으면 높이 0이라 평소 메시지와 똑같이 보임). 여기서 직접 네트워크를
-        # 타지 않는 이유는 gui/link_preview.py 맨 위 설명 참고
+        # 링크 미리보기 자리. 이미지 직링크는 바로 받아오고, 그 외 링크는 서버가 보내줄
+        # 메타데이터를 기다렸다가 카드로 채워짐(못 받으면 높이 0이라 평소와 똑같이 보임)
         self.preview_area = None
         self.preview_urls = extract_urls(text) if preview else []
         if self.preview_urls:
             from gui.link_preview import LinkPreviewArea
-            self.preview_area = LinkPreviewArea(self.preview_urls, self)
+            self.preview_area = LinkPreviewArea(self.preview_urls, image_fetcher, self)
             body.addWidget(self.preview_area)
 
         badge_row = QHBoxLayout()
@@ -121,9 +120,11 @@ def _build_system_label(text: str) -> QLabel:
 class ChannelLogView(QScrollArea):
     """채널 하나의 메시지 목록 - 메시지마다 개별 위젯으로 쌓음 (QTextEdit HTML 방식 대체)"""
 
-    def __init__(self, channel: str, parent=None):
+    def __init__(self, channel: str, parent=None, image_fetcher=None):
         super().__init__(parent)
         self.channel_name = channel
+        # 미리보기 이미지를 받아오는 담당자 - 모든 채널이 하나를 공유함(연결 재사용)
+        self._image_fetcher = image_fetcher
         self.setWidgetResizable(True)
         # 테두리는 QSS(QScrollArea#chatLog)에서 참여자 목록과 똑같은 모양으로 그림 -
         # 예전엔 탭 pane 쪽 테두리와 겹쳐서 선이 끊겨 보였음
@@ -171,13 +172,14 @@ class ChannelLogView(QScrollArea):
 
     def append_message(self, sender: str, text: str, mine: bool, ts: float, avatar_pixmap: QPixmap,
                        kind: str = KIND_CHAT, preview: bool = True):
-        widget = MessageWidget(sender, text, mine, ts, avatar_pixmap, kind=kind, preview=preview)
+        widget = MessageWidget(sender, text, mine, ts, avatar_pixmap, kind=kind, preview=preview,
+                               image_fetcher=self._image_fetcher)
         widget.set_wrap_width(self._effective_width())
         self._layout.addWidget(widget)
         self._messages.append(widget)
         return widget
 
-    def apply_unfurl(self, url: str, title: str, description: str, thumb_b64: str) -> bool:
+    def apply_unfurl(self, url: str, title: str, description: str, image_url: str) -> bool:
         """서버가 보내준 링크 정보를 그 링크를 기다리던 메시지들에 반영.
 
         같은 링크가 여러 메시지에 있을 수 있으므로 전부 훑음. 뒤에서부터 찾는 이유는
@@ -186,7 +188,7 @@ class ChannelLogView(QScrollArea):
         for widget in reversed(self._messages):
             area = widget.preview_area
             if area is not None and area.wants(url):
-                area.apply_result(url, title, description, thumb_b64)
+                area.apply_result(url, title, description, image_url)
                 applied = True
         return applied
 

@@ -146,7 +146,7 @@ class CustomProtocol(CommonCommands):
             url=msg.get("url", ""),
             title=msg.get("title", ""),
             description=msg.get("description", ""),
-            thumb_b64=msg.get("thumb_b64", ""),
+            image_url=msg.get("image_url", ""),
         ))
 
     def _on_error(self, session, msg: dict):
