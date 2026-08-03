@@ -47,6 +47,11 @@ from gui.widgets import ChannelLogView, _ChannelTabBar
 # 좌우 열이 같은 값을 써야 아래쪽 버튼 줄이 나란히 놓임
 _CARD_TO_CONTROL_GAP = 6
 
+# 탭 닫기(×) 버튼 크기와, 탭 오른쪽 테두리에서 띄울 거리.
+# Qt는 탭 버튼을 오른쪽 끝에서 1px만 띄우고 붙여버려서(실측) 여백을 직접 줘야 함
+TAB_CLOSE_BTN_PX = 18
+TAB_CLOSE_RIGHT_MARGIN = 8
+
 
 class LoginPage(QWidget):
     def __init__(self, on_submit, on_cancel):
@@ -551,23 +556,37 @@ class ChatPage(QWidget):
     def _update_input_enabled(self):
         self.msg_input.setEnabled(bool(self._active_channel))
 
-    def _make_close_button(self, channel: str) -> QPushButton:
-        """빨간 X 대신 테마에 맞는 수수한 × 기호 - 기본 탭 닫기 아이콘 대신 직접 그림.
+    def _make_close_button(self, channel: str) -> QWidget:
+        """탭의 닫기(×) 버튼. 색은 앱의 보조 텍스트/호버 색을 그대로 씀.
+
+        여백용 래퍼에 담아서 돌려주는 이유: Qt는 탭 버튼을 탭 오른쪽 끝에 1px만 띄우고
+        붙여버리고, QSS의 padding-right는 탭 버튼 배치에 적용되지 않는다(실측으로 확인).
+        래퍼에 오른쪽 여백을 주면 그만큼 안쪽으로 들어와 테두리에 붙지 않는다.
 
         평소엔 흐릿하게 두고 마우스를 올렸을 때만 또렷해지게 함 - 탭마다 ×가 진하게 박혀
         있으면 채널 이름보다 버튼이 먼저 눈에 들어와 어수선해 보임."""
         btn = QPushButton("×")
         btn.setFlat(True)
-        btn.setFixedSize(18, 18)
+        btn.setFixedSize(TAB_CLOSE_BTN_PX, TAB_CLOSE_BTN_PX)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setStyleSheet(
-            "QPushButton { background: transparent; color: #6e7185; border: none;"
-            " border-radius: 9px; font-size: 14px; font-weight: bold; padding: 0px; }"
-            "QPushButton:hover { background: #565a72; color: #ffffff; }"
+            # #9a9cad / #4a4d63 는 앱 전체가 쓰는 보조 텍스트색과 호버 면색(theme.py 참고)
+            "QPushButton { background: transparent; color: #9a9cad; border: none;"
+            f" border-radius: {TAB_CLOSE_BTN_PX // 2}px;"
+            " font-size: 14px; font-weight: bold; padding: 0px; }"
+            "QPushButton:hover { background: #4a4d63; color: #ffffff; }"
         )
         btn.setToolTip(f"'{channel}' 채널 나가기")
         btn.clicked.connect(lambda: self._request_close_channel(channel))
-        return btn
+
+        wrapper = QWidget()
+        wrapper.setObjectName("tabCloseWrap")
+        wrapper.setStyleSheet("QWidget#tabCloseWrap { background: transparent; }")
+        layout = QHBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, TAB_CLOSE_RIGHT_MARGIN, 0)
+        layout.setSpacing(0)
+        layout.addWidget(btn)
+        return wrapper
 
     def add_channel(self, channel: str, activate: bool = True):
         if channel not in self._log_views:
