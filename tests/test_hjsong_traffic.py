@@ -92,7 +92,7 @@ def check(tag):
     # 화면에 걸쳐 있으면 보이는 것으로 셈(윗변만 보면 큰 메시지를 놓침)
     seen = sum(1 for m in view._messages
                if m.geometry().bottom() > top and m.geometry().top() < bottom)
-    members = page.user_list.count()
+    members = page.member_panel.list.count()
     n_exc = len(EXC)
     last = view._messages[-1].geometry().bottom() if view._messages else 0
     label = getattr(view._messages[-1], "_text_label", None) if view._messages else None

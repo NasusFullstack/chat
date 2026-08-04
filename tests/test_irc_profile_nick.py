@@ -99,7 +99,7 @@ b_members = winB.session.members.get(channel, set())
 checks.append(("상대(B)의 참여자 목록에도 바뀐 닉네임이 반영됨", "ircprofA_renamed" in b_members and "ircprofA" not in b_members))
 
 # 코어 상태뿐 아니라 실제 화면(참여자 목록 위젯)에도 반영됐는지까지 확인
-b_visible = [winB.chat_page.user_list.item(i).text() for i in range(winB.chat_page.user_list.count())]
+b_visible = [winB.chat_page.member_panel.list.item(i).text() for i in range(winB.chat_page.member_panel.list.count())]
 checks.append(("B의 화면 참여자 목록 위젯에도 바뀐 닉네임이 보임",
                "ircprofA_renamed" in b_visible and "ircprofA" not in b_visible))
 

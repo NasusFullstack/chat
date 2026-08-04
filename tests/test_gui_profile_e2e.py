@@ -92,7 +92,7 @@ winA._handle_set_avatar()
 g.ProfileDialog.exec = orig_exec
 pump(0.5)
 
-checks.append(("프로필 변경 후 로컬(A)에 닉네임 낙관적 반영", winA.chat_page._nicknames.get(winA.my_id) == "에이변경닉"))
+checks.append(("프로필 변경 후 로컬(A)에 닉네임 낙관적 반영", winA.chat_page.member_panel._nicknames.get(winA.my_id) == "에이변경닉"))
 
 winB, okB = run_custom_login(f"profB{suffix}")
 checks.append(("커스텀 프로토콜 로그인 성공(B)", okB))
@@ -100,7 +100,7 @@ winB.channel_page.channel_input.setText(channel)
 winB._handle_channel_submit("join")
 pump(1.0)
 checks.append(("B가 채팅방 진입 후 A의 변경된 닉네임을 캐치업으로 받음",
-               winB.chat_page._nicknames.get(winA.my_id) == "에이변경닉"))
+               winB.chat_page.member_panel._nicknames.get(winA.my_id) == "에이변경닉"))
 
 winA.client.abort()
 winB.client.abort()

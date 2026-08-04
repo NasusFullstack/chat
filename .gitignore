@@ -31,3 +31,4 @@ tests/*.png
 
 # 이모티콘 보관함(주소 목록) - 로컬 전용
 emojis.json
+tests/_ui_snapshots/
