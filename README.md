@@ -1,5 +1,11 @@
 # 춥채팅 (ChupChat)
 
+![platform](https://img.shields.io/badge/platform-Windows-0078D6)
+![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
+![Qt](https://img.shields.io/badge/PySide6-Qt%206-41CD52?logo=qt&logoColor=white)
+![license](https://img.shields.io/badge/license-MIT-green)
+![tests](https://img.shields.io/badge/tests-48%20passing-brightgreen)
+
 **Python + PySide6로 만든 윈도우 데스크톱 채팅 프로그램.**
 친구들끼리 쓰려고 만들었고, 자체 서버와 실제 IRC 서버 양쪽에 접속할 수 있습니다.
 
