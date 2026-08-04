@@ -111,7 +111,8 @@ class MessageWidget(QWidget):
                 self.preview_urls, image_fetcher, self,
                 on_preview_shown=self._hide_url_text if self._link_only else None,
             )
-            body.addWidget(self.preview_area)
+            # 정렬을 주면 남는 세로 공간을 이 칸에 몰아주지 않는다(필요한 만큼만 차지)
+            body.addWidget(self.preview_area, 0, Qt.AlignmentFlag.AlignTop)
 
         badge_row = QHBoxLayout()
         badge_row.addStretch(1)
