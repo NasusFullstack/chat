@@ -12,6 +12,10 @@ import error_log
 from chat_core.commands import KIND_CHAT
 from gui.components.message_item import MessageWidget, _build_system_label
 
+# 맨 아래에서 이만큼 안쪽까지는 "맨 아래를 보고 있는 중"으로 친다(한 줄 남짓).
+# 딱 맞아떨어질 때만 따라가게 하면 새 메시지가 오는 순간의 오차로 따라가기가 자꾸 끊긴다
+STICK_TO_BOTTOM_SLACK_PX = 40
+
 
 
 class _ChatLogContent(QWidget):
@@ -117,14 +121,42 @@ class ChannelLogView(QScrollArea):
         # 못 받은 상태라 자기 viewport 값으로 대체함
         self._container_width = 0
 
-        # QTimer.singleShot(0, ...)로 "다음 이벤트 루프 틱에 맨 아래로" 하는 방식은
-        # 레이아웃이 새 위젯의 크기를 아직 계산 전이라 스크롤 범위(maximum)가 갱신되기
-        # 전에 실행될 때가 있어 스크롤이 씹히는 경우가 있었음. rangeChanged는 스크롤
-        # 범위가 실제로 확정된 바로 그 순간에 울리므로 훨씬 안정적으로 맨 아래로 붙음.
-        self.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom)
+        # QTimer.singleShot(0, ...)로 "다음 틱에 맨 아래로" 하는 방식은 레이아웃이 새 위젯
+        # 크기를 계산하기 전에 실행될 때가 있어 스크롤이 씹혔다. rangeChanged는 스크롤 범위가
+        # 실제로 확정된 그 순간에 울리므로 안정적이다.
+        self.verticalScrollBar().rangeChanged.connect(self._follow_bottom)
+        # 사용자가 위쪽 지난 대화를 보고 있는 중이면 새 메시지가 와도 끌어내리지 않는다.
+        # 스크롤을 움직일 때마다 "지금 맨 아래를 보고 있나"를 기억해둔다
+        # 메시지를 넣는 도중에 스크롤 최대값을 물어보면 그 자체가 범위 갱신을 부르고,
+        # 그게 다시 이 신호를 부르면서 스택이 넘쳤다(실측: 메시지 120건에서 죽음).
+        # 그래서 **신호가 넘겨주는 값과 지금 위치만** 쓴다
+        self._last_maximum = 0
 
-    def _scroll_to_bottom(self, minimum: int, maximum: int):
-        self.verticalScrollBar().setValue(maximum)
+    def _follow_bottom(self, minimum: int, maximum: int):
+        """대화가 길어져 스크롤 범위가 늘어났을 때 따라 내려갈지 정한다.
+
+        범위가 늘기 직전에 '예전 맨 아래'에 붙어 있었다면 사용자는 최신 대화를 보고 있던
+        것이므로 따라간다. 위쪽 지난 대화를 읽고 있었다면 읽던 자리를 그대로 둔다.
+        """
+        bar = self.verticalScrollBar()
+        was_at_bottom = bar.value() >= self._last_maximum - STICK_TO_BOTTOM_SLACK_PX
+        self._last_maximum = maximum
+        if was_at_bottom:
+            bar.setValue(maximum)
+
+    def _at_bottom(self) -> bool:
+        bar = self.verticalScrollBar()
+        return bar.value() >= bar.maximum() - STICK_TO_BOTTOM_SLACK_PX
+
+    def scroll_to_bottom(self):
+        """맨 아래로 내려감(채널을 새로 열 때 등)."""
+        bar = self.verticalScrollBar()
+        self._last_maximum = bar.maximum()
+        bar.setValue(bar.maximum())
+
+    def is_following_bottom(self) -> bool:
+        """지금 최신 대화를 보고 있는가(= 새 메시지가 오면 따라 내려갈 상태인가)."""
+        return self._at_bottom()
 
     def _effective_width(self) -> int:
         """메시지 하나가 쓸 수 있는 폭 - 이 스크롤 영역의 좌우 여백을 뺀 값.

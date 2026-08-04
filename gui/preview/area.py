@@ -4,6 +4,7 @@
 어느 단계에서 실패하든 조용히 포기하고 평소의 하이퍼링크만 남긴다 - 미리보기는 덤이라
 실패했다고 오류 문구를 채팅에 남기면 오히려 지저분해진다.
 """
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
@@ -40,7 +41,9 @@ class LinkPreviewArea(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(4)
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        # 세로를 Fixed로 두면 안 된다 - 안에 들어가는 카드는 폭에 따라 높이가 달라지는데
+        # Fixed면 폭을 반영 못 한 높이(한 줄 기준)로 굳어 카드가 눌린다
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
 
         if fetcher is None:
             return
@@ -51,6 +54,13 @@ class LinkPreviewArea(QWidget):
                 fetcher.fetch(url, lambda data, u=url: self._on_html(u, data),
                               limit=HTML_LIMIT_BYTES)
 
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt 규약
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        height = self._layout.heightForWidth(width)
+        return height if height > 0 else self._layout.sizeHint().height()
+
     def set_max_width(self, width: int):
         """채팅창 폭이 바뀌었을 때 - 이미 그려진 미리보기와 앞으로 올 것 모두에 적용."""
         if width <= 0 or width == self._max_width:
@@ -60,6 +70,7 @@ class LinkPreviewArea(QWidget):
             child.set_max_width(width)
         for card in self.findChildren(LinkCard):
             card.setMaximumWidth(min(CARD_MAX_WIDTH, width))
+            card.adjust_height()
 
     def _on_direct_image(self, url: str, data):
         if url in self._filled or not data:
@@ -70,7 +81,7 @@ class LinkPreviewArea(QWidget):
             preview.deleteLater()
             return
         self._filled.add(url)
-        self._layout.addWidget(preview)
+        self._layout.addWidget(preview, 0, Qt.AlignmentFlag.AlignTop)
         self._notify_shown()
 
     def _notify_shown(self):
@@ -108,8 +119,12 @@ class LinkPreviewArea(QWidget):
         card = LinkCard(url, info["title"], info.get("description", ""), self)
         if self._max_width > 0:
             card.setMaximumWidth(min(CARD_MAX_WIDTH, self._max_width))
-        self._layout.addWidget(card)
+        card.adjust_height()
+        self._layout.addWidget(card, 0, Qt.AlignmentFlag.AlignTop)
         self._notify_shown()
+        # 화면에 붙은 뒤 실제 글꼴로 한 번 더 재게 함(카드당 딱 한 번).
+        # showEvent에서 하면 다시 보일 때마다 예약이 쌓여 스택이 넘쳤다
+        QTimer.singleShot(0, card.remeasure)
         image_url = info.get("image_url", "")
         if image_url:
             self._fetcher.fetch(image_url, lambda d: self._on_card_image(card, d))
