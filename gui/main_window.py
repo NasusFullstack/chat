@@ -23,6 +23,7 @@ import irc_protocol
 import login_prefs
 from chat_core import constants, events as domain_events
 from chat_core.session import build_session
+from gui import event_router
 from updater import POST_UPDATE_FLAG
 from gui.helpers import _friendly_connection_error
 from gui.network import ChatClient
@@ -630,153 +631,63 @@ class MainWindow(QMainWindow):
         self.session.handle_incoming(msg)
 
     # ---------------- 도메인 이벤트 -> 화면 갱신 ----------------
+    # ---------------- 도메인 이벤트 -> 화면 ----------------
+
     def _on_domain_event(self, event):
-        """코어가 발행한 이벤트를 Qt 위젯에 반영하는 유일한 지점.
+        """코어가 발행한 이벤트를 화면에 반영하는 유일한 지점.
 
-        여기서는 "무엇을 보여줄지"만 결정하고, "무슨 일이 일어났는지"에 대한 판단
-        (로그인 성공 여부, 멘션 여부, 쿨타임 등)은 이미 코어가 끝낸 상태로 넘어옴.
+        무엇을 할지는 gui/event_router.py의 표가 정한다. 예전엔 이 메서드 하나가
+        isinstance 149줄 사슬이어서, 이벤트를 하나 늘릴 때마다 여기를 열어야 했다.
         """
+        event_router.route(self, event)
+
+    # 아래는 event_router가 화면을 만질 때 쓰는 창구. 라우터가 MainWindow 내부 사정을
+    # 몰라도 되게(그래서 라우터만 따로 테스트할 수 있게) 이름을 정리해서 열어둔다
+
+    def is_pre_login(self) -> bool:
+        return self._is_pre_login()
+
+    def current_page(self):
+        return self.stack.currentWidget()
+
+    def show_page(self, page):
+        self.stack.setCurrentWidget(page)
+
+    def stop_connecting(self):
+        self._stop_connecting()
+
+    def save_login_prefs(self):
+        self._save_login_prefs()
+
+    @property
+    def is_reconnecting(self) -> bool:
+        return self._reconnecting
+
+    def on_reconnect_logged_in(self):
+        self._on_reconnect_logged_in()
+
+    def cancel_reconnect(self):
+        self._cancel_reconnect()
+
+    def notify_all_channels(self, text: str):
+        self._notify_all_channels(text)
+
+    def recent_server_lines(self) -> list:
+        return self.client.recent_lines()
+
+    @property
+    def protocol_mode(self) -> str:
+        return self._protocol_mode
+
+    def warn(self, title: str, text: str):
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
+        gui_client.themed_warning(self, title, text)
 
-        if isinstance(event, domain_events.LoggedIn):
-            self.chat_page.my_id = event.user_id
-            if self._reconnecting:
-                self._on_reconnect_logged_in()
-                return
-            # 아직 로그인 단계에 있을 때만 채널 화면으로 넘어감. IRC 닉네임 변경도
-            # LoggedIn을 발생시키는데(내 식별자가 바뀌는 건 같으므로), 그때는 이미 채팅
-            # 중이라 화면을 되돌리면 안 됨.
-            # 시작화면도 포함해야 함 - 자동로그인은 시작화면 직후에 걸리므로 login_page만
-            # 보면 전환이 안 일어남(시작화면 도입 때 실제로 이걸로 깨졌었음)
-            if self._is_pre_login():
-                self._stop_connecting()
-                self.channel_page.set_mode(self._protocol_mode)
-                self.stack.setCurrentWidget(self.channel_page)
-                self._save_login_prefs()
-                # 예전에 이 아이디로 설정해둔 아이콘을 되살림(로컬 저장분).
-                # 없으면 아무 일도 안 함 - 커스텀 서버는 어차피 입장 때 서버 값을 다시 내려줌
-                self.session.restore_my_profile(avatar_store.load_avatars().get(event.user_id))
-
-        elif isinstance(event, domain_events.RegisterSucceeded):
-            self._stop_connecting()
-            self.login_page.show_status("회원가입 완료! 이제 로그인하세요.", error=False)
-
-        elif isinstance(event, domain_events.AuthFailed):
-            self._stop_connecting()
-            if self._reconnecting:
-                # 재접속했는데 로그인이 거절됨(비번 변경/계정 삭제 등) - 다시 시도해도 소용없음
-                self._cancel_reconnect()
-                self._notify_all_channels(f"다시 로그인하지 못했습니다: {event.text}")
-                return
-            self.login_page.show_status(event.text)
-
-        elif isinstance(event, domain_events.ChannelCreated):
-            self.channel_page.show_status("채널 생성 완료! 입장 버튼을 눌러주세요.", error=False)
-
-        elif isinstance(event, domain_events.ChannelJoined):
-            # 이미 화면에 있는 채널로 다시 들어온 것 = 재접속 후 복구. 안내와 지난 기록을
-            # 또 쌓으면 대화가 두 번 보임(응답이 늦게 오므로 시간 기준 플래그로는 못 거름)
-            rejoining = self.chat_page.has_channel(event.channel)
-            first_time = self.stack.currentWidget() is self.channel_page
-            self.chat_page.add_channel(event.channel, activate=True)
-            if first_time:
-                self.stack.setCurrentWidget(self.chat_page)
-                self.chat_page.focus_input()
-            if rejoining:
-                return
-            self.chat_page.append_system(event.channel, event.text)
-            self.chat_page.load_history(event.channel, event.history)
-
-        elif isinstance(event, domain_events.ChannelJoinFailed):
-            if self.stack.currentWidget() is self.channel_page:
-                self.channel_page.show_status(event.text)
-            else:
-                gui_client.themed_warning(self, "채널 입장 실패", event.text)
-
-        elif isinstance(event, domain_events.ChannelLeft):
-            # 채널에서 빠지면 채팅이 통째로 사라지고 입력창까지 잠긴다. 내가 나가기를
-            # 누른 게 아닌데 이 일이 벌어지면 원인을 알 방법이 없으므로, 그 직전에 서버가
-            # 보낸 줄들을 같이 남긴다(재현이 안 되는 사고의 유일한 단서)
-            error_log.log_text(
-                f"채널 {event.channel}에서 빠짐. 직전 수신 내용:\n  "
-                + "\n  ".join(self.client.recent_lines()[-15:]),
-                tag="채널 이탈",
-            )
-            self.chat_page.remove_channel(event.channel)
-
-        elif isinstance(event, domain_events.ChannelLeaveFailed):
-            gui_client.themed_warning(self, "채널 나가기 실패", event.text)
-
-        elif isinstance(event, domain_events.MessageReceived):
-            self.chat_page.append_message(
-                event.channel, event.sender, event.text, event.mine, event.ts,
-                is_mention=event.is_mention, kind=event.kind,
-            )
-
-        elif isinstance(event, domain_events.SystemNotice):
-            if not event.channel:
-                # 등록 전 NOTICE 등 - 채널이 없으면 로그인 화면 상태줄에 표시
-                if self._is_pre_login():
-                    # 서버가 보내는 접속 안내(예: hostname을 못 찾아 IP를 대신 쓴다는
-                    # 문구)는 오류가 아니므로 빨간색으로 보여주면 안 됨
-                    self.login_page.show_status(event.text, error=False)
-                return
-            self.chat_page.append_system(event.channel, event.text)
-
-        elif isinstance(event, domain_events.UserlistUpdated):
-            self.chat_page.update_userlist(event.channel, event.users)
-
-        elif isinstance(event, domain_events.AvatarUpdated):
-            self.chat_page.set_avatar(event.user_id, event.avatar_b64)
-
-        elif isinstance(event, domain_events.NicknameUpdated):
-            self.chat_page.set_nickname(event.user_id, event.nickname)
-
-        elif isinstance(event, domain_events.NicknameChangeFailed):
-            gui_client.themed_warning(self, "닉네임 변경 실패", event.text)
-
-        elif isinstance(event, domain_events.NicknameRetrying):
-            self.login_page.show_status(
-                f"닉네임이 사용 중이라 '{event.new_nickname}'(으)로 재시도합니다.", error=False
-            )
-
-        elif isinstance(event, domain_events.CheatActivated):
-            # 그 채널을 보는 사람 모두에게 효과 + 작업표시줄 깜빡임.
-            # 치트별 화면 동작은 표로 두고, 없는 치트는 조용히 무시(구버전 클라이언트가
-            # 모르는 치트 문구를 받아도 죽지 않게)
-            effect = self._CHEAT_EFFECTS.get(event.cheat_id)
-            if effect is None:
-                return
-            effect(self.chat_page)
-            gui_client._flash_taskbar_icon(self)
-
-        elif isinstance(event, domain_events.CheatBlocked):
-            self.chat_page.show_mention_notice(
-                f"치트는 {event.remaining_sec}초 후에 다시 사용할 수 있습니다."
-            )
-
-        elif isinstance(event, domain_events.CommandHelp):
-            self.chat_page.append_system(event.channel, "사용 가능한 명령")
-            for line in event.lines:
-                self.chat_page.append_system(event.channel, line)
-
-        elif isinstance(event, domain_events.CommandError):
-            self.chat_page.show_mention_notice(event.text)
-
-        elif isinstance(event, domain_events.MentionBlocked):
-            self.chat_page.show_mention_notice(
-                f"@{event.target_display} 호출은 {event.remaining_sec}초 후에 다시 가능합니다."
-            )
-
-        elif isinstance(event, domain_events.ConnectionClosed):
-            active = self.chat_page.active_channel()
-            if active:
-                self.chat_page.append_system(active, f"서버 연결이 종료되었습니다: {event.text}")
-
-        elif isinstance(event, domain_events.GenericError):
-            if self._is_pre_login():
-                self.login_page.show_status(event.text)
-            elif self.stack.currentWidget() is self.channel_page:
-                self.channel_page.show_status(event.text)
-            else:
-                gui_client.themed_warning(self, "오류", event.text)
+    def play_cheat(self, cheat_id: str):
+        """치트 효과 재생. 모르는 치트는 조용히 무시한다."""
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
+        effect = self._CHEAT_EFFECTS.get(cheat_id)
+        if effect is None:
+            return
+        effect(self.chat_page)
+        gui_client._flash_taskbar_icon(self)
