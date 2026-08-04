@@ -65,7 +65,7 @@ def snap(tag):
         app.processEvents()
     top, bottom = sb.value(), sb.value() + view.viewport().height()
     seen = sum(1 for m in view._messages if top <= m.geometry().top() <= bottom)
-    members = len(page._members.get("#pdlab", []))
+    members = len(page.member_panel._members.get("#pdlab", []))
     print(f"    [{tag:22s}] 보이는 메시지 {seen:2d} / 참여자 {members} /"
           f" 배 위치 ({bc.x()},{bc.y()}) 보임={bc.isVisible()} /"
           f" 내용높이 {view.widget().height()}")

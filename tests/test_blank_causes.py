@@ -57,16 +57,16 @@ feed(":irc.test 001 Mong :Welcome")
 feed(":Mong!u@h JOIN :#pdlab")
 feed(":irc.test 353 Mong = #pdlab :Mong Ming hjsong hjsong_mobile MangMang2")
 feed(":irc.test 366 Mong #pdlab :End of /NAMES list")
-before = len(win.chat_page._members.get("#pdlab", []))
+before = len(win.chat_page.member_panel._members.get("#pdlab", []))
 
 # (a) 353 없이 366만 한 번 더 - 다른 데서 NAMES를 부르거나 응답이 겹칠 때 실제로 생김
 feed(":irc.test 366 Mong #pdlab :End of /NAMES list")
-after_bare = len(win.chat_page._members.get("#pdlab", []))
+after_bare = len(win.chat_page.member_panel._members.get("#pdlab", []))
 
 # (b) 채널 이름 대소문자가 다르게 돌아오는 경우
 feed(":irc.test 353 Mong = #PDLab :Mong Ming hjsong hjsong_mobile MangMang2")
 feed(":irc.test 366 Mong #pdlab :End of /NAMES list")
-after_case = len(win.chat_page._members.get("#pdlab", []))
+after_case = len(win.chat_page.member_panel._members.get("#pdlab", []))
 
 print(f"1) 참여자 수: 정상 수신 {before}명 -> 빈 366 뒤 {after_bare}명"
       f" -> 대소문자 다른 353/366 뒤 {after_case}명")

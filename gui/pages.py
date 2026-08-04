@@ -44,6 +44,7 @@ from gui.cheat_overlay import CheatOverlay
 from gui.battlecruiser import BattlecruiserOverlay
 from gui.link_preview import ImageFetcher
 from gui.components.channel_sidebar import ChannelSidebar
+from gui.components.member_panel import MemberPanel
 from gui.components.message_input import MessageInput
 from gui.widgets import ChannelLogView
 
@@ -438,13 +439,6 @@ class ChatPage(QWidget):
         self.on_all_channels_left = on_all_channels_left
         self.my_id = ""
         self._log_views: dict[str, ChannelLogView] = {}
-        self._members: dict[str, list[str]] = {}
-        self._avatar_pixmaps: dict[str, QPixmap] = {}
-        for uid, avatar_b64 in avatar_store.load_avatars().items():
-            pixmap = _decode_avatar_pixmap(avatar_b64)
-            if pixmap is not None:
-                self._avatar_pixmaps[uid] = pixmap
-        self._nicknames: dict[str, str] = {}
         self._active_channel = ""
         self._protocol_mode = "custom"
         self._unread_timers: dict[str, QTimer] = {}
@@ -512,13 +506,8 @@ class ChatPage(QWidget):
         # 시작함. 안 맞추면 카드 상단이 어긋나 어설퍼 보였음
         right.setSpacing(0)
         right.setContentsMargins(0, 0, 0, 0)
-        member_header = QLabel("참여자")
-        member_header.setFixedHeight(MEMBER_HEADER_HEIGHT)
-        member_header.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        right.addWidget(member_header)
-        self.user_list = QListWidget()
-        self.user_list.setIconSize(QSize(AVATAR_LIST_PX, AVATAR_LIST_PX))
-        right.addWidget(self.user_list)
+        self.member_panel = MemberPanel(MEMBER_HEADER_HEIGHT)
+        right.addWidget(self.member_panel, 1)
         # 아래쪽도 왼쪽(채팅 카드 -> 입력창) 간격과 같은 값이어야 버튼 줄이 나란히 놓임
         right.addSpacing(_CARD_TO_CONTROL_GAP)
         self.avatar_btn = QPushButton("프로필 변경")
@@ -573,8 +562,8 @@ class ChatPage(QWidget):
 
     def set_protocol_mode(self, mode: str):
         self._protocol_mode = mode
-        self._avatar_pixmaps.clear()
-        self._nicknames.clear()
+        # 프로토콜이 바뀌면 예전 세상의 아이콘/닉네임은 의미가 없음
+        self.member_panel.clear_display_cache()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -592,7 +581,7 @@ class ChatPage(QWidget):
             view.set_container_width(width)
 
     def _display_name_for(self, user_id: str) -> str:
-        return self._nicknames.get(user_id, user_id)
+        return self.member_panel.display_name(user_id)
 
     def _update_input_enabled(self):
         self.message_input.set_enabled(bool(self._active_channel))
@@ -602,7 +591,7 @@ class ChatPage(QWidget):
             view = ChannelLogView(channel, image_fetcher=self._image_fetcher)
             view.set_container_width(self.tabs.width())
             self._log_views[channel] = view
-            self._members[channel] = []
+            self.member_panel.set_members(channel, [])
             self.tabs.addTab(view, channel)
             self.channel_sidebar.add_channel(channel)
             self._center_stack.setCurrentWidget(self.tabs)
@@ -620,7 +609,7 @@ class ChatPage(QWidget):
         view = self._log_views.pop(channel, None)
         if view is None:
             return
-        self._members.pop(channel, None)
+        self.member_panel.forget_channel(channel)
         index = self.tabs.indexOf(view)
         if index >= 0:
             self.tabs.removeTab(index)  # 남은 탭이 있으면 currentChanged가 활성 채널을 갱신함
@@ -630,7 +619,7 @@ class ChatPage(QWidget):
             self._active_channel = ""
             self.channel_header.setText("")
             self._center_stack.setCurrentWidget(self._empty_label)
-            self.user_list.clear()
+            self.member_panel.clear()
             if self.on_all_channels_left is not None:
                 self.on_all_channels_left()
         self._update_input_enabled()
@@ -640,11 +629,8 @@ class ChatPage(QWidget):
         다음 로그인 화면에 남아있으면 안 됨"""
         for channel in list(self._log_views.keys()):
             self.remove_channel(channel)
-        self._avatar_pixmaps.clear()
-        self._nicknames.clear()
-        self._members.clear()
+        self.member_panel.reset()
         self.my_id = ""
-        self.user_list.clear()
         # 떠 있던 오버레이/자동완성 팝업이 로그인 화면 위에 남지 않게 정리
         self._battlecruiser.stop()
         self.message_input._hide_popup()
@@ -677,8 +663,7 @@ class ChatPage(QWidget):
         self.channel_sidebar.list.blockSignals(True)
         self.channel_sidebar.set_active(view.channel_name)
         self.channel_sidebar.list.blockSignals(False)
-        self.user_list.clear()
-        self._add_userlist_items(self._members.get(self._active_channel, []))
+        self.member_panel.show_channel(view.channel_name)
         self._update_input_enabled()
         # 폭은 ChatPage._push_wrap_width()가 채널 추가/창 리사이즈 시점에 이미 모든 탭에
         # (비활성 탭 포함) 미리 반영해두므로, 탭을 볼 때 다시 재계산할 필요가 없음 -
@@ -732,7 +717,7 @@ class ChatPage(QWidget):
         """자동완성 후보. 입력줄은 참여자도 명령도 모르므로 화면이 만들어서 넘겨준다."""
         if trigger == COMMAND_PREFIX:
             return list(self._command_tokens)
-        members = self._members.get(self._active_channel, [])
+        members = self.member_panel.members_of(self._active_channel)
         return ["@" + self._display_name_for(uid) for uid in members if uid != self.my_id]
 
     def _completion_token(self):
@@ -765,10 +750,8 @@ class ChatPage(QWidget):
     def focus_input(self):
         self.message_input.focus()
 
-    def _avatar_for(self, user_id: str, px: int) -> QPixmap:
-        cached = self._avatar_pixmaps.get(user_id)
-        base = cached if cached is not None else _hashed_avatar_pixmap(user_id)
-        return base.scaled(px, px, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+    def _avatar_for(self, user_id: str, size: int):
+        return self.member_panel.avatar(user_id, size)
 
     def append_message(self, channel: str, sender: str, text: str, mine: bool, ts: float,
                        is_mention: bool = False, kind: str = "chat", preview: bool = True):
@@ -816,41 +799,12 @@ class ChatPage(QWidget):
             )
         self.append_system(channel, "── 여기까지 이전 기록 ──")
 
-    def _add_userlist_items(self, users: list[str]):
-        for uid in users:
-            display = self._display_name_for(uid)
-            item = QListWidgetItem(display)
-            if display != uid:
-                item.setToolTip(uid)  # 닉네임은 고유성이 보장되지 않으므로 원래 아이디를 툴팁으로 확인 가능하게
-            item.setIcon(QIcon(self._avatar_for(uid, AVATAR_LIST_PX)))
-            self.user_list.addItem(item)
-
     def update_userlist(self, channel: str, users: list[str]):
-        self._members[channel] = users
-        if channel == self._active_channel:
-            self.user_list.clear()
-            self._add_userlist_items(users)
+        self.member_panel.set_members(channel, users)
 
     def set_avatar(self, user_id: str, avatar_b64: str | None):
-        if not avatar_b64:
-            self._avatar_pixmaps.pop(user_id, None)
-        else:
-            pixmap = _decode_avatar_pixmap(avatar_b64)
-            if pixmap is not None:
-                self._avatar_pixmaps[user_id] = pixmap
-                # 실제 IRC 서버는 아이콘을 서버가 저장해주지 않으므로, 로컬에도 남겨둬서
-                # 다음에 앱을 다시 켰을 때 상대가 다시 보내주기 전까지도 곧바로 보이게 함
-                avatar_store.save_avatar(user_id, avatar_b64)
-        if self._active_channel:
-            self.user_list.clear()
-            self._add_userlist_items(self._members.get(self._active_channel, []))
+        self.member_panel.set_avatar(user_id, avatar_b64)
 
     def set_nickname(self, user_id: str, nickname: str | None):
-        if not nickname:
-            self._nicknames.pop(user_id, None)
-        else:
-            self._nicknames[user_id] = nickname
-        if self._active_channel:
-            self.user_list.clear()
-            self._add_userlist_items(self._members.get(self._active_channel, []))
+        self.member_panel.set_nickname(user_id, nickname)
 

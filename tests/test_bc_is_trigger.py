@@ -59,7 +59,7 @@ print("(A) 남이 소환했을 때 내 화면")
 for who in ("hjsong_mobile", "MangMang2", "Ming"):
     feed(f":{who}!u@h PRIVMSG #pdlab :배틀크루저 소환")
     print(f"    {who} 소환 -> 내 배틀크루저 보임={bc.isVisible()}"
-          f" / 참여자 {len(win.chat_page._members.get('#pdlab', []))}명")
+          f" / 참여자 {len(win.chat_page.member_panel._members.get('#pdlab', []))}명")
 a_ok = not bc.isVisible()
 
 # ---------- (B) 내가 소환할 때 채팅이 비는가 ----------

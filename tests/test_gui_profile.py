@@ -48,12 +48,12 @@ app.processEvents()
 chat_page.set_nickname("alice", "앨리스별명")
 app.processEvents()
 
-items_text = [chat_page.user_list.item(i).text() for i in range(chat_page.user_list.count())]
+items_text = [chat_page.member_panel.list.item(i).text() for i in range(chat_page.member_panel.list.count())]
 checks.append(("닉네임 설정한 사용자는 참여자 목록에 닉네임으로 표시됨", "앨리스별명" in items_text))
 checks.append(("닉네임 없는 사용자는 여전히 원래 아이디로 표시됨", "bob" in items_text))
 
-alice_item = next(chat_page.user_list.item(i) for i in range(chat_page.user_list.count())
-                   if chat_page.user_list.item(i).text() == "앨리스별명")
+alice_item = next(chat_page.member_panel.list.item(i) for i in range(chat_page.member_panel.list.count())
+                   if chat_page.member_panel.list.item(i).text() == "앨리스별명")
 checks.append(("닉네임 표시 항목의 툴팁에 원래 아이디가 남아있음", alice_item.toolTip() == "alice"))
 
 # ---- 채팅 메시지도 닉네임으로 표시됨 ----
@@ -67,7 +67,7 @@ checks.append(("원래 아이디(alice)는 발신자 표시에 노출되지 않�
 # ---- 닉네임 초기화(빈 문자열) 시 다시 원래 아이디로 표시 ----
 chat_page.set_nickname("alice", "")
 app.processEvents()
-items_text2 = [chat_page.user_list.item(i).text() for i in range(chat_page.user_list.count())]
+items_text2 = [chat_page.member_panel.list.item(i).text() for i in range(chat_page.member_panel.list.count())]
 checks.append(("닉네임 초기화하면 다시 원래 아이디로 표시", "alice" in items_text2 and "앨리스별명" not in items_text2))
 
 print("\n=== 검증 결과 (프로필/닉네임 GUI) ===")
