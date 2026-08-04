@@ -24,6 +24,7 @@ import login_prefs
 from chat_core import constants, events as domain_events
 from chat_core.session import build_session
 from gui import event_router
+from gui.login_request import parse_login_values
 from gui.reconnect import ReconnectPolicy
 from updater import POST_UPDATE_FLAG
 from gui.helpers import _friendly_connection_error
@@ -377,58 +378,62 @@ class MainWindow(QMainWindow):
 
     # ---------------- 로그인 ----------------
     def _handle_login_submit(self, mode: str):
-        values = self.login_page.get_values()
-        protocol = values["protocol"]
-        if protocol == "irc":
-            if not values["host"] or not values["port"] or not values["user_id"]:
-                self.login_page.show_status("서버 주소/포트/닉네임을 입력하세요.")
-                return
-        elif not values["host"] or not values["port"] or not values["user_id"] or not values["password"]:
-            self.login_page.show_status("모든 항목을 입력하세요.")
-            return
-        try:
-            port = int(values["port"])
-        except ValueError:
-            self.login_page.show_status("포트는 숫자여야 합니다.")
+        """로그인/회원가입 버튼 -> 입력값 검사 -> 세션 준비 -> 접속.
+
+        검사는 gui/login_request.py의 순수 함수가 하고, 여기서는 화면과 소켓만 다룬다.
+        """
+        request, problem = parse_login_values(self.login_page.get_values())
+        if request is None:
+            self.login_page.show_status(problem)
             return
 
         self._auth_mode = mode  # "login" 또는 "register" - 연결 완료 후 어느 쪽을 보낼지
         self._cancel_reconnect()
         self._intentional_close = False  # 이제부터 예기치 않게 끊기면 다시 붙어야 함
-        self.chat_page.set_protocol_mode(protocol)
-        self._pending_user_id = values["user_id"]
-        self._pending_password = values["password"]
-        self._pending_cert_path = values["cert_path"]
-        self._pending_auto_login = values["auto_login"]
-        self._host = values["host"]
-        self._port = port
-
-        # 로그인 시도마다 도메인 세션을 새로 만듦(이전 세션의 채널/멤버 상태가 안 섞이게).
-        # 프로토콜에 맞는 전송 방식만 꽂아주면 나머지 상태 로직은 전부 코어가 담당함
-        transport = self.client.send_irc if protocol == "irc" else self.client.send_cmd
-        self.session = build_session(
-            protocol, values["host"], port,
-            transport=transport,
-            on_event=self._on_domain_event,
-        )
-        # '/'만 쳐도 명령 목록이 뜨게 - 지원 명령은 프로토콜마다 다르므로 코어에서 받아옴
-        self.chat_page.set_command_specs(self.session.command_specs())
+        self._remember(request)
+        self.chat_page.set_protocol_mode(request.protocol)
+        self._start_session(request)
 
         if self.client.state() == QSslSocket.SocketState.ConnectedState:
             # 이미 연결돼 있으면 (예: 회원가입 후 바로 로그인) 재연결하지 않고 바로 전송
             self._on_connected()
             return
+        self._connect_to(request)
 
-        mode_label = "SSL" if values["ssl"] else "평문(암호화 없음)"
+    def _remember(self, request):
+        """다시 접속할 때(재접속 포함) 쓰려고 이번 접속 정보를 기억해둠."""
+        self._pending_user_id = request.user_id
+        self._pending_password = request.password
+        self._pending_cert_path = request.cert_path
+        self._pending_auto_login = request.auto_login
+        self._pending_ssl = request.use_ssl
+        self._host = request.host
+        self._port = request.port
+
+    def _start_session(self, request):
+        """로그인 시도마다 도메인 세션을 새로 만듦 - 이전 세션의 채널/멤버 상태가 안 섞이게.
+
+        프로토콜에 맞는 전송 방식만 꽂아주면 나머지 상태 로직은 전부 코어가 담당한다.
+        """
+        transport = self.client.send_irc if request.is_irc else self.client.send_cmd
+        self.session = build_session(
+            request.protocol, request.host, request.port,
+            transport=transport, on_event=self._on_domain_event,
+        )
+        # '/'만 쳐도 명령 목록이 뜨게 - 지원 명령은 프로토콜마다 다르므로 코어에서 받아옴
+        self.chat_page.set_command_specs(self.session.command_specs())
+
+    def _connect_to(self, request):
         self.login_page.show_status(
-            f"연결 중... ({mode_label}, 최대 10초, 언제든 '연결 취소' 가능)", error=False)
+            f"연결 중... ({request.mode_label}, 최대 10초, 언제든 '연결 취소' 가능)",
+            error=False)
         self.login_page.set_connecting(True)
         self._connecting = True
-        self._pending_ssl = values["ssl"]
         self._connect_timer.start(CONNECT_TIMEOUT_MS)
-        self.client.set_mode(protocol)
+        self.client.set_mode(request.protocol)
         try:
-            self.client.connect_to_server(values["host"], port, values["cert_path"], values["ssl"])
+            self.client.connect_to_server(
+                request.host, request.port, request.cert_path, request.use_ssl)
         except Exception as e:  # noqa: BLE001
             self._stop_connecting()
             self.login_page.show_status(f"오류: {e}")
