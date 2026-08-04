@@ -46,7 +46,7 @@ app.processEvents()
 
 def click_row(row):
     """사이드바 항목을 진짜 마우스로 클릭"""
-    lst = page.channel_list
+    lst = page.channel_sidebar.list
     rect = lst.visualItemRect(lst.item(row))
     QTest.mouseClick(lst.viewport(), Qt.MouseButton.LeftButton,
                      Qt.KeyboardModifier.NoModifier, rect.center())
@@ -54,23 +54,23 @@ def click_row(row):
 
 
 print("[1] 초기 상태")
-check("채널이 없으면 사이드바도 비어있음", page.channel_list.count() == 0)
-check("'+' 버튼은 항상 있음", page.add_channel_btn.isVisible())
+check("채널이 없으면 사이드바도 비어있음", page.channel_sidebar.list.count() == 0)
+check("'+' 버튼은 항상 있음", page.channel_sidebar.add_btn.isVisible())
 check("채널 헤더는 비어있음", page.channel_header.text() == "", page.channel_header.text())
 
 print("\n[2] 채널 추가")
 page.add_channel("chanA")
 page.add_channel("chanB")
 app.processEvents()
-check("사이드바에 2줄", page.channel_list.count() == 2, page.channel_list.count())
-check("추가 순서대로", [page.channel_list.item(i).text() for i in range(2)] == ["chanA", "chanB"])
+check("사이드바에 2줄", page.channel_sidebar.list.count() == 2, page.channel_sidebar.list.count())
+check("추가 순서대로", [page.channel_sidebar.list.item(i).text() for i in range(2)] == ["chanA", "chanB"])
 check("마지막에 추가한 채널이 활성", page.active_channel() == "chanB", page.active_channel())
-check("사이드바 선택도 그 채널", page.channel_list.currentRow() == 1, page.channel_list.currentRow())
+check("사이드바 선택도 그 채널", page.channel_sidebar.list.currentRow() == 1, page.channel_sidebar.list.currentRow())
 check("채널 헤더에 이름 표시", page.channel_header.text() == "chanB", page.channel_header.text())
 
 print("\n[3] '+' 버튼을 진짜 클릭하면 채널 추가 콜백이 불리는가")
 before = page.active_channel()
-QTest.mouseClick(page.add_channel_btn, Qt.MouseButton.LeftButton)
+QTest.mouseClick(page.channel_sidebar.add_btn, Qt.MouseButton.LeftButton)
 QTest.qWait(30)
 check("on_add_channel 호출됨(진짜 클릭 경로)", events["add"] == 1, events["add"])
 check("'+' 눌러도 활성 채널은 그대로", page.active_channel() == before, page.active_channel())
@@ -107,16 +107,18 @@ class FakeMenu:
         return self._actions[0] if self._actions else None
 
 
-orig_menu = pages_mod.QMenu
+# 우클릭 메뉴는 이제 사이드바 컴포넌트가 띄운다
+from gui.components import channel_sidebar as sidebar_mod
+orig_menu = sidebar_mod.QMenu
 orig_question = g.themed_question
-pages_mod.QMenu = FakeMenu
+sidebar_mod.QMenu = FakeMenu
 g.themed_question = lambda *a, **k: True
 try:
-    lst = page.channel_list
+    lst = page.channel_sidebar.list
     rect = lst.visualItemRect(lst.item(0))
-    page._show_channel_menu(rect.center())
+    page.channel_sidebar._show_menu(rect.center())
 finally:
-    pages_mod.QMenu = orig_menu
+    sidebar_mod.QMenu = orig_menu
     g.themed_question = orig_question
 
 menu_text = FakeMenu.last._actions[0] if FakeMenu.last and FakeMenu.last._actions else ""
@@ -127,29 +129,29 @@ check("나가기 콜백이 그 채널로 불림", events["leave"] == ["chanA"], 
 print("\n[6] 안읽음 표시가 사이드바에 뜨는가")
 page.append_message("chanA", "Mong", "안녕", False, 1.0)  # chanA는 비활성
 QTest.qWait(60)
-row_a = page._channel_row("chanA")
-check("비활성 채널 줄에 표시 아이콘", row_a >= 0 and not page.channel_list.item(row_a).icon().isNull(),
+row_a = page.channel_sidebar.row_of("chanA")
+check("비활성 채널 줄에 표시 아이콘", row_a >= 0 and not page.channel_sidebar.list.item(row_a).icon().isNull(),
       "아이콘 없음")
 click_row(row_a)
-check("그 채널을 보면 표시가 사라짐", page.channel_list.item(row_a).icon().isNull())
+check("그 채널을 보면 표시가 사라짐", page.channel_sidebar.list.item(row_a).icon().isNull())
 
 print("\n[7] 채널 제거")
 page.remove_channel("chanA")
 app.processEvents()
-check("사이드바에서도 사라짐", page.channel_list.count() == 1, page.channel_list.count())
-check("남은 건 chanB", page.channel_list.item(0).text() == "chanB")
+check("사이드바에서도 사라짐", page.channel_sidebar.list.count() == 1, page.channel_sidebar.list.count())
+check("남은 건 chanB", page.channel_sidebar.list.item(0).text() == "chanB")
 check("남은 채널이 활성", page.active_channel() == "chanB", page.active_channel())
 
 print("\n[8] 로그아웃 정리")
 page.reset()
 app.processEvents()
-check("사이드바 비워짐", page.channel_list.count() == 0, page.channel_list.count())
+check("사이드바 비워짐", page.channel_sidebar.list.count() == 0, page.channel_sidebar.list.count())
 check("헤더도 비워짐", page.channel_header.text() == "", page.channel_header.text())
 
 print("\n[9] 긴 채널명도 사이드바 폭 안에 들어옴")
 page.add_channel("#아주아주긴채널이름입니다정말로깁니다")
 app.processEvents()
-lst = page.channel_list
+lst = page.channel_sidebar.list
 check("항목 폭이 사이드바를 안 넘음",
       lst.visualItemRect(lst.item(0)).width() <= lst.viewport().width(),
       (lst.visualItemRect(lst.item(0)).width(), lst.viewport().width()))

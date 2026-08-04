@@ -1,4 +1,4 @@
-﻿"""로그인/채널입장/채팅 화면 (LoginPage, ChannelPage, ChatPage).
+"""로그인/채널입장/채팅 화면 (LoginPage, ChannelPage, ChatPage).
 
 이 모듈은 themed_get_text/themed_question(gui.themed_dialogs)와 _flash_taskbar_icon/
 _shake_window(gui.mention_alerts)를 호출하는데, 이 4개는 테스트가 g.themed_question =
@@ -43,6 +43,7 @@ from version import APP_VERSION
 from gui.cheat_overlay import CheatOverlay
 from gui.battlecruiser import BattlecruiserOverlay
 from gui.link_preview import ImageFetcher
+from gui.components.channel_sidebar import ChannelSidebar
 from gui.widgets import ChannelLogView
 
 # 입력창 왼쪽 이모티콘 버튼 - 입력창과 같은 높이의 정사각형
@@ -453,7 +454,11 @@ class ChatPage(QWidget):
         self._pending_input_text = ""
 
         layout = QHBoxLayout()
-        layout.addWidget(self._build_channel_sidebar())
+        self.channel_sidebar = ChannelSidebar(MEMBER_HEADER_HEIGHT)
+        self.channel_sidebar.channel_selected.connect(self._on_sidebar_channel)
+        self.channel_sidebar.add_requested.connect(lambda: self.on_add_channel())
+        self.channel_sidebar.leave_requested.connect(self._request_close_channel)
+        layout.addWidget(self.channel_sidebar)
 
         center = QVBoxLayout()
         center.setSpacing(0)
@@ -575,188 +580,6 @@ class ChatPage(QWidget):
         # 지금 프로토콜이 지원하는 슬래시 명령 목록 - 세션이 알려주면 갱신됨
         self._command_tokens: list[str] = []
 
-    def _build_channel_sidebar(self) -> QWidget:
-        """왼쪽 채널 목록 - 세로로 쌓이는 알약 모양 항목 + 오른쪽 위 '+' 버튼.
-
-        예전엔 채팅창 위쪽에 가로 탭으로 뒀는데, 채널이 늘면 폭이 모자라고 이름이 잘렸다.
-        세로 목록은 채널이 몇 개든 같은 폭으로 온전히 보인다.
-
-        나가기는 항목을 우클릭해서 고른다 - 항목마다 x를 박아두면 채널 이름보다 버튼이
-        먼저 눈에 들어와 어수선해지기 때문.
-        """
-        sidebar = QWidget()
-        sidebar.setObjectName("channelSidebar")
-        self._channel_sidebar = sidebar
-        sidebar.setFixedWidth(CHANNEL_SIDEBAR_WIDTH)
-        outer = QVBoxLayout(sidebar)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        # 채팅창 위의 채널명 헤더와 같은 높이만큼 비워둬야 첫 채널 항목의 윗선이
-        # 채팅 카드 윗선과 같은 높이에서 시작함
-        outer.addSpacing(MEMBER_HEADER_HEIGHT)
-
-        self.channel_scroll_up = QPushButton("⌃")
-        self.channel_scroll_up.setObjectName("channelScrollBtn")
-        self.channel_scroll_up.setFixedHeight(CHANNEL_SCROLL_BTN_PX)
-        self.channel_scroll_up.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.channel_scroll_up.setToolTip("이전 채널 보기")
-        self.channel_scroll_up.clicked.connect(lambda: self._scroll_channels(-1))
-        self.channel_scroll_up.setVisible(False)
-        outer.addWidget(self.channel_scroll_up, 0)
-
-        self.channel_list = QListWidget()
-        self.channel_list.setObjectName("channelList")
-        self.channel_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.channel_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.channel_list.setFrameShape(QFrame.Shape.NoFrame)
-        self.channel_list.currentRowChanged.connect(self._on_channel_row_changed)
-        # 우클릭 나가기
-        self.channel_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.channel_list.customContextMenuRequested.connect(self._show_channel_menu)
-        outer.addWidget(self.channel_list, 0)
-
-        # '+'는 마지막 채널 바로 아래에, 네모 없이 기호만. 채널 항목과 같은 폭을 차지하게
-        # 두고 그 안에서 가운데 정렬해야 항목들과 세로 중심선이 맞음
-        self.add_channel_btn = QPushButton(ADD_TAB_LABEL)
-        self.add_channel_btn.setObjectName("addChannelBtn")
-        self.add_channel_btn.setFixedHeight(CHANNEL_ROW_HEIGHT)
-        self.add_channel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.add_channel_btn.setToolTip("새 채널에 입장합니다")
-        self.add_channel_btn.clicked.connect(lambda: self.on_add_channel())
-        outer.addWidget(self.add_channel_btn, 0)
-
-        # 채널이 많아 자리가 모자라면 목록을 잘라서 보여주고, 위/아래 화살표로 밀어 본다.
-        # (스크롤바를 띄우면 알약 항목 옆에 회색 막대가 붙어 지저분해짐)
-        self.channel_scroll_down = QPushButton("⌄")
-        self.channel_scroll_down.setObjectName("channelScrollBtn")
-        self.channel_scroll_down.setFixedHeight(CHANNEL_SCROLL_BTN_PX)
-        self.channel_scroll_down.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.channel_scroll_down.setToolTip("다음 채널 보기")
-        self.channel_scroll_down.clicked.connect(lambda: self._scroll_channels(1))
-        self.channel_scroll_down.setVisible(False)
-        outer.addWidget(self.channel_scroll_down, 0)
-
-        outer.addStretch(1)
-        self._sidebar_footer = self._build_sidebar_footer()
-        outer.addWidget(self._sidebar_footer, 0)
-        return sidebar
-
-    def _build_sidebar_footer(self) -> QWidget:
-        """사이드바 아래쪽 빈 자리에 두는 로고/버전/만든이 표시."""
-        footer = QWidget()
-        footer.setObjectName("sidebarFooter")
-        column = QVBoxLayout(footer)
-        column.setContentsMargins(10, 10, 10, 12)
-        column.setSpacing(2)
-
-        logo_path = _find_logo_image()
-        if logo_path:
-            logo = QLabel()
-            logo.setObjectName("footerLogo")
-            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            logo.setPixmap(QPixmap(logo_path).scaled(
-                FOOTER_LOGO_PX, FOOTER_LOGO_PX,
-                Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-            column.addWidget(logo, 0, Qt.AlignmentFlag.AlignHCenter)
-
-        title = QLabel(f"{APP_TITLE}  <span style='color:#7f8296'>v{APP_VERSION}</span>")
-        title.setObjectName("footerTitle")
-        title.setTextFormat(Qt.TextFormat.RichText)
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        column.addWidget(title)
-
-        maker = QLabel(
-            f'<a href="mailto:{DEVELOPER_EMAIL}" style="color:#8f92a6; text-decoration:none;">'
-            f"{DEVELOPER_EMAIL}</a>")
-        maker.setObjectName("footerMaker")
-        maker.setTextFormat(Qt.TextFormat.RichText)
-        maker.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        maker.setOpenExternalLinks(True)
-        maker.setToolTip("만든 사람에게 메일 보내기")
-        column.addWidget(maker)
-
-        copyright_label = QLabel(f"© {COPYRIGHT_YEAR} {DEVELOPER_NAME}")
-        copyright_label.setObjectName("footerCopyright")
-        copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        column.addWidget(copyright_label)
-        return footer
-
-    def _scroll_channels(self, direction: int):
-        """채널 목록을 한 칸씩 밀어 본다(+1이면 아래로)."""
-        bar = self.channel_list.verticalScrollBar()
-        bar.setValue(bar.value() + direction * (CHANNEL_ROW_HEIGHT + CHANNEL_ROW_GAP))
-        self._sync_channel_scroll_buttons()
-
-    def _sync_channel_scroll_buttons(self):
-        bar = self.channel_list.verticalScrollBar()
-        self.channel_scroll_up.setVisible(bar.maximum() > 0 and bar.value() > 0)
-        self.channel_scroll_down.setVisible(bar.maximum() > 0 and bar.value() < bar.maximum())
-
-    def _sync_channel_list_height(self):
-        """채널 목록이 딱 항목 수만큼만 높이를 차지하게 함.
-
-        목록이 남는 공간을 다 먹으면 '+'가 마지막 채널 바로 아래가 아니라 사이드바
-        맨 아래로 밀려난다."""
-        count = self.channel_list.count()
-        if count == 0:
-            self.channel_list.setFixedHeight(0)
-            self._sync_channel_scroll_buttons()
-            return
-        row = self.channel_list.visualItemRect(self.channel_list.item(0))
-        # 항목 사이 간격(QSS의 margin-bottom)까지 포함해야 마지막 줄이 안 잘림
-        step = row.height() + CHANNEL_ROW_GAP
-        needed = step * count
-        # 자리가 모자라면 잘라서 보여주고 화살표로 밀어 본다. 화살표가 없으면 채널이
-        # 많을 때 아래쪽 채널을 아예 볼 수 없다
-        available = self._channel_list_space(step)
-        if available > 0 and available < needed:
-            # 칸 단위로 잘라야 마지막 항목이 반쯤 걸쳐 보이지 않음
-            available = max(step, (available // step) * step)
-        self.channel_list.setFixedHeight(min(needed, available) if available > 0 else needed)
-        self._sync_channel_scroll_buttons()
-
-    def _channel_list_space(self, step: int) -> int:
-        """사이드바에서 채널 목록이 쓸 수 있는 높이(헤더/+ 버튼/화살표/아래 정보 제외)."""
-        sidebar = getattr(self, "_channel_sidebar", None)
-        if sidebar is None or sidebar.height() <= 0:
-            return 0
-        used = (MEMBER_HEADER_HEIGHT + CHANNEL_ROW_HEIGHT      # 헤더 자리 + '+' 버튼
-                + CHANNEL_SCROLL_BTN_PX * 2                     # 위/아래 화살표
-                + self._sidebar_footer.sizeHint().height())
-        space = sidebar.height() - used
-        # 최소 한 칸은 보이게(너무 작으면 목록이 아예 안 보임)
-        return max(step, space)
-
-    def _channel_row(self, channel: str) -> int:
-        """사이드바에서 그 채널이 몇 번째 줄인지. 없으면 -1"""
-        for row in range(self.channel_list.count()):
-            if self.channel_list.item(row).data(Qt.ItemDataRole.UserRole) == channel:
-                return row
-        return -1
-
-    def _on_channel_row_changed(self, row: int):
-        """사이드바에서 채널을 고르면 그 채널 대화창을 앞으로 가져옴"""
-        if row < 0:
-            return
-        channel = self.channel_list.item(row).data(Qt.ItemDataRole.UserRole)
-        view = self._log_views.get(channel)
-        if view is None:
-            return
-        index = self.tabs.indexOf(view)
-        if index >= 0 and index != self.tabs.currentIndex():
-            self.tabs.setCurrentIndex(index)
-
-    def _show_channel_menu(self, pos):
-        item = self.channel_list.itemAt(pos)
-        if item is None:
-            return
-        channel = item.data(Qt.ItemDataRole.UserRole)
-        menu = QMenu(self.channel_list)
-        leave = menu.addAction(f"'{channel}' 나가기")
-        chosen = menu.exec(self.channel_list.mapToGlobal(pos))
-        if chosen is leave:
-            self._request_close_channel(channel)
 
     def _open_emoji_picker(self):
         """이모티콘 보관함을 열고, 고른 것을 메시지에 넣음.
@@ -800,8 +623,6 @@ class ChatPage(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._push_wrap_width()
-        # 창 높이가 바뀌면 채널 목록이 쓸 수 있는 자리도 바뀜
-        self._sync_channel_list_height()
 
     def _push_wrap_width(self):
         """self.tabs는 어떤 채널 탭이 떠 있든 항상 실제로 보이는 위젯이라 폭이 정확함.
@@ -827,15 +648,7 @@ class ChatPage(QWidget):
             self._log_views[channel] = view
             self._members[channel] = []
             self.tabs.addTab(view, channel)
-
-            item = QListWidgetItem(channel)
-            # 표시 이름과 별개로 실제 채널명을 들고 있게 함(나중에 안읽음 표시 등으로
-            # 보이는 글자가 바뀌어도 어떤 채널인지 잃지 않도록)
-            item.setData(Qt.ItemDataRole.UserRole, channel)
-            item.setSizeHint(QSize(0, CHANNEL_ROW_HEIGHT))
-            item.setToolTip(f"{channel}\n우클릭하면 나가기")
-            self.channel_list.addItem(item)
-            self._sync_channel_list_height()
+            self.channel_sidebar.add_channel(channel)
             self._center_stack.setCurrentWidget(self.tabs)
         if activate:
             self.set_active_channel(channel)
@@ -851,15 +664,11 @@ class ChatPage(QWidget):
         view = self._log_views.pop(channel, None)
         if view is None:
             return
-        self._stop_blink(channel)
         self._members.pop(channel, None)
         index = self.tabs.indexOf(view)
         if index >= 0:
-            self.tabs.removeTab(index)  # 남은 탭이 있으면 currentChanged가 자동으로 활성 채널을 갱신함
-        row = self._channel_row(channel)
-        if row >= 0:
-            self.channel_list.takeItem(row)
-            self._sync_channel_list_height()
+            self.tabs.removeTab(index)  # 남은 탭이 있으면 currentChanged가 활성 채널을 갱신함
+        self.channel_sidebar.remove_channel(channel)
         view.deleteLater()
         if not self._log_views:
             self._active_channel = ""
@@ -891,12 +700,17 @@ class ChatPage(QWidget):
             return
         index = self.tabs.indexOf(view)
         if index >= 0:
-            self.tabs.setCurrentIndex(index)
+            self.tabs.setCurrentIndex(index)   # currentChanged가 나머지를 맞춰줌
 
     def active_channel(self) -> str:
         return self._active_channel
 
     def _on_tab_changed(self, index: int):
+        """탭(대화 내용)이 바뀌면 사이드바 선택/헤더/참여자 목록을 따라 맞춤.
+
+        폭은 _push_wrap_width()가 채널 추가/창 리사이즈 때 이미 모든 탭에 미리 반영해두므로
+        여기서 다시 계산하지 않음(그게 스크롤이 출렁이던 원인이었다).
+        """
         if index < 0:
             return
         view = self.tabs.widget(index)
@@ -904,13 +718,10 @@ class ChatPage(QWidget):
             return
         self._active_channel = view.channel_name
         self.channel_header.setText(view.channel_name)
-        # 사이드바 선택도 같이 옮김. 여기서 다시 신호가 돌아오는 걸 막으려고 잠시 끊음
-        row = self._channel_row(view.channel_name)
-        if row >= 0 and row != self.channel_list.currentRow():
-            self.channel_list.blockSignals(True)
-            self.channel_list.setCurrentRow(row)
-            self.channel_list.blockSignals(False)
-        self._stop_blink(view.channel_name)
+        # 사이드바 선택도 같이 옮김. 여기서 신호가 되돌아오는 걸 막으려고 잠시 끊음
+        self.channel_sidebar.list.blockSignals(True)
+        self.channel_sidebar.set_active(view.channel_name)
+        self.channel_sidebar.list.blockSignals(False)
         self.user_list.clear()
         self._add_userlist_items(self._members.get(self._active_channel, []))
         self._update_input_enabled()
@@ -919,61 +730,26 @@ class ChatPage(QWidget):
         # 예전에는 여기서 매번 재계산했는데, 그게 메시지들이 눈앞에서 다시 배치되며
         # 스크롤이 출렁이는(위로 튀는) 원인이었음
 
+    def _on_sidebar_channel(self, channel: str):
+        """사이드바에서 채널을 고르면 그 채널 대화창을 앞으로 가져옴"""
+        view = self._log_views.get(channel)
+        if view is None:
+            return
+        index = self.tabs.indexOf(view)
+        if index >= 0 and index != self.tabs.currentIndex():
+            self.tabs.setCurrentIndex(index)
+
     def _request_close_channel(self, channel: str):
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
         if gui_client.themed_question(self, "채널 나가기", f"'{channel}' 채널에서 나갈까요?"):
             self.on_leave_channel(channel)
 
     def _mark_unread(self, channel: str):
-        """사이드바 채널 항목에 작은 점 아이콘이 UNREAD_BLINK_COUNT번 깜빡인 뒤,
-        그 채널을 보기 전까지는 점을 그대로 유지함.
-
-        글자색을 깜빡이는 방식은 못 씀 - 스타일시트의 색 지정이 항상 우선 적용돼서
-        코드로 바꾼 글자색이 안 먹힘(예전 탭에서 이미 겪은 문제). 아이콘은 스타일시트
-        영향을 안 받아 확실히 보인다."""
-        if channel == self._active_channel:
-            return
-        if self._channel_row(channel) < 0:
-            return
-        if channel in self._unread_timers:
-            return  # 이미 깜빡이는 중
-        timer = QTimer(self)
-        timer.timeout.connect(lambda ch=channel: self._toggle_blink(ch))
-        self._unread_timers[channel] = timer
-        self._unread_blink_on[channel] = False
-        self._unread_blink_step[channel] = 0
-        timer.start(UNREAD_BLINK_INTERVAL_MS)
-        self._toggle_blink(channel)  # 바로 한 번 켜서 즉각 반응하는 느낌을 줌
-
-    def _toggle_blink(self, channel: str):
-        row = self._channel_row(channel)
-        if row < 0 or channel == self._active_channel:
-            self._stop_blink(channel)
-            return
-        step = self._unread_blink_step.get(channel, 0) + 1
-        self._unread_blink_step[channel] = step
-        on = not self._unread_blink_on.get(channel, False)
-        self._unread_blink_on[channel] = on
-        icon = _build_unread_dot_icon(UNREAD_BLINK_COLOR) if on else QIcon()
-        self.channel_list.item(row).setIcon(icon)
-        if on and step >= 2 * UNREAD_BLINK_COUNT - 1:
-            # 지정된 횟수만큼 깜빡였으니 타이머만 멈추고 밝은 색은 그대로 유지
-            # (실제로 탭을 봐야만 _stop_blink에서 기본 색으로 되돌아감)
-            timer = self._unread_timers.pop(channel, None)
-            if timer is not None:
-                timer.stop()
-                timer.deleteLater()
+        """안 보는 채널에 새 메시지가 왔을 때 - 표시는 사이드바가 담당한다."""
+        self.channel_sidebar.mark_unread(channel)
 
     def _stop_blink(self, channel: str):
-        timer = self._unread_timers.pop(channel, None)
-        if timer is not None:
-            timer.stop()
-            timer.deleteLater()
-        self._unread_blink_on.pop(channel, None)
-        self._unread_blink_step.pop(channel, None)
-        row = self._channel_row(channel)
-        if row >= 0:
-            self.channel_list.item(row).setIcon(QIcon())
+        self.channel_sidebar.stop_blink(channel)
 
     def _submit(self):
         """입력창 내용을 그대로 상위(MainWindow -> ChatSession)로 넘김.

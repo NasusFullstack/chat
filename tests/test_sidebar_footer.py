@@ -27,7 +27,7 @@ page.my_id = "Mong"
 for _ in range(5):
     app.processEvents()
 
-footer = page._sidebar_footer
+footer = page.channel_sidebar.footer
 texts = " ".join(label.text() for label in footer.findChildren(QLabel))
 checks.append(("프로그램 이름이 있음", "춥채팅" in texts))
 checks.append((f"버전이 있음(v{APP_VERSION})", APP_VERSION in texts))
@@ -37,7 +37,7 @@ logos = [lb for lb in footer.findChildren(QLabel) if lb.objectName() == "footerL
 checks.append(("로고가 있음", bool(logos) and logos[0].pixmap() is not None
                and not logos[0].pixmap().isNull()))
 checks.append(("사이드바 안에 들어 있음",
-               footer.parentWidget() is page._channel_sidebar))
+               footer.parentWidget() is page.channel_sidebar))
 
 # 채널이 적을 때는 화살표가 없어야 함
 for i in range(2):
@@ -45,44 +45,44 @@ for i in range(2):
 for _ in range(6):
     app.processEvents()
 checks.append(("채널이 적으면 화살표가 안 보임",
-               not page.channel_scroll_down.isVisible()
-               and not page.channel_scroll_up.isVisible()))
+               not page.channel_sidebar.scroll_down.isVisible()
+               and not page.channel_sidebar.scroll_up.isVisible()))
 
 # 채널을 잔뜩 넣으면 목록이 잘리고 아래 화살표가 생겨야 함
 for i in range(2, 30):
     page.add_channel(f"#ch{i}")
 for _ in range(8):
     app.processEvents()
-page._sync_channel_list_height()
+page.channel_sidebar.sync_height()
 for _ in range(4):
     app.processEvents()
 
-bar = page.channel_list.verticalScrollBar()
+bar = page.channel_sidebar.list.verticalScrollBar()
 checks.append((f"목록이 잘려 스크롤 여지가 생김(최대 {bar.maximum()})", bar.maximum() > 0))
 
 # 채널을 추가하면 그 채널이 선택되면서 목록이 맨 아래로 내려가 있음 - 위로 올려두고 확인
 checks.append(("방금 들어간 채널이 보이도록 아래로 내려가 있음", bar.value() == bar.maximum()))
-checks.append(("맨 아래에서는 위 화살표가 보임", page.channel_scroll_up.isVisible()))
+checks.append(("맨 아래에서는 위 화살표가 보임", page.channel_sidebar.scroll_up.isVisible()))
 
 bar.setValue(0)
-page._sync_channel_scroll_buttons()
+page.channel_sidebar._sync_arrows()
 for _ in range(4):
     app.processEvents()
-checks.append(("맨 위에서는 아래 화살표가 나타남", page.channel_scroll_down.isVisible()))
-checks.append(("맨 위에서는 위 화살표가 없음", not page.channel_scroll_up.isVisible()))
+checks.append(("맨 위에서는 아래 화살표가 나타남", page.channel_sidebar.scroll_down.isVisible()))
+checks.append(("맨 위에서는 위 화살표가 없음", not page.channel_sidebar.scroll_up.isVisible()))
 
 before = bar.value()
-page._scroll_channels(1)
+page.channel_sidebar.scroll_by(1)
 for _ in range(4):
     app.processEvents()
 checks.append((f"아래 화살표로 밀림({before} -> {bar.value()})", bar.value() > before))
-checks.append(("밀고 나면 위 화살표가 생김", page.channel_scroll_up.isVisible()))
+checks.append(("밀고 나면 위 화살표가 생김", page.channel_sidebar.scroll_up.isVisible()))
 
 bar.setValue(bar.maximum())
-page._sync_channel_scroll_buttons()
-checks.append(("맨 아래에서는 아래 화살표가 사라짐", not page.channel_scroll_down.isVisible()))
+page.channel_sidebar._sync_arrows()
+checks.append(("맨 아래에서는 아래 화살표가 사라짐", not page.channel_sidebar.scroll_down.isVisible()))
 
-page._scroll_channels(-1)
+page.channel_sidebar.scroll_by(-1)
 for _ in range(4):
     app.processEvents()
 checks.append(("위 화살표로 되돌아감", bar.value() < bar.maximum()))
@@ -92,27 +92,27 @@ checks.append(("채널이 많아도 만든이 표시가 화면 안에 있음",
                footer.isVisible() and footer.y() + footer.height() <= page.height() + 2))
 
 # 항목이 반쯤 걸쳐 보이면 안 됨(칸 단위로 잘라야 함)
-row_rect = page.channel_list.visualItemRect(page.channel_list.item(0))
+row_rect = page.channel_sidebar.list.visualItemRect(page.channel_sidebar.list.item(0))
 step = row_rect.height() + 6
 checks.append((f"목록 높이가 칸 단위({step}px)로 떨어짐",
-               page.channel_list.height() % step == 0))
+               page.channel_sidebar.list.height() % step == 0))
 
 # 창을 높이면 다 들어가서 화살표가 사라지고, 낮추면 다시 생겨야 함
 page.resize(900, 1400)
 for _ in range(8):
     app.processEvents()
-tall_max = page.channel_list.verticalScrollBar().maximum()
-tall_arrow = page.channel_scroll_down.isVisible() or page.channel_scroll_up.isVisible()
+tall_max = page.channel_sidebar.list.verticalScrollBar().maximum()
+tall_arrow = page.channel_sidebar.scroll_down.isVisible() or page.channel_sidebar.scroll_up.isVisible()
 
 page.resize(900, 500)
 for _ in range(8):
     app.processEvents()
-page.channel_list.verticalScrollBar().setValue(0)
-page._sync_channel_scroll_buttons()
-short_max = page.channel_list.verticalScrollBar().maximum()
+page.channel_sidebar.list.verticalScrollBar().setValue(0)
+page.channel_sidebar._sync_arrows()
+short_max = page.channel_sidebar.list.verticalScrollBar().maximum()
 checks.append((f"창을 높이면 스크롤 여지가 줄어듦(1400에서 {tall_max} / 500에서 {short_max})",
                tall_max < short_max))
-checks.append(("창을 낮추면 아래 화살표가 다시 생김", page.channel_scroll_down.isVisible()))
+checks.append(("창을 낮추면 아래 화살표가 다시 생김", page.channel_sidebar.scroll_down.isVisible()))
 if tall_max == 0:
     checks.append(("창이 충분히 크면 화살표가 사라짐", not tall_arrow))
 

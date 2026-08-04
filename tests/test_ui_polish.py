@@ -30,17 +30,17 @@ app.processEvents()
 checks = []
 
 # ---- 채널 추가 버튼(왼쪽 사이드바) ----
-checks.append(("'+' 채널 추가 버튼이 있음", chat_page.add_channel_btn.text() == "+"))
-checks.append(("'+' 버튼에 툴팁 있음", bool(chat_page.add_channel_btn.toolTip())))
+checks.append(("'+' 채널 추가 버튼이 있음", chat_page.channel_sidebar.add_btn.text() == "+"))
+checks.append(("'+' 버튼에 툴팁 있음", bool(chat_page.channel_sidebar.add_btn.toolTip())))
 
 # ---- 채널 나가기: 항목마다 x를 박지 않고 우클릭 메뉴로 (이미지 디자인에 맞춤) ----
 chat_page.add_channel("#x")
-row = chat_page._channel_row("#x")
+row = chat_page.channel_sidebar.row_of("#x")
 checks.append(("사이드바에 채널 줄이 생김", row >= 0))
 checks.append(("우클릭으로 나갈 수 있다고 안내함",
-               "우클릭" in chat_page.channel_list.item(row).toolTip()))
+               "우클릭" in chat_page.channel_sidebar.list.item(row).toolTip()))
 checks.append(("채널 목록에 가로 스크롤이 없음",
-               chat_page.channel_list.horizontalScrollBar().maximum() == 0))
+               chat_page.channel_sidebar.list.horizontalScrollBar().maximum() == 0))
 
 # ---- 안읽음: 탭 아이콘이 빠르게(반복적으로) 깜빡임 (글자색은 QTabBar::tab { color: ... }
 # 스타일시트가 항상 이겨서 setTabTextColor()로는 절대 안 바뀌길래 아이콘 방식으로 바꿈) ----
