@@ -8,7 +8,7 @@ import os
 import re
 import sys
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
 from gui.theme import AVATAR_GRID_SIZE, UNREAD_DOT_PX
@@ -179,6 +179,30 @@ def _titlebar_icon(kind: str, color: str = "#cfd0da") -> QIcon:
     elif kind == "close":
         painter.drawLine(0, 0, size - 1, size - 1)
         painter.drawLine(0, size - 1, size - 1, 0)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _smiley_icon(size: int = 20, color: str = "#c8cad8") -> QIcon:
+    """이모티콘 버튼용 웃는 얼굴. 글꼴에 있는 기호를 쓰면 환경마다 모양이 달라져서 직접 그림."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.4, size / 13))
+    painter.setPen(pen)
+    inset = pen.widthF()
+    painter.drawEllipse(QRectF(inset, inset, size - inset * 2, size - inset * 2))
+    # 눈 - 작은 점 두 개
+    eye = max(1.4, size / 9)
+    painter.setBrush(QColor(color))
+    painter.drawEllipse(QRectF(size * 0.32 - eye / 2, size * 0.38 - eye / 2, eye, eye))
+    painter.drawEllipse(QRectF(size * 0.68 - eye / 2, size * 0.38 - eye / 2, eye, eye))
+    # 입 - 아래쪽 반원
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    mouth = QRectF(size * 0.26, size * 0.36, size * 0.48, size * 0.42)
+    painter.drawArc(mouth, 200 * 16, 140 * 16)
     painter.end()
     return QIcon(pixmap)
 

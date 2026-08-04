@@ -1,7 +1,7 @@
 """이모티콘 보관함 창 - 저장해둔 이모티콘을 미리보기로 보고 골라 쓴다.
 
 - 격자로 작게 미리보기(움짤은 움직임)
-- 한 쪽에 12개씩, 화살표로 페이지 넘김
+- 한 쪽에 3x4=12개씩, 화살표로 페이지 넘김
 - 내가 붙인 이름으로 검색
 - 우클릭으로 이름 바꾸기 / 보관함에서 빼기
 
@@ -17,10 +17,10 @@ from gui.link_preview import ImagePreview
 from gui.theme import IS_WINDOWS
 from gui.themed_dialogs import _MiniTitleBar
 
-COLUMNS = 4
-ROWS = 3
+COLUMNS = 3
+ROWS = 4
 PER_PAGE = COLUMNS * ROWS
-THUMB_PX = 84
+THUMB_PX = 104
 
 
 class EmojiPicker(QDialog):
@@ -47,10 +47,18 @@ class EmojiPicker(QDialog):
         body.setContentsMargins(14, 10, 14, 12)
         body.setSpacing(8)
 
+        top_row = QHBoxLayout()
+        top_row.setSpacing(6)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("이름으로 검색")
         self.search_input.textChanged.connect(self._on_search)
-        body.addWidget(self.search_input)
+        self.add_btn = QPushButton("+ 추가")
+        self.add_btn.setObjectName("emojiAddBtn")
+        self.add_btn.setToolTip("주소와 이름을 직접 넣어서 추가")
+        self.add_btn.clicked.connect(self._add_by_hand)
+        top_row.addWidget(self.search_input, 1)
+        top_row.addWidget(self.add_btn)
+        body.addLayout(top_row)
 
         self.grid_host = QWidget()
         self.grid = QGridLayout(self.grid_host)
@@ -133,6 +141,66 @@ class EmojiPicker(QDialog):
         self.emoji_chosen.emit(url)
         self.accept()
 
+    def _add_by_hand(self):
+        """채팅에 그 그림이 없어도 주소를 직접 넣어 추가."""
+        import gui_client  # 지연 import - 이유는 gui/pages.py 맨 위 설명 참고
+
+        dialog = AddEmojiDialog(self)
+        if not dialog.exec():
+            return
+        url, name = dialog.values()
+        saved, text = emoji_store.add_emoji(url, name)
+        if not saved:
+            gui_client.themed_warning(self, "이모티콘 추가", text)
+            return
+        self.search_input.setText("")
+        self._page = max(0, self.page_count() - 1)  # 방금 넣은 게 보이는 쪽으로
+        self.reload()
+
+
+class AddEmojiDialog(QDialog):
+    """주소 + 이름을 직접 입력해서 이모티콘 추가"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        if IS_WINDOWS:
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(1, 1, 1, 1)
+        outer.setSpacing(0)
+        outer.addWidget(_MiniTitleBar(self, "이모티콘 추가"))
+
+        host = QWidget()
+        form = QVBoxLayout(host)
+        form.setContentsMargins(16, 14, 16, 14)
+        form.setSpacing(6)
+        form.addWidget(QLabel("이미지 주소"))
+        self.url_input = QLineEdit()
+        self.url_input.setPlaceholderText("https://... (png, gif, jpg 등)")
+        form.addWidget(self.url_input)
+        form.addWidget(QLabel("이름 (검색할 때 씀)"))
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("예: 웃는댕댕이")
+        self.name_input.returnPressed.connect(self.accept)
+        form.addWidget(self.name_input)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        cancel = QPushButton("취소")
+        cancel.setObjectName("secondary")
+        cancel.clicked.connect(self.reject)
+        confirm = QPushButton("추가")
+        confirm.clicked.connect(self.accept)
+        buttons.addWidget(cancel)
+        buttons.addWidget(confirm)
+        form.addLayout(buttons)
+
+        outer.addWidget(host)
+        self.setMinimumWidth(360)
+
+    def values(self) -> tuple[str, str]:
+        return self.url_input.text().strip(), self.name_input.text().strip()
+
 
 class _EmojiCell(QWidget):
     """격자 한 칸 - 미리보기 + 이름"""
@@ -150,13 +218,18 @@ class _EmojiCell(QWidget):
         self.setToolTip(self._name or self._url)
 
         column = QVBoxLayout(self)
-        column.setContentsMargins(2, 2, 2, 2)
-        column.setSpacing(2)
+        column.setContentsMargins(4, 4, 4, 3)
+        column.setSpacing(1)
+        # 그림 자리를 가운데로 몰아주고, 이름은 그림 바로 아래에 붙게 함.
+        # (그림이 가로로 긴 경우 정사각 자리 안에서 위아래 여백이 생겨 이름이 멀어 보였음)
         self.preview = ImagePreview(self._url, self)
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.set_max_width(THUMB_PX)
         self.preview.setFixedSize(THUMB_PX, THUMB_PX)
         # 미리보기 자체의 클릭은 '주소 열기'라서 고르기와 충돌함 - 이 칸에서는 막는다
         self.preview.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # 늘어난 자리는 아래로 몰아준다. 가운데 정렬로 두면 칸 높이가 커질 때 그림이
+        # 가운데로 밀려서 이름과 사이가 벌어져 보였음
         column.addWidget(self.preview, 0, Qt.AlignmentFlag.AlignHCenter)
 
         label = QLabel()
@@ -166,6 +239,8 @@ class _EmojiCell(QWidget):
         label.setText(label.fontMetrics().elidedText(
             self._name, Qt.TextElideMode.ElideRight, THUMB_PX - 4))
         column.addWidget(label, 0, Qt.AlignmentFlag.AlignHCenter)
+        column.addStretch(1)
+        self._name_label = label
 
         data = cache.get(self._url)
         if data is not None:
@@ -174,8 +249,13 @@ class _EmojiCell(QWidget):
             fetcher.fetch(self._url, self._on_image)
 
     def _show(self, data):
-        if self.preview.set_image_data(data):
-            self.preview.set_max_width(THUMB_PX)
+        if not self.preview.set_image_data(data):
+            return
+        self.preview.set_max_width(THUMB_PX)
+        # 그림이 실제 크기로 줄어들면 자리도 그만큼만 차지하게 해서 이름이 바로 밑에 붙게 함
+        self.preview.setMinimumSize(0, 0)
+        self.preview.setMaximumSize(THUMB_PX, THUMB_PX)
+        self.preview.setFixedSize(self.preview.size())
 
     def _on_image(self, data):
         if not data:

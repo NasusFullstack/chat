@@ -1,7 +1,7 @@
 """메시지 안에 붙는 이모티콘 그림.
 
 링크 미리보기(320px 카드)와 다른 점:
-- 글자 옆에 붙는 크기(기본 72px)로 작게 그린다
+- 링크 미리보기(320px)보다 작은 192px로 그린다(보관함 격자는 이보다 더 작음)
 - 여러 개면 가로로 이어 붙고, 폭이 모자라면 다음 줄로 내려간다
 - 주소 문자열은 대화에 보이지 않는다(보낸 쪽이 표시로 감싸서 보냄)
 
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QLayout, QSizePolicy, QWidget
 
 from gui.link_preview import ImagePreview
 
-EMOJI_PX = 72          # 이모티콘 한 변의 최대 크기
+EMOJI_PX = 192         # 채팅에 보이는 이모티콘 한 변의 최대 크기
 EMOJI_GAP = 4
 
 

@@ -279,13 +279,24 @@ QPushButton#addChannelBtn {
     font-weight: bold;
     padding: 0px;
 }
-/* 입력창 왼쪽의 이모티콘 보관함 버튼 - 전송 버튼보다 눈에 덜 띄게 */
+/* 입력창 왼쪽의 이모티콘 보관함 버튼 - 웃는 얼굴만 있는 정사각형 */
 QPushButton#emojiBtn {
     background: #2b2d3a;
     color: #c8cad8;
     border: 1px solid #3a3d4e;
     border-radius: 8px;
-    padding: 6px 12px;
+    padding: 0px;
+}
+QPushButton#emojiAddBtn {
+    background: #2b2d3a;
+    color: #c8cad8;
+    border: 1px solid #3a3d4e;
+    border-radius: 8px;
+    padding: 5px 10px;
+}
+QPushButton#emojiAddBtn:hover {
+    background: #343747;
+    color: #ffffff;
 }
 QPushButton#emojiBtn:hover {
     background: #343747;

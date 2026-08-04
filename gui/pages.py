@@ -31,6 +31,7 @@ import server_registry
 from chat_core.commands import COMMAND_PREFIX, KIND_ACTION, KIND_NOTICE, format_emoji
 from gui.helpers import (
     _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert, _hashed_avatar_pixmap,
+    _smiley_icon,
 )
 from gui.theme import (
     ADD_TAB_LABEL, APP_TITLE, AVATAR_LIST_PX, AVATAR_MSG_PX, CHANNEL_ROW_GAP,
@@ -42,6 +43,10 @@ from gui.cheat_overlay import CheatOverlay
 from gui.battlecruiser import BattlecruiserOverlay
 from gui.link_preview import ImageFetcher
 from gui.widgets import ChannelLogView
+
+# 입력창 왼쪽 이모티콘 버튼 - 입력창과 같은 높이의 정사각형
+EMOJI_BTN_PX = 34
+EMOJI_BTN_ICON_PX = 20
 
 # 참여자 헤더 높이 - 채팅 카드 상단과 참여자 카드 상단을 같은 높이에 두기 위한 값
 MEMBER_HEADER_HEIGHT = 34
@@ -489,12 +494,18 @@ class ChatPage(QWidget):
 
         center.addSpacing(_CARD_TO_CONTROL_GAP)
         input_row = QHBoxLayout()
-        # 입력창 왼쪽에 이모티콘 보관함 여는 자리
-        self.emoji_btn = QPushButton("이모티콘")
+        # 입력창 왼쪽에 이모티콘 보관함 여는 자리. 글자 대신 웃는 얼굴만 두고 입력창과
+        # 같은 높이의 정사각형으로 맞춤(글자 버튼은 폭을 많이 먹고 높이도 안 맞았음)
+        self.emoji_btn = QPushButton()
         self.emoji_btn.setObjectName("emojiBtn")
-        self.emoji_btn.setToolTip("내 이모티콘 보관함 (채팅의 이미지를 우클릭해서 저장)")
+        self.emoji_btn.setIcon(_smiley_icon(EMOJI_BTN_ICON_PX))
+        self.emoji_btn.setIconSize(QSize(EMOJI_BTN_ICON_PX, EMOJI_BTN_ICON_PX))
+        self.emoji_btn.setFixedSize(EMOJI_BTN_PX, EMOJI_BTN_PX)
+        self.emoji_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.emoji_btn.setToolTip("이모티콘")
         self.emoji_btn.clicked.connect(self._open_emoji_picker)
         self.msg_input = QLineEdit()
+        self.msg_input.setFixedHeight(EMOJI_BTN_PX)
         self.msg_input.setPlaceholderText("메시지 입력 후 Enter (@닉네임으로 호출 가능)")
         self.msg_input.returnPressed.connect(self._submit)
         send_btn = QPushButton("전송")
