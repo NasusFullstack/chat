@@ -20,11 +20,32 @@ chat_core/          도메인 코어 - Qt/asyncio/파일시스템을 전혀 모�
     wire_custom.py      커스텀 프로토콜 메시지 타입 상수 + dict 빌더
 
 gui/                GUI 어댑터 (PySide6) - 화면만 담당
+  main_window.py      창 전체 조정(화면 전환, 소켓 연결, 프로필/치트 연결)
+  event_router.py     도메인 이벤트 -> 화면 동작 표. 새 이벤트는 여기 한 줄 추가
+  connection 관련
+    login_request.py    로그인 입력 검사(위젯/소켓 없는 순수 함수)
+    reconnect.py        끊겼을 때 언제 다시 붙을지 정하는 정책(위젯 모름)
+    network.py          TLS 소켓 + 라인 프로토콜 파싱
+  pages/              화면 - 부품을 조립하고 연결하기만 함
+    login_page.py       로그인
+    channel_page.py     채널 선택
+    chat_page.py        채팅
+  components/         화면을 이루는 부품 - 각자 자기 일만 알고 신호로만 대화
+    channel_sidebar.py  왼쪽 채널 목록/추가/나가기/안읽음/아래 만든이 표시
+    member_panel.py     오른쪽 참여자 목록/아이콘/닉네임
+    message_input.py    입력창/이모티콘 버튼/전송/자동완성(@닉네임, /명령)
+    message_item.py     메시지 한 줄(아이콘+글자+미리보기+이모티콘+시간)
+    message_log.py      그 줄들을 쌓는 채널별 대화 목록
+  styles/             QSS를 영역별로 나눠둔 곳(합치면 예전과 글자까지 동일)
+  theme.py            크기/색 상수 + 스타일시트 조립
   startup_page.py     시작화면(큰 로고 + 진행 상태)
   update_flow.py      업데이트 진행을 시작화면에 표시하는 흐름
   cheat_overlay.py    'show me the money' 자원 오버레이
   battlecruiser.py    '배틀크루저 소환' 오버레이(방향키 조종)
   link_preview.py     링크 미리보기 - 받아오기부터 그리기까지 전부 클라이언트가 함
+  emoji_picker.py     이모티콘 보관함 창 / emoji_view.py 메시지 안 이모티콘
+error_log.py        예상 못 한 오류를 파일로 남김(배포본은 콘솔이 없어서 필요)
+emoji_store.py      이모티콘 보관함(주소만 로컬 저장)
 cli_client.py       CLI 어댑터 (asyncio) - 터미널 출력만 담당
 gui_client.py       GUI 진입점 (파사드)
 server.py/store.py  서버 (클라이언트 구조와 무관, 이번 범위 밖)
@@ -75,10 +96,24 @@ updater.py          자동 업데이트 (인스톨러 실행 + 재시작 배치)
 치트도 마찬가지로 `constants.CHEAT_SPECS` 표 + `MainWindow._CHEAT_EFFECTS` 표다. 모르는 치트
 id는 조용히 무시되므로 구버전 클라이언트가 같은 채널에 있어도 죽지 않는다.
 
-### SRP
-`gui/`는 역할별로 나뉘어 있다: `theme`(상수/QSS), `helpers`(순수 함수), `network`(소켓),
-`widgets`(메시지/로그뷰), `pages`(화면), `main_window`(조정), `themed_dialogs`, `profile_dialog`,
-`title_bar`, `cheat_overlay`.
+### SRP - 화면은 조립만, 부품은 자기 일만
+`gui/components/`의 부품들은 **서로를 모른다.** 채널 목록은 대화 내용을 모르고, 입력줄은
+참여자를 모르고, 참여자 목록은 채널 목록을 모른다. 부품은 "눌렸다/바뀌었다"를 신호로만
+알리고, 그래서 무엇을 할지는 화면(`gui/pages/chat_page.py`)이 정한다.
+
+부품에 기능을 추가할 때 지킬 것:
+- **다른 부품을 직접 참조하지 말 것.** 필요하면 신호를 올려 화면이 중개하게 한다
+- 부품이 판단에 필요한 정보는 **주입받는다**(예: 입력줄은 자동완성 후보를 만들지 않고,
+  후보를 돌려주는 함수를 받아서 쓴다). 그래야 참여자/명령이 바뀌어도 그 파일은 안 건드린다
+- 화면 렌더링용 캐시는 그리는 쪽에 두되(참여자 아이콘 등) **거기서 판단은 하지 않는다**
+
+이 규칙 덕분에 ChatPage가 754줄 -> 423줄이 되었고, 채널 목록을 고칠 때 채팅 화면 전체를
+읽을 필요가 없어졌다.
+
+### 리팩토링할 때는 화면이 안 바뀐 것을 픽셀로 확인할 것
+기능 테스트는 배치가 몇 px 틀어지거나 여백이 달라진 것을 못 잡는다. `tests/ui_snapshot.py`로
+주요 화면을 그림으로 떠서 전후를 비교한다(`save 이름` -> 고치기 -> `check 이름`).
+이번 컴포넌트화는 매 단계 **다른 픽셀 0개**를 확인하고 진행했다.
 
 ## 화면 흐름 (부팅 순서)
 
