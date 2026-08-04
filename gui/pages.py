@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 import avatar_store
 import login_prefs
 import server_registry
-from chat_core.commands import COMMAND_PREFIX, KIND_ACTION, KIND_NOTICE
+from chat_core.commands import COMMAND_PREFIX, KIND_ACTION, KIND_NOTICE, format_emoji
 from gui.helpers import (
     _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert, _hashed_avatar_pixmap,
 )
@@ -489,11 +489,17 @@ class ChatPage(QWidget):
 
         center.addSpacing(_CARD_TO_CONTROL_GAP)
         input_row = QHBoxLayout()
+        # 입력창 왼쪽에 이모티콘 보관함 여는 자리
+        self.emoji_btn = QPushButton("이모티콘")
+        self.emoji_btn.setObjectName("emojiBtn")
+        self.emoji_btn.setToolTip("내 이모티콘 보관함 (채팅의 이미지를 우클릭해서 저장)")
+        self.emoji_btn.clicked.connect(self._open_emoji_picker)
         self.msg_input = QLineEdit()
         self.msg_input.setPlaceholderText("메시지 입력 후 Enter (@닉네임으로 호출 가능)")
         self.msg_input.returnPressed.connect(self._submit)
         send_btn = QPushButton("전송")
         send_btn.clicked.connect(self._submit)
+        input_row.addWidget(self.emoji_btn)
         input_row.addWidget(self.msg_input)
         input_row.addWidget(send_btn)
         center.addLayout(input_row)
@@ -644,6 +650,28 @@ class ChatPage(QWidget):
         chosen = menu.exec(self.channel_list.mapToGlobal(pos))
         if chosen is leave:
             self._request_close_channel(channel)
+
+    def _open_emoji_picker(self):
+        """이모티콘 보관함을 열고, 고른 것을 메시지에 넣음.
+
+        고른 이모티콘은 '표시로 감싼 주소'로 들어간다 - 주소 문자열은 대화에 안 보이고
+        받는 쪽에서 작은 그림으로 그려진다. 보관함 목록 자체는 절대 전송하지 않는다.
+        """
+        from gui.emoji_picker import EmojiPicker
+
+        picker = EmojiPicker(self, fetcher=self._image_fetcher)
+        picker.emoji_chosen.connect(self._insert_emoji)
+        picker.exec()
+        self.msg_input.setFocus()
+
+    def _insert_emoji(self, url: str):
+        if not url:
+            return
+        text = self.msg_input.text()
+        if text and not text.endswith(" "):
+            text += " "
+        self.msg_input.setText(text + format_emoji(url))
+        self.msg_input.setCursorPosition(len(self.msg_input.text()))
 
     def show_resource_cheat(self):
         """'show me the money'가 채널에 떴을 때 - 자원 오버레이를 채팅창 가운데에 잠깐 표시"""

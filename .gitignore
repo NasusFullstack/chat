@@ -28,3 +28,6 @@ installer_output/
 
 # 테스트가 만들어내는 결과물(캡처 등)
 tests/*.png
+
+# 이모티콘 보관함(주소 목록) - 로컬 전용
+emojis.json

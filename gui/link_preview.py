@@ -18,9 +18,10 @@
 두드리게 만드는 걸 막기 위함.
 """
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QMovie, QPixmap
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QMovie, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkRequest
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMenu, QSizePolicy,
+                               QVBoxLayout, QWidget)
 
 import link_meta
 
@@ -228,10 +229,44 @@ class ImagePreview(QLabel):
         movie.start()
         return True
 
+    @property
+    def url(self) -> str:
+        return self._url
+
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._url:
             QDesktopServices.openUrl(QUrl(self._url))
         super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event):
+        """우클릭 - 남이 올린 그림도 내 이모티콘 보관함에 넣을 수 있게.
+
+        지연 import인 이유는 파일 맨 위 docstring 참고(테스트가 themed_get_text를
+        바꿔치기할 수 있어야 하므로 반드시 모듈 속성으로 조회해야 함).
+        """
+        import gui_client
+        import emoji_store
+
+        if not self._url:
+            return
+        menu = QMenu(self)
+        already = emoji_store.has_emoji(self._url)
+        save_action = menu.addAction("이미 보관함에 있음" if already else "내 이모티콘으로 저장")
+        save_action.setEnabled(not already)
+        copy_action = menu.addAction("이미지 주소 복사")
+        chosen = menu.exec(event.globalPos())
+        if chosen is copy_action:
+            QGuiApplication.clipboard().setText(self._url)
+            return
+        if chosen is not save_action:
+            return
+        name, ok = gui_client.themed_get_text(
+            self, "이모티콘 저장", "이 이모티콘의 이름을 입력하세요 (나중에 검색할 때 씀)")
+        if not ok:
+            return
+        saved, text = emoji_store.add_emoji(self._url, name)
+        if not saved:
+            gui_client.themed_warning(self, "이모티콘 저장", text)
 
 
 class LinkCard(QFrame):
