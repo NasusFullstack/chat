@@ -113,22 +113,22 @@ print("로그인/입장 완료. 채널:", window.chat_page.open_channels())
 # ---- 1) 서버를 죽인다 ----
 server.terminate()
 server.wait(timeout=10)
-pump(app, 3, lambda: window._reconnecting)
+pump(app, 3, lambda: window._reconnect.active)
 
 notified = channel_text(window, CHANNEL)
 dropped_shown = "연결이 끊어졌습니다" in notified
 retry_shown = "다시 연결 시도" in notified
-print(f"끊김 감지: reconnecting={window._reconnecting} attempt={window._reconnect_attempt}")
-print(f"기억해둔 채널: {window._channels_to_restore}")
+print(f"끊김 감지: reconnecting={window._reconnect.active} attempt={window._reconnect.attempt}")
+print(f"기억해둔 채널: {window._reconnect.pending_channels}")
 
 # 서버가 없는 동안 재시도가 실제로 반복되는지(간격이 늘어나는지)
 pump(app, 9)
-attempts_while_down = window._reconnect_attempt
+attempts_while_down = window._reconnect.attempt
 print("서버 죽어있는 동안 시도 횟수:", attempts_while_down)
 
 # ---- 2) 서버를 다시 띄운다 ----
 server = start_server()
-reconnected = pump(app, 45, lambda: not window._reconnecting and bool(window.session.my_id))
+reconnected = pump(app, 45, lambda: not window._reconnect.active and bool(window.session.my_id))
 pump(app, 3)
 
 after = channel_text(window, CHANNEL)
@@ -152,7 +152,7 @@ can_chat = "재접속 후 메시지" in final
 # ---- 4) 일부러 끊는 경우엔 재접속하지 않아야 함 ----
 window._handle_back_to_login()
 pump(app, 2.5)
-no_reconnect_on_logout = not window._reconnecting and not window._reconnect_timer.isActive()
+no_reconnect_on_logout = not window._reconnect.active and not window._reconnect._timer.isActive()
 
 window.client.abort()
 server.terminate()
@@ -160,7 +160,7 @@ server.terminate()
 checks = [
     ("끊기면 채팅창에 끊김 안내가 뜬다", dropped_shown),
     ("재시도 안내가 뜬다", retry_shown),
-    ("끊긴 채널을 기억해둔다", CHANNEL in (window._channels_to_restore or [CHANNEL]) or rejoined),
+    ("끊긴 채널을 기억해둔다", CHANNEL in (window._reconnect.pending_channels or [CHANNEL]) or rejoined),
     ("서버가 없는 동안 계속 재시도한다(2회 이상)", attempts_while_down >= 2),
     ("서버가 살아나면 스스로 다시 붙는다", reconnected),
     ("다시 연결됐다는 안내가 뜬다", back_shown),

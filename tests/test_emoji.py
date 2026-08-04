@@ -175,9 +175,9 @@ picked = []
 picker.emoji_chosen.connect(picked.append)
 picker._on_picked(GIF)
 page._insert_emoji(GIF)
-checks.append(("고른 이모티콘이 입력창에 들어감", format_emoji(GIF) in page.msg_input.text()))
+checks.append(("고른 이모티콘이 입력창에 들어감", format_emoji(GIF) in page.message_input.line.text()))
 checks.append(("입력창에 주소 글자가 그대로 보이지 않음(표시로 감싸짐)",
-               page.msg_input.text().count(EMOJI_OPEN) == 1))
+               page.message_input.line.text().count(EMOJI_OPEN) == 1))
 
 # ---------- 5) 보관함에서 빼기 ----------
 checks.append(("보관함에서 빼기", emoji_store.remove_emoji(PNG)
