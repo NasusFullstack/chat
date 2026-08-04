@@ -24,6 +24,47 @@ KIND_CHAT = "chat"
 KIND_ACTION = "action"
 KIND_NOTICE = "notice"
 
+# 이모티콘 표시. 문장 중간에 섞여 들어가므로 \x01...\x01(CTCP)은 쓸 수 없다 - 그건 "이 줄
+# 전체가 숨김 프레임"이라는 뜻이라 아바타 처리 경로에 걸려 채팅이 통째로 사라진다.
+# 대신 유니코드 사용자 영역(어떤 글꼴에도 정의가 없어 일반 문자와 절대 안 겹치는 구간)을
+# 여는/닫는 기호로 쓴다. 우리 클라이언트는 이 자리에 작은 그림을 그리고, 다른 IRC
+# 클라이언트에서는 알 수 없는 글자 하나로 보인다(그림은 안 보이지만 대화는 안 깨짐).
+EMOJI_OPEN = "\ue000"
+EMOJI_CLOSE = "\ue001"
+
+
+def format_emoji(url: str) -> str:
+    """메시지에 넣을 이모티콘 표시. 주소만 실어 보낸다(보관함 목록은 안 보냄)."""
+    return f"{EMOJI_OPEN}{url}{EMOJI_CLOSE}"
+
+
+def split_emoji_parts(text: str) -> list[tuple[str, str]]:
+    """메시지를 [("text", 글자), ("emoji", 주소), ...] 로 분해.
+
+    표시가 없으면 [("text", 원문)] 하나만 나온다. 짝이 안 맞는 표시(잘렸거나 남의
+    클라이언트가 흉내낸 경우)는 그냥 글자로 취급해서 대화가 사라지지 않게 한다.
+    """
+    if EMOJI_OPEN not in text:
+        return [("text", text)]
+    parts: list[tuple[str, str]] = []
+    rest = text
+    while True:
+        before, sep, after = rest.partition(EMOJI_OPEN)
+        if not sep:
+            if before:
+                parts.append(("text", before))
+            break
+        url, close, remainder = after.partition(EMOJI_CLOSE)
+        if not close:
+            # 닫는 표시가 없음 - 원문 그대로 보여준다
+            parts.append(("text", before + EMOJI_OPEN + after))
+            break
+        if before:
+            parts.append(("text", before))
+        parts.append(("emoji", url) if url else ("text", ""))
+        rest = remainder
+    return [p for p in parts if p[1] or p[0] == "emoji"]
+
 
 @dataclass(frozen=True)
 class CommandSpec:

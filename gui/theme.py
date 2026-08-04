@@ -279,6 +279,51 @@ QPushButton#addChannelBtn {
     font-weight: bold;
     padding: 0px;
 }
+/* 입력창 왼쪽의 이모티콘 보관함 버튼 - 전송 버튼보다 눈에 덜 띄게 */
+QPushButton#emojiBtn {
+    background: #2b2d3a;
+    color: #c8cad8;
+    border: 1px solid #3a3d4e;
+    border-radius: 8px;
+    padding: 6px 12px;
+}
+QPushButton#emojiBtn:hover {
+    background: #343747;
+    color: #ffffff;
+}
+/* 이모티콘 보관함 창 */
+QWidget#emojiCell {
+    background: #24262f;
+    border: 1px solid #33364a;
+    border-radius: 8px;
+}
+QWidget#emojiCell:hover {
+    border: 1px solid #6c5ce7;
+}
+QLabel#emojiName {
+    color: #9a9cad;
+    font-size: 11px;
+    background: transparent;
+}
+QLabel#emojiEmpty {
+    color: #7f8296;
+    background: transparent;
+}
+QLabel#emojiPageLabel {
+    color: #c8cad8;
+    background: transparent;
+}
+QPushButton#emojiNavBtn {
+    background: #2b2d3a;
+    color: #c8cad8;
+    border: 1px solid #3a3d4e;
+    border-radius: 6px;
+    padding: 4px 0px;
+}
+QPushButton#emojiNavBtn:disabled {
+    color: #55586a;
+    border: 1px solid #2f3242;
+}
 /* 채팅창 위에 지금 보고 있는 채널 이름 */
 QLabel#channelHeader {
     color: #e6e6e6;

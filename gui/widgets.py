@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 import error_log
-from chat_core.commands import KIND_ACTION, KIND_CHAT, KIND_NOTICE
+from chat_core.commands import KIND_ACTION, KIND_CHAT, KIND_NOTICE, split_emoji_parts
 from gui.helpers import _format_ts, _linkify, extract_urls, text_is_only_urls
 from gui.theme import AVATAR_MSG_PX, TIMESTAMP_BADGE_HEIGHT_PX
 
@@ -64,7 +64,13 @@ class MessageWidget(QWidget):
         body = QVBoxLayout()
         body.setSpacing(1)
 
-        safe_text = text.replace("<", "&lt;").replace(">", "&gt;")
+        # 이모티콘 표시가 섞여 있으면 글자와 분리한다. 글자는 평소대로 라벨에 넣고,
+        # 이모티콘은 아래에 작은 그림으로 붙인다(주소 문자열이 대화에 보이면 안 됨)
+        parts = split_emoji_parts(text)
+        self.emoji_urls = [value for kind_, value in parts if kind_ == "emoji"]
+        plain_text = "".join(value for kind_, value in parts if kind_ == "text")
+
+        safe_text = plain_text.replace("<", "&lt;").replace(">", "&gt;")
         safe_text = _linkify(safe_text)
         text_label = QLabel(_message_html(sender, safe_text, mine, kind))
         text_label.setObjectName("messageText")
@@ -87,7 +93,18 @@ class MessageWidget(QWidget):
         # 차지하기만 하고, 그림/카드를 눌러 열 수 있어서 주소가 없어도 못 여는 일이 없음.
         # 미리보기를 끝내 못 받으면 콜백이 안 불려서 주소가 그대로 남음
         self._sender_only_html = _message_html(sender, "", mine, kind).rstrip(": ")
-        self._link_only = bool(self.preview_urls) and text_is_only_urls(text)
+        self._link_only = bool(self.preview_urls) and text_is_only_urls(plain_text)
+
+        # 이모티콘은 링크 미리보기(320px)와 달리 글자 옆에 붙는 작은 그림이다.
+        # 여러 개면 가로로 이어 붙는다
+        self.emoji_area = None
+        if self.emoji_urls:
+            from gui.emoji_view import EmojiRow
+            self.emoji_area = EmojiRow(self.emoji_urls, image_fetcher, self)
+            body.addWidget(self.emoji_area)
+            if not plain_text.strip():
+                # 이모티콘만 보낸 메시지 - 보낸 사람만 남기고 빈 줄은 없앰
+                self._text_label.setText(self._sender_only_html)
         if self.preview_urls:
             from gui.link_preview import LinkPreviewArea
             self.preview_area = LinkPreviewArea(
