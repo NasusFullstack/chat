@@ -44,6 +44,7 @@ from gui.cheat_overlay import CheatOverlay
 from gui.battlecruiser import BattlecruiserOverlay
 from gui.link_preview import ImageFetcher
 from gui.components.channel_sidebar import ChannelSidebar
+from gui.components.message_input import MessageInput
 from gui.widgets import ChannelLogView
 
 # 입력창 왼쪽 이모티콘 버튼 - 입력창과 같은 높이의 정사각형
@@ -499,27 +500,10 @@ class ChatPage(QWidget):
         center.addWidget(self._mention_notice)
 
         center.addSpacing(_CARD_TO_CONTROL_GAP)
-        input_row = QHBoxLayout()
-        # 입력창 왼쪽에 이모티콘 보관함 여는 자리. 글자 대신 웃는 얼굴만 두고 입력창과
-        # 같은 높이의 정사각형으로 맞춤(글자 버튼은 폭을 많이 먹고 높이도 안 맞았음)
-        self.emoji_btn = QPushButton()
-        self.emoji_btn.setObjectName("emojiBtn")
-        self.emoji_btn.setIcon(_smiley_icon(EMOJI_BTN_ICON_PX))
-        self.emoji_btn.setIconSize(QSize(EMOJI_BTN_ICON_PX, EMOJI_BTN_ICON_PX))
-        self.emoji_btn.setFixedSize(EMOJI_BTN_PX, EMOJI_BTN_PX)
-        self.emoji_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.emoji_btn.setToolTip("이모티콘")
-        self.emoji_btn.clicked.connect(self._open_emoji_picker)
-        self.msg_input = QLineEdit()
-        self.msg_input.setFixedHeight(EMOJI_BTN_PX)
-        self.msg_input.setPlaceholderText("메시지 입력 후 Enter (@닉네임으로 호출 가능)")
-        self.msg_input.returnPressed.connect(self._submit)
-        send_btn = QPushButton("전송")
-        send_btn.clicked.connect(self._submit)
-        input_row.addWidget(self.emoji_btn)
-        input_row.addWidget(self.msg_input)
-        input_row.addWidget(send_btn)
-        center.addLayout(input_row)
+        self.message_input = MessageInput(self._completion_candidates)
+        self.message_input.submitted.connect(self._on_input_submitted)
+        self.message_input.emoji_requested.connect(self._open_emoji_picker)
+        center.addWidget(self.message_input)
         center_widget = QWidget()
         center_widget.setLayout(center)
 
@@ -557,51 +541,23 @@ class ChatPage(QWidget):
         # 치트 오버레이는 레이아웃에 넣지 않고 채팅 영역 위에 겹쳐 띄움(테두리/배경 없이)
         self._cheat_overlay = CheatOverlay(self._center_stack)
         self._battlecruiser = BattlecruiserOverlay(self._center_stack)
-        self._battlecruiser.attach_input(self.msg_input)
+        self._battlecruiser.attach_input(self.message_input.line)
 
-        # @닉네임 / 슬래시 명령 자동완성 - Qt 내장 QCompleter가 접두사 필터링까지 다 해줌
-        # (별도 라이브러리 불필요). 한글도 일반 접두사 매칭은 그대로 동작함("몽"->"몽키").
-        # 못 하는 건 초성 검색("ㅁ"->"몽키")뿐인데, 그건 자모 분해가 필요한 별개 기능이라
-        # 여기서는 다루지 않음.
-        #
-        # QCompleter는 원래 "위젯 전체 텍스트"를 접두사로 보기 때문에 문장 중간의 @토큰에는
-        # 그대로 쓸 수 없음. 그래서 setCompletionPrefix()로 지금 입력 중인 토큰만 직접
-        # 넘겨주고 complete()로 팝업을 띄우는 방식으로 씀.
-        self._completion_model = QStringListModel([], self)
-        self._completer = QCompleter(self._completion_model, self)
-        self._completer.setWidget(self.msg_input)
-        self._completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        self._completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self._completer.setFilterMode(Qt.MatchFlag.MatchStartsWith)
-        self._completer.activated.connect(self._insert_completion)
-        self.msg_input.textEdited.connect(self._update_completer)
-        # 지금 완성 중인 토큰의 시작 위치(트리거 문자 포함). -1이면 완성 중이 아님
-        self._completion_start = -1
         # 지금 프로토콜이 지원하는 슬래시 명령 목록 - 세션이 알려주면 갱신됨
         self._command_tokens: list[str] = []
 
 
     def _open_emoji_picker(self):
-        """이모티콘 보관함을 열고, 고른 것을 메시지에 넣음.
-
-        고른 이모티콘은 '표시로 감싼 주소'로 들어간다 - 주소 문자열은 대화에 안 보이고
-        받는 쪽에서 작은 그림으로 그려진다. 보관함 목록 자체는 절대 전송하지 않는다.
-        """
+        """이모티콘 보관함을 열고, 고른 것을 메시지에 넣음."""
         from gui.emoji_picker import EmojiPicker
 
         picker = EmojiPicker(self, fetcher=self._image_fetcher)
         picker.emoji_chosen.connect(self._insert_emoji)
         picker.exec()
-        self.msg_input.setFocus()
+        self.message_input.focus()
 
     def _insert_emoji(self, url: str):
-        if not url:
-            return
-        text = self.msg_input.text()
-        if text and not text.endswith(" "):
-            text += " "
-        self.msg_input.setText(text + format_emoji(url))
-        self.msg_input.setCursorPosition(len(self.msg_input.text()))
+        self.message_input.insert_emoji(url)
 
     def show_resource_cheat(self):
         """'show me the money'가 채널에 떴을 때 - 자원 오버레이를 채팅창 가운데에 잠깐 표시"""
@@ -639,7 +595,7 @@ class ChatPage(QWidget):
         return self._nicknames.get(user_id, user_id)
 
     def _update_input_enabled(self):
-        self.msg_input.setEnabled(bool(self._active_channel))
+        self.message_input.set_enabled(bool(self._active_channel))
 
     def add_channel(self, channel: str, activate: bool = True):
         if channel not in self._log_views:
@@ -691,8 +647,7 @@ class ChatPage(QWidget):
         self.user_list.clear()
         # 떠 있던 오버레이/자동완성 팝업이 로그인 화면 위에 남지 않게 정리
         self._battlecruiser.stop()
-        self._completer.popup().hide()
-        self._completion_start = -1
+        self.message_input._hide_popup()
 
     def set_active_channel(self, channel: str):
         view = self._log_views.get(channel)
@@ -752,23 +707,18 @@ class ChatPage(QWidget):
         self.channel_sidebar.stop_blink(channel)
 
     def _submit(self):
-        """입력창 내용을 그대로 상위(MainWindow -> ChatSession)로 넘김.
+        self.message_input.submit()
 
-        @호출 쿨타임 판단은 이제 도메인 코어가 함 - 막히면 MentionBlocked 이벤트가 돌아와
-        show_mention_notice()로 안내문이 뜨고, 그때는 입력창을 비우지 않아야 하므로
-        여기서는 코어가 실제로 전송했는지를 알 수 없다는 점에 유의(전송 여부와 무관하게
-        비우면 막힌 메시지가 사라짐). 그래서 코어가 막았을 때만 입력을 되살리는 대신,
-        전송 시도 전 텍스트를 기억해뒀다가 안내문이 뜨면 그대로 복원함."""
-        # 자동완성 팝업이 떠 있을 때의 Enter는 "후보 선택"이지 "전송"이 아님.
-        # 이 가드가 없으면 Enter 한 번에 후보 선택과 전송이 같이 일어나서, 완성되기 전
-        # 상태의 텍스트("@Mo")가 그대로 전송됨(실제 키 이벤트 테스트로 발견한 버그)
-        if self._completer.popup().isVisible():
-            return
-        text = self.msg_input.text().strip()
-        if not text or not self._active_channel:
+    def _on_input_submitted(self, text: str):
+        """입력줄에서 올라온 글자를 그대로 상위(MainWindow -> ChatSession)로 넘김.
+
+        @호출 쿨타임 판단은 도메인 코어가 한다 - 막히면 MentionBlocked 이벤트가 돌아와
+        안내문이 뜨고, 그때 입력을 되살려야 하므로 보낸 글자를 기억해둔다.
+        """
+        if not self._active_channel:
             return
         self._pending_input_text = text
-        self.msg_input.clear()
+        self.message_input.clear()
         self.on_send(self._active_channel, text)
 
     # ==================== 자동완성 (@닉네임 / 슬래시 명령) ====================
@@ -779,74 +729,25 @@ class ChatPage(QWidget):
         self._command_tokens = [spec.token for spec in specs]
 
     def _completion_candidates(self, trigger: str) -> list[str]:
+        """자동완성 후보. 입력줄은 참여자도 명령도 모르므로 화면이 만들어서 넘겨준다."""
         if trigger == COMMAND_PREFIX:
             return list(self._command_tokens)
         members = self._members.get(self._active_channel, [])
-        # 나 자신은 호출할 일이 없으니 목록에서 뺌
         return ["@" + self._display_name_for(uid) for uid in members if uid != self.my_id]
 
-    def _completion_token(self) -> tuple[int, str] | None:
-        """커서 바로 앞에서 입력 중인 토큰이 자동완성 대상이면 (시작위치, 토큰).
+    def _completion_token(self):
+        return self.message_input.completion_token()
 
-        - '@'는 문장 어디서든 트리거(앞이 공백이거나 맨 앞일 때만 - 이메일 주소 오인 방지)
-        - '/'는 맨 앞에서만 트리거(명령은 줄 맨 앞에만 올 수 있음)
-        - 토큰 안에 공백이 들어가면 더 이상 완성 대상이 아님
-        """
-        text = self.msg_input.text()
-        cursor = self.msg_input.cursorPosition()
-        head = text[:cursor]
-        for trigger in ("@", COMMAND_PREFIX):
-            start = head.rfind(trigger)
-            if start < 0:
-                continue
-            token = head[start:]
-            if " " in token:
-                continue
-            if trigger == COMMAND_PREFIX and start != 0:
-                continue
-            if trigger == "@" and start > 0 and not head[start - 1].isspace():
-                continue
-            return start, token
-        return None
-
-    def _update_completer(self, _text: str = ""):
-        found = self._completion_token()
-        if found is None:
-            self._completion_start = -1
-            self._completer.popup().hide()
-            return
-        start, token = found
-        candidates = self._completion_candidates(token[0])
-        if not candidates:
-            self._completion_start = -1
-            self._completer.popup().hide()
-            return
-        self._completion_start = start
-        # 후보 목록 자체를 매번 새로 세팅해야 참여자가 들어오고 나간 게 바로 반영됨
-        self._completion_model.setStringList(candidates)
-        self._completer.setCompletionPrefix(token)
-        if self._completer.completionCount() == 0:
-            self._completer.popup().hide()
-            return
-        popup = self._completer.popup()
-        popup.setCurrentIndex(self._completer.completionModel().index(0, 0))
-        self._completer.complete()
+    def _update_completer(self, text: str = ""):
+        self.message_input._update_completer(text)
 
     def _insert_completion(self, chosen: str):
-        """팝업에서 고른 항목으로 입력 중이던 토큰을 교체하고 뒤에 공백 하나를 붙임"""
-        if self._completion_start < 0:
-            return
-        text = self.msg_input.text()
-        cursor = self.msg_input.cursorPosition()
-        new_text = text[:self._completion_start] + chosen + " " + text[cursor:]
-        self.msg_input.setText(new_text)
-        self.msg_input.setCursorPosition(self._completion_start + len(chosen) + 1)
-        self._completion_start = -1
+        self.message_input._insert_completion(chosen)
 
     def show_mention_notice(self, text: str):
         """코어가 @호출 쿨타임으로 전송을 막았을 때 - 안내문을 띄우고 입력 내용을 되살림"""
         if self._pending_input_text:
-            self.msg_input.setText(self._pending_input_text)
+            self.message_input.set_text(self._pending_input_text)
             self._pending_input_text = ""
         self._show_mention_notice(text)
 
@@ -862,7 +763,7 @@ class ChatPage(QWidget):
         self._mention_notice_timer = timer
 
     def focus_input(self):
-        self.msg_input.setFocus()
+        self.message_input.focus()
 
     def _avatar_for(self, user_id: str, px: int) -> QPixmap:
         cached = self._avatar_pixmaps.get(user_id)

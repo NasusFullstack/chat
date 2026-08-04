@@ -53,7 +53,7 @@ def press(key, down=True):
     """실제 키 이벤트를 입력창에 보냄(오버레이가 이벤트 필터로 가로채는 그 경로)"""
     ev = QKeyEvent(QEvent.Type.KeyPress if down else QEvent.Type.KeyRelease,
                    key, Qt.KeyboardModifier.NoModifier)
-    app.sendEvent(page.msg_input, ev)
+    app.sendEvent(page.message_input.line, ev)
 
 
 def snap(tag):

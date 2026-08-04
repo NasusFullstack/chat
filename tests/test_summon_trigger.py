@@ -83,7 +83,7 @@ def report(tag):
                if m.geometry().bottom() > top and m.geometry().top() < view_bottom)
     dead = content.height() - bottom - layout.contentsMargins().bottom()
     print(f"   {tag:26s} 보이는 메시지 {seen:2d} / 죽은 공간 {dead:5d}px"
-          f" / 입력창 사용가능={page.msg_input.isEnabled()}"
+          f" / 입력창 사용가능={page.message_input.line.isEnabled()}"
           f" / 참여자 {page.user_list.count()}")
     return seen, dead
 
