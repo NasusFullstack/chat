@@ -7,6 +7,14 @@ import sys
 
 IS_WINDOWS = sys.platform == "win32"
 
+# 사이드바 아래에 두는 만든이 표시
+DEVELOPER_EMAIL = "seven7973@gmail.com"
+DEVELOPER_NAME = "NasusFullstack"
+COPYRIGHT_YEAR = 2026
+FOOTER_LOGO_PX = 52
+# 채널이 많아 자리가 모자랄 때 목록을 미는 화살표 버튼 높이
+CHANNEL_SCROLL_BTN_PX = 18
+
 CONNECT_TIMEOUT_MS = 10_000
 # 서버가 끊겼을 때 자동 재접속: 시도할수록 간격을 늘림(죽은 서버를 계속 두드리지 않게)
 RECONNECT_BASE_MS = 3_000
@@ -278,6 +286,41 @@ QPushButton#addChannelBtn {
     font-size: 20px;
     font-weight: bold;
     padding: 0px;
+}
+/* 채널이 많아 자리가 모자랄 때 목록을 미는 화살표 - 배경 없이 기호만 */
+QPushButton#channelScrollBtn {
+    background: transparent;
+    color: #7f8296;
+    border: none;
+    font-size: 15px;
+    font-weight: bold;
+    padding: 0px;
+}
+QPushButton#channelScrollBtn:hover {
+    color: #ffffff;
+}
+/* 사이드바 맨 아래 - 로고/이름/버전/만든이. 채널이 적을 때 비는 자리를 채움 */
+QWidget#sidebarFooter {
+    background: transparent;
+    border-top: 1px solid #2b2d3a;
+}
+QLabel#footerLogo {
+    background: transparent;
+}
+QLabel#footerTitle {
+    background: transparent;
+    color: #cfd0da;
+    font-size: 13px;
+    font-weight: bold;
+}
+QLabel#footerMaker {
+    background: transparent;
+    font-size: 11px;
+}
+QLabel#footerCopyright {
+    background: transparent;
+    color: #62657a;
+    font-size: 11px;
 }
 /* 입력창 왼쪽의 이모티콘 보관함 버튼 - 웃는 얼굴만 있는 정사각형 */
 QPushButton#emojiBtn {

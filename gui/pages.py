@@ -30,12 +30,13 @@ import login_prefs
 import server_registry
 from chat_core.commands import COMMAND_PREFIX, KIND_ACTION, KIND_NOTICE, format_emoji
 from gui.helpers import (
-    _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert, _hashed_avatar_pixmap,
-    _smiley_icon,
+    _build_unread_dot_icon, _decode_avatar_pixmap, _find_default_cert, _find_logo_image,
+    _hashed_avatar_pixmap, _smiley_icon,
 )
 from gui.theme import (
     ADD_TAB_LABEL, APP_TITLE, AVATAR_LIST_PX, AVATAR_MSG_PX, CHANNEL_ROW_GAP,
-    CHANNEL_ROW_HEIGHT, CHANNEL_SIDEBAR_WIDTH, DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT,
+    CHANNEL_ROW_HEIGHT, CHANNEL_SCROLL_BTN_PX, CHANNEL_SIDEBAR_WIDTH, COPYRIGHT_YEAR,
+    DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT, DEVELOPER_EMAIL, DEVELOPER_NAME, FOOTER_LOGO_PX,
     UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
 )
 from version import APP_VERSION
@@ -585,6 +586,7 @@ class ChatPage(QWidget):
         """
         sidebar = QWidget()
         sidebar.setObjectName("channelSidebar")
+        self._channel_sidebar = sidebar
         sidebar.setFixedWidth(CHANNEL_SIDEBAR_WIDTH)
         outer = QVBoxLayout(sidebar)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -593,6 +595,15 @@ class ChatPage(QWidget):
         # 채팅창 위의 채널명 헤더와 같은 높이만큼 비워둬야 첫 채널 항목의 윗선이
         # 채팅 카드 윗선과 같은 높이에서 시작함
         outer.addSpacing(MEMBER_HEADER_HEIGHT)
+
+        self.channel_scroll_up = QPushButton("⌃")
+        self.channel_scroll_up.setObjectName("channelScrollBtn")
+        self.channel_scroll_up.setFixedHeight(CHANNEL_SCROLL_BTN_PX)
+        self.channel_scroll_up.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.channel_scroll_up.setToolTip("이전 채널 보기")
+        self.channel_scroll_up.clicked.connect(lambda: self._scroll_channels(-1))
+        self.channel_scroll_up.setVisible(False)
+        outer.addWidget(self.channel_scroll_up, 0)
 
         self.channel_list = QListWidget()
         self.channel_list.setObjectName("channelList")
@@ -615,8 +626,72 @@ class ChatPage(QWidget):
         self.add_channel_btn.clicked.connect(lambda: self.on_add_channel())
         outer.addWidget(self.add_channel_btn, 0)
 
+        # 채널이 많아 자리가 모자라면 목록을 잘라서 보여주고, 위/아래 화살표로 밀어 본다.
+        # (스크롤바를 띄우면 알약 항목 옆에 회색 막대가 붙어 지저분해짐)
+        self.channel_scroll_down = QPushButton("⌄")
+        self.channel_scroll_down.setObjectName("channelScrollBtn")
+        self.channel_scroll_down.setFixedHeight(CHANNEL_SCROLL_BTN_PX)
+        self.channel_scroll_down.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.channel_scroll_down.setToolTip("다음 채널 보기")
+        self.channel_scroll_down.clicked.connect(lambda: self._scroll_channels(1))
+        self.channel_scroll_down.setVisible(False)
+        outer.addWidget(self.channel_scroll_down, 0)
+
         outer.addStretch(1)
+        self._sidebar_footer = self._build_sidebar_footer()
+        outer.addWidget(self._sidebar_footer, 0)
         return sidebar
+
+    def _build_sidebar_footer(self) -> QWidget:
+        """사이드바 아래쪽 빈 자리에 두는 로고/버전/만든이 표시."""
+        footer = QWidget()
+        footer.setObjectName("sidebarFooter")
+        column = QVBoxLayout(footer)
+        column.setContentsMargins(10, 10, 10, 12)
+        column.setSpacing(2)
+
+        logo_path = _find_logo_image()
+        if logo_path:
+            logo = QLabel()
+            logo.setObjectName("footerLogo")
+            logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            logo.setPixmap(QPixmap(logo_path).scaled(
+                FOOTER_LOGO_PX, FOOTER_LOGO_PX,
+                Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            column.addWidget(logo, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        title = QLabel(f"{APP_TITLE}  <span style='color:#7f8296'>v{APP_VERSION}</span>")
+        title.setObjectName("footerTitle")
+        title.setTextFormat(Qt.TextFormat.RichText)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        column.addWidget(title)
+
+        maker = QLabel(
+            f'<a href="mailto:{DEVELOPER_EMAIL}" style="color:#8f92a6; text-decoration:none;">'
+            f"{DEVELOPER_EMAIL}</a>")
+        maker.setObjectName("footerMaker")
+        maker.setTextFormat(Qt.TextFormat.RichText)
+        maker.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        maker.setOpenExternalLinks(True)
+        maker.setToolTip("만든 사람에게 메일 보내기")
+        column.addWidget(maker)
+
+        copyright_label = QLabel(f"© {COPYRIGHT_YEAR} {DEVELOPER_NAME}")
+        copyright_label.setObjectName("footerCopyright")
+        copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        column.addWidget(copyright_label)
+        return footer
+
+    def _scroll_channels(self, direction: int):
+        """채널 목록을 한 칸씩 밀어 본다(+1이면 아래로)."""
+        bar = self.channel_list.verticalScrollBar()
+        bar.setValue(bar.value() + direction * (CHANNEL_ROW_HEIGHT + CHANNEL_ROW_GAP))
+        self._sync_channel_scroll_buttons()
+
+    def _sync_channel_scroll_buttons(self):
+        bar = self.channel_list.verticalScrollBar()
+        self.channel_scroll_up.setVisible(bar.maximum() > 0 and bar.value() > 0)
+        self.channel_scroll_down.setVisible(bar.maximum() > 0 and bar.value() < bar.maximum())
 
     def _sync_channel_list_height(self):
         """채널 목록이 딱 항목 수만큼만 높이를 차지하게 함.
@@ -626,11 +701,32 @@ class ChatPage(QWidget):
         count = self.channel_list.count()
         if count == 0:
             self.channel_list.setFixedHeight(0)
+            self._sync_channel_scroll_buttons()
             return
         row = self.channel_list.visualItemRect(self.channel_list.item(0))
         # 항목 사이 간격(QSS의 margin-bottom)까지 포함해야 마지막 줄이 안 잘림
         step = row.height() + CHANNEL_ROW_GAP
-        self.channel_list.setFixedHeight(step * count)
+        needed = step * count
+        # 자리가 모자라면 잘라서 보여주고 화살표로 밀어 본다. 화살표가 없으면 채널이
+        # 많을 때 아래쪽 채널을 아예 볼 수 없다
+        available = self._channel_list_space(step)
+        if available > 0 and available < needed:
+            # 칸 단위로 잘라야 마지막 항목이 반쯤 걸쳐 보이지 않음
+            available = max(step, (available // step) * step)
+        self.channel_list.setFixedHeight(min(needed, available) if available > 0 else needed)
+        self._sync_channel_scroll_buttons()
+
+    def _channel_list_space(self, step: int) -> int:
+        """사이드바에서 채널 목록이 쓸 수 있는 높이(헤더/+ 버튼/화살표/아래 정보 제외)."""
+        sidebar = getattr(self, "_channel_sidebar", None)
+        if sidebar is None or sidebar.height() <= 0:
+            return 0
+        used = (MEMBER_HEADER_HEIGHT + CHANNEL_ROW_HEIGHT      # 헤더 자리 + '+' 버튼
+                + CHANNEL_SCROLL_BTN_PX * 2                     # 위/아래 화살표
+                + self._sidebar_footer.sizeHint().height())
+        space = sidebar.height() - used
+        # 최소 한 칸은 보이게(너무 작으면 목록이 아예 안 보임)
+        return max(step, space)
 
     def _channel_row(self, channel: str) -> int:
         """사이드바에서 그 채널이 몇 번째 줄인지. 없으면 -1"""
@@ -704,6 +800,8 @@ class ChatPage(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._push_wrap_width()
+        # 창 높이가 바뀌면 채널 목록이 쓸 수 있는 자리도 바뀜
+        self._sync_channel_list_height()
 
     def _push_wrap_width(self):
         """self.tabs는 어떤 채널 탭이 떠 있든 항상 실제로 보이는 위젯이라 폭이 정확함.
