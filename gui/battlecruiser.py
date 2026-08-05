@@ -15,8 +15,8 @@
 import math
 import os
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QImage, QLinearGradient, QPainter, QPen, QPixmap, QPolygonF
+from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 from gui.ship.painter import _draw_ship
 from gui.ship.sprite import _load_sprite

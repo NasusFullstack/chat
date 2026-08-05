@@ -19,10 +19,9 @@ from PySide6.QtWidgets import (
 
 import app_prefs
 import avatar_store
-import error_log
 import irc_protocol
 import login_prefs
-from chat_core import constants, events as domain_events
+from chat_core import constants
 from chat_core.session import build_session
 from gui import event_router
 from gui.login_request import parse_login_values
@@ -34,8 +33,7 @@ from gui.network import ChatClient
 from gui.pages import ChannelPage, ChatPage, LoginPage
 from gui.profile_dialog import ProfileDialog
 from gui.startup_page import StartupPage
-from gui.theme import (APP_TITLE, CONNECT_TIMEOUT_MS, IS_WINDOWS, RECONNECT_BASE_MS,
-                       RECONNECT_MAX_ATTEMPTS, RECONNECT_MAX_MS)
+from gui.theme import APP_TITLE, CONNECT_TIMEOUT_MS, IS_WINDOWS
 from gui.title_bar import TitleBar
 from version import APP_VERSION
 

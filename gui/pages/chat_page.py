@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QStackedWidget,
                                QTabWidget, QVBoxLayout, QWidget)
 
 import app_prefs
-from chat_core.commands import COMMAND_PREFIX, KIND_ACTION, KIND_NOTICE
+from chat_core.commands import COMMAND_PREFIX
 from gui.battlecruiser import BattlecruiserOverlay
 from gui.cheat_overlay import CheatOverlay
 from gui.components.app_footer import AppFooter

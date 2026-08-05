@@ -49,8 +49,6 @@ CHEAT_SPECS = (
 
 _CHEATS_BY_PHRASE = {spec.phrase: spec for spec in CHEAT_SPECS}
 
-# 예전 이름 - 자원 치트만 있던 시절의 호출부/테스트 호환용
-CHEAT_PHRASE = CHEAT_SPECS[0].phrase
 CHEAT_COOLDOWN_SEC = CHEAT_SPECS[0].cooldown_sec
 
 
@@ -59,5 +57,3 @@ def find_cheat(text: str) -> CheatSpec | None:
     return _CHEATS_BY_PHRASE.get(text.strip().lower())
 
 
-def is_cheat_phrase(text: str) -> bool:
-    return find_cheat(text) is not None

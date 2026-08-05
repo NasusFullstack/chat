@@ -4,7 +4,7 @@
 기능이 죽지 않아야 하기 때문.
 """
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QLinearGradient, QPainter, QPen, QPolygonF
 
 from gui.ship.sprite import (_ENGINE, _HULL_DARK, _HULL_LIGHT, _HULL_MID, _OUTLINE,
                              _TEAM, _TEAM_DARK)
