@@ -99,6 +99,10 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE_SHEET)
+    # 창을 닫아도 프로그램이 끝나지 않게 함(트레이에 남아 계속 메시지를 받는다).
+    # 이걸 안 끄면 창을 숨기는 순간 Qt가 "마지막 창이 닫혔다"고 보고 종료해버린다.
+    # 실제 종료는 트레이 메뉴의 '종료'(MainWindow.quit_app)가 담당한다
+    app.setQuitOnLastWindowClosed(False)
 
     icon_path = _find_app_icon()
     if icon_path:

@@ -318,6 +318,11 @@ class ChatPage(QWidget):
             return
         self._pending_input_text = text
         self.message_input.clear()
+        # 보내는 순간 바로 맨 아래로. 서버를 돌아온 내 메시지가 늦게 도착해도
+        # 그때 한 번 더 따라 내려간다(ChannelLogView가 표시를 들고 있음)
+        view = self._log_views.get(self._active_channel)
+        if view is not None:
+            view.scroll_to_bottom()
         self.on_send(self._active_channel, text)
 
     # ==================== 자동완성 (@닉네임 / 슬래시 명령) ====================

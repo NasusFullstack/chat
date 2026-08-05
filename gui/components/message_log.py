@@ -131,6 +131,9 @@ class ChannelLogView(QScrollArea):
         # 그게 다시 이 신호를 부르면서 스택이 넘쳤다(실측: 메시지 120건에서 죽음).
         # 그래서 **신호가 넘겨주는 값과 지금 위치만** 쓴다
         self._last_maximum = 0
+        # 내가 친 메시지는 지난 대화를 보고 있었더라도 무조건 맨 아래로 내려간다.
+        # (보내자마자 내 말이 안 보이면 안 간 줄 알게 된다)
+        self._force_follow_once = False
 
     def _follow_bottom(self, minimum: int, maximum: int):
         """대화가 길어져 스크롤 범위가 늘어났을 때 따라 내려갈지 정한다.
@@ -139,9 +142,10 @@ class ChannelLogView(QScrollArea):
         것이므로 따라간다. 위쪽 지난 대화를 읽고 있었다면 읽던 자리를 그대로 둔다.
         """
         bar = self.verticalScrollBar()
+        forced, self._force_follow_once = self._force_follow_once, False
         was_at_bottom = bar.value() >= self._last_maximum - STICK_TO_BOTTOM_SLACK_PX
         self._last_maximum = maximum
-        if was_at_bottom:
+        if forced or was_at_bottom:
             bar.setValue(maximum)
 
     def _at_bottom(self) -> bool:
@@ -149,10 +153,12 @@ class ChannelLogView(QScrollArea):
         return bar.value() >= bar.maximum() - STICK_TO_BOTTOM_SLACK_PX
 
     def scroll_to_bottom(self):
-        """맨 아래로 내려감(채널을 새로 열 때 등)."""
+        """맨 아래로 내려감(채널을 새로 열 때, 내가 메시지를 보냈을 때 등)."""
         bar = self.verticalScrollBar()
         self._last_maximum = bar.maximum()
         bar.setValue(bar.maximum())
+        # 내 메시지가 서버를 돌아 조금 늦게 도착해도 그때 다시 따라 내려가게
+        self._force_follow_once = True
 
     def is_following_bottom(self) -> bool:
         """지금 최신 대화를 보고 있는가(= 새 메시지가 오면 따라 내려갈 상태인가)."""
@@ -176,6 +182,8 @@ class ChannelLogView(QScrollArea):
                        kind: str = KIND_CHAT, preview: bool = True):
         widget = MessageWidget(sender, text, mine, ts, avatar_pixmap, kind=kind, preview=preview,
                                image_fetcher=self._image_fetcher)
+        if mine:
+            self._force_follow_once = True   # 내 메시지는 위를 보던 중이어도 따라 내려감
         widget.set_wrap_width(self._effective_width())
         self._layout.addWidget(widget)
         self._messages.append(widget)

@@ -111,6 +111,9 @@ def _message_received(view, event):
         event.channel, event.sender, event.text, event.mine, event.ts,
         is_mention=event.is_mention, kind=event.kind,
     )
+    if not event.mine:
+        # 내가 보낸 건 알릴 이유가 없다. 창을 보고 있는지 판단은 창이 한다
+        view.notify_new_message(event.sender, event.text, event.channel)
 
 
 def _system_notice(view, event):

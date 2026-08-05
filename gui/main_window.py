@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QLineEdit, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+import app_prefs
 import avatar_store
 import error_log
 import irc_protocol
@@ -26,6 +27,7 @@ from chat_core.session import build_session
 from gui import event_router
 from gui.login_request import parse_login_values
 from gui.reconnect import ReconnectPolicy
+from gui.tray import TrayIcon
 from updater import POST_UPDATE_FLAG
 from gui.helpers import _friendly_connection_error
 from gui.network import ChatClient
@@ -120,6 +122,13 @@ class MainWindow(QMainWindow):
         self.session = build_session(
             "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
         )
+
+        # 창을 닫아도 계속 받으려면 트레이가 필요하다. 트레이가 없는 환경이면
+        # available=False로 오고, 그때는 창을 닫는 즉시 종료된다
+        self._quitting = False
+        self._tray = TrayIcon(self.windowIcon(), self)
+        self._tray.open_requested.connect(self.show_from_tray)
+        self._tray.quit_requested.connect(self.quit_app)
 
         self._connect_timer = QTimer(self)
         self._connect_timer.setSingleShot(True)
@@ -323,15 +332,50 @@ class MainWindow(QMainWindow):
 
     def set_window_icon(self, icon: QIcon):
         self.setWindowIcon(icon)
+        self._tray.set_icon(icon)
         if self._title_bar is not None:
             self._title_bar.set_icon(icon)
 
     def closeEvent(self, event):
+        """창의 X는 '종료'가 아니라 '치우기'다.
+
+        메신저는 창을 닫았다고 나가버리면 곤란하다. 창만 숨기고 연결은 유지하다가,
+        트레이 아이콘 메뉴에서 '종료'를 눌러야 실제로 끝난다(그때는 _quitting이 켜진다).
+        트레이를 못 쓰는 환경이거나 설정에서 껐으면 예전처럼 그냥 종료한다.
+        """
+        if not self._quitting and self._tray.available and app_prefs.get("close_to_tray"):
+            event.ignore()
+            self.hide()
+            self._tray.notify(APP_TITLE, "창을 닫아도 계속 받습니다. 종료하려면 "
+                                         "이 아이콘을 우클릭해 '종료'를 누르세요.")
+            return
         # 종료하면서 소켓이 끊기는 것도 disconnected로 오므로, 여기서 미리 막지 않으면
         # 앱이 닫히는 중에 재접속 타이머가 걸림
         self._intentional_close = True
         self._cancel_reconnect()
+        self._tray.hide()
         super().closeEvent(event)
+
+    def quit_app(self):
+        """트레이 메뉴의 '종료' - 이제 진짜로 끝낸다."""
+        self._quitting = True
+        self.close()
+        QApplication.instance().quit()
+
+    def show_from_tray(self):
+        """트레이에서 다시 창을 꺼냄. 최소화돼 있었으면 원래 크기로 되돌린다."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def notify_new_message(self, sender: str, text: str, channel: str):
+        """창을 보고 있지 않을 때만 오른쪽 아래에 알림을 띄운다.
+
+        보고 있는데도 뜨면 방해만 된다 - 창이 떠 있고 활성 상태면 화면에 이미 보인다.
+        """
+        if self.isVisible() and self.isActiveWindow():
+            return
+        self._tray.notify(sender, text, channel)
 
     def changeEvent(self, event):
         # 버튼 클릭이 아니라 더블클릭/에어로 스냅 등 다른 경로로 최대화 상태가
