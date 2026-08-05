@@ -17,12 +17,31 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 import app_prefs
+from chat_core.commands import split_emoji_parts
 from gui.theme import APP_TITLE
 
 # 알림에 넣을 본문 길이 상한. 길면 운영체제가 알아서 자르지만, 그 전에 우리가 잘라야
 # 줄바꿈이 이상하게 끊기지 않는다
 NOTIFY_BODY_MAX = 120
 NOTIFY_TIMEOUT_MS = 5000
+
+
+def notification_body(text: str) -> str:
+    """알림 본문으로 쓸 글자.
+
+    이모티콘은 메시지 안에 '표시로 감싼 주소'로 들어 있어서, 그대로 띄우면 알림에 긴 주소가
+    노출된다. 사람이 읽을 수 있는 말로 바꾼다.
+    """
+    pieces = []
+    for kind, value in split_emoji_parts(text):
+        if kind == "emoji":
+            pieces.append("(이모티콘)")
+        else:
+            pieces.append(value)
+    body = " ".join(" ".join(pieces).split())   # 이어 붙이며 생긴 공백 정리
+    if len(body) > NOTIFY_BODY_MAX:
+        body = body[:NOTIFY_BODY_MAX - 1] + "…"
+    return body
 
 
 class TrayIcon(QObject):
@@ -85,12 +104,13 @@ class TrayIcon(QObject):
     # ---------------- 알림 ----------------
 
     def notify(self, sender: str, text: str, channel: str = ""):
-        """새 메시지를 오른쪽 아래에 띄움. 설정이 꺼져 있으면 아무 것도 안 함."""
+        """새 메시지를 오른쪽 아래에 띄움. 설정이 꺼져 있으면 아무 것도 안 함.
+
+        제목은 "보낸사람 (#채널)", 본문은 메시지 내용이다.
+        """
         if self._tray is None or not app_prefs.get("notifications"):
             return
-        body = text.strip()
-        if len(body) > NOTIFY_BODY_MAX:
-            body = body[:NOTIFY_BODY_MAX - 1] + "…"
+        body = notification_body(text)
         title = f"{sender} ({channel})" if channel else sender
         self._tray.showMessage(title, body, QSystemTrayIcon.MessageIcon.Information,
                                NOTIFY_TIMEOUT_MS)
