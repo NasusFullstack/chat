@@ -13,10 +13,10 @@ QTabWidget::pane {
    그 아래를 지나는 카드 테두리 선과 만나 선이 끊긴 것처럼 보임.
    좌우 여백(padding)은 닫기(×) 버튼 자리를 침범하지 않도록 오른쪽을 넉넉히 둠 */
 QTabBar::tab {
-    background-color: #23242f;
-    color: #9a9cad;
+    background-color: __BG_ITEM__;
+    color: __TEXT_DIM__;
     padding: 0px 8px 0px 12px;
-    border: 1px solid #34364a;
+    border: 1px solid __LINE_SOFT__;
     border-radius: 8px;
     margin-right: 6px;
     margin-bottom: 8px;
@@ -24,14 +24,14 @@ QTabBar::tab {
 /* 선택된 탭은 테두리 색만 바꾸는 정도로는 눈에 잘 안 띄어서, 면색까지 강조색 계열로
    채워 "지금 보고 있는 채널"이 한눈에 들어오게 함 */
 QTabBar::tab:selected {
-    background-color: #3a3560;
-    color: #ffffff;
-    border: 1px solid #7c6cf0;
+    background-color: __ACCENT_MUTED__;
+    color: __TEXT_STRONG__;
+    border: 1px solid __ACCENT__;
     font-weight: bold;
 }
 QTabBar::tab:hover:!selected {
-    background-color: #2f3140;
-    color: #cfd0da;
-    border: 1px solid #4a4d63;
+    background-color: __BG_ITEM_HOVER__;
+    color: __TEXT_MUTED__;
+    border: 1px solid __LINE_HOVER__;
 }
 """

@@ -14,24 +14,29 @@ _shake_window를 호출하는데, 이 5개는 테스트가 gui_client 모듈에 
 `gui_client.xxx(...)`로 조회한다. 맨 위에 두면 PyInstaller 빌드에서 순환참조로 크래시가 난다
 (자세한 이유는 gui_client.py 상단 주석 참고).
 """
-from gui.theme import AVATAR_MSG_PX
 import time
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QStackedWidget,
                                QTabWidget, QVBoxLayout, QWidget)
 
+import app_prefs
 from chat_core.commands import COMMAND_PREFIX, KIND_ACTION, KIND_NOTICE
 from gui.battlecruiser import BattlecruiserOverlay
 from gui.cheat_overlay import CheatOverlay
+from gui.components.app_footer import AppFooter
 from gui.components.channel_sidebar import ChannelSidebar
 from gui.components.member_panel import MemberPanel
 from gui.components.message_input import MessageInput
 from gui.components.message_log import ChannelLogView
 from gui.link_preview import ImageFetcher
+from gui.theme import AVATAR_MSG_PX, CHANNEL_SIDEBAR_WIDTH
 
 # 참여자 헤더 높이 - 채팅 카드 상단과 참여자 카드 상단을 같은 높이에 두기 위한 값
 MEMBER_HEADER_HEIGHT = 34
+# 참여자 열 폭 - 왼쪽 채널 사이드바와 같은 폭으로 맞춤(양쪽이 대칭이라 눈에 안정적이고,
+# 아래로 옮겨온 만든이 표시도 예전 사이드바에 있을 때와 같은 폭을 그대로 쓴다)
+MEMBER_COLUMN_WIDTH = CHANNEL_SIDEBAR_WIDTH
 
 # 카드(채팅/참여자) 아래와 그 밑 컨트롤(입력창/프로필 버튼) 사이 간격.
 # 좌우 열이 같은 값을 써야 아래쪽 버튼 줄이 나란히 놓임
@@ -67,6 +72,10 @@ class ChatPage(QWidget):
         self.channel_sidebar.channel_selected.connect(self._on_sidebar_channel)
         self.channel_sidebar.add_requested.connect(lambda: self.on_add_channel())
         self.channel_sidebar.leave_requested.connect(self._request_close_channel)
+        # 접어둔 채로 껐으면 다음에도 접힌 채로 연다(매번 다시 접게 하면 성가심)
+        self.channel_sidebar.set_collapsed(app_prefs.get("channel_sidebar_collapsed"))
+        self.channel_sidebar.collapsed_changed.connect(
+            lambda on: app_prefs.set_value("channel_sidebar_collapsed", on))
         layout.addWidget(self.channel_sidebar)
 
         center = QVBoxLayout()
@@ -121,16 +130,21 @@ class ChatPage(QWidget):
         right.setSpacing(0)
         right.setContentsMargins(0, 0, 0, 0)
         self.member_panel = MemberPanel(MEMBER_HEADER_HEIGHT)
-        right.addWidget(self.member_panel, 1)
-        # 아래쪽도 왼쪽(채팅 카드 -> 입력창) 간격과 같은 값이어야 버튼 줄이 나란히 놓임
+        right.addWidget(self.member_panel, 0)
+        # 프로필 변경은 참여자 목록에 바로 붙는다(내 아이콘도 저 목록에 보이므로 같은 덩어리)
         right.addSpacing(_CARD_TO_CONTROL_GAP)
         self.avatar_btn = QPushButton("프로필 변경")
         self.avatar_btn.setObjectName("secondary")
         self.avatar_btn.clicked.connect(lambda: self.on_set_avatar())
         right.addWidget(self.avatar_btn)
+        # 만든이 표시는 맨 아래에 가라앉힌다. 채널 사이드바에 있었지만 그쪽은 접을 수 있게
+        # 되면서 접으면 통째로 사라져버려서, 항상 보이는 이쪽 열로 옮겼다
+        right.addStretch(1)
+        self.footer = AppFooter()
+        right.addWidget(self.footer, 0)
         right_widget = QWidget()
         right_widget.setLayout(right)
-        right_widget.setFixedWidth(160)
+        right_widget.setFixedWidth(MEMBER_COLUMN_WIDTH)
 
         layout.addWidget(center_widget, 3)
         layout.addWidget(right_widget, 1)

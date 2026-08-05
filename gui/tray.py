@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 import app_prefs
 from chat_core.commands import split_emoji_parts
 from gui.theme import APP_TITLE
+from gui.toast import ToastPopup
 
 # 알림 본문 길이 상한. 알림은 "누가 뭐라고 했는지" 훑어보는 용도라 짧아야 한다 -
 # 길면 알림 자체가 화면을 오래 가리고, 어차피 다 읽을 거면 창을 열게 된다
@@ -55,6 +56,10 @@ class TrayIcon(QObject):
 
     def __init__(self, icon, parent=None):
         super().__init__(parent)
+        # 알림은 운영체제 기본 알림 대신 우리가 그린 팝업으로 띄운다(gui/toast.py 설명 참고).
+        # 누르면 창을 열어주는 것까지 같은 신호로 이어붙인다
+        self._toast = ToastPopup(icon)
+        self._toast.clicked.connect(self.open_requested.emit)
         # 짧은 시간에 몰려온 메시지를 하나로 묶기 위한 대기열.
         # 트레이가 없는 환경에서도 만들어 둔다 - 있고 없고에 따라 코드가 갈리면
         # 그 경로만 시험이 안 되고, 나중에 트레이가 생겨도 대응이 안 된다
@@ -122,7 +127,7 @@ class TrayIcon(QObject):
 
         제목은 "보낸사람 (#채널)", 본문은 메시지 내용이다.
         """
-        if self._tray is None or not app_prefs.get("notifications"):
+        if not app_prefs.get("notifications"):
             return
         # 바로 띄우지 않고 잠깐 모은다. 연달아 오면 앞의 것을 대체해서, 우리 알림이
         # 세로로 여러 개 쌓이지 않고 항상 최신 하나만 보이게 한다(카톡/라인과 같은 방식).
@@ -131,7 +136,7 @@ class TrayIcon(QObject):
         self._coalesce.start(NOTIFY_COALESCE_MS)
 
     def _flush_pending(self):
-        if not self._pending or self._tray is None:
+        if not self._pending:
             return
         items, self._pending = self._pending, []
         sender, text, channel = items[-1]      # 가장 최근 메시지를 보여줌
@@ -143,13 +148,14 @@ class TrayIcon(QObject):
             extra = f"외 {others}건" if len(senders) == 1 else f"외 {others}건 · {len(senders)}명"
             body = f"{body}  ({extra})"
         title = f"{sender} ({channel})" if channel else sender
-        self._tray.showMessage(title, body, QSystemTrayIcon.MessageIcon.Information,
-                               NOTIFY_TIMEOUT_MS)
+        self._toast.show_message(title, body)
 
     def set_icon(self, icon):
+        self._toast.set_icon(icon)
         if self._tray is not None:
             self._tray.setIcon(icon)
 
     def hide(self):
+        self._toast.hide()
         if self._tray is not None:
             self._tray.hide()

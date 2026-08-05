@@ -1,4 +1,4 @@
-"""오른쪽 참여자 목록 - 헤더 + 아이콘 붙은 이름 목록.
+"""오른쪽 참여자 목록 - 인원수 헤더 + 아이콘 붙은 이름 목록.
 
 여기 담긴 것은 "지금 채널에 누가 있고, 각자 어떤 아이콘/닉네임으로 보이는가"뿐이다.
 대화 내용도, 채널 목록도, 입력창도 모른다.
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout,
 
 import avatar_store
 from gui.helpers import _decode_avatar_pixmap, _hashed_avatar_pixmap
-from gui.theme import AVATAR_LIST_PX
+from gui.theme import AVATAR_LIST_PX, MEMBER_ROW_HEIGHT, MEMBER_VISIBLE_ROWS
 
 
 class MemberPanel(QWidget):
@@ -30,14 +30,19 @@ class MemberPanel(QWidget):
 
         # objectName을 주면 안 됨 - 채팅 헤더(channelHeader)는 굵고 흰 글씨라 모양이 달라진다.
         # 지금은 기본 QLabel 스타일 그대로여야 예전 화면과 픽셀까지 같다
-        self.header = QLabel("참여자")
+        self.header = QLabel(_header_text(0))
         self.header.setFixedHeight(header_height)
         self.header.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         column.addWidget(self.header)
 
         self.list = QListWidget()
+        self.list.setObjectName("memberList")
         self.list.setIconSize(QSize(AVATAR_LIST_PX, AVATAR_LIST_PX))
-        column.addWidget(self.list)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 창 끝까지 늘리지 않고 여섯 줄만 - 그 아래 프로필 버튼과 만든이 표시가 밀려나지
+        # 않게. 넘치는 사람은 얇은 스크롤바로 내려서 본다
+        self.list.setFixedHeight(MEMBER_ROW_HEIGHT * MEMBER_VISIBLE_ROWS + 2)
+        column.addWidget(self.list, 0)
 
         # 채널별 참여자와, 사람별 표시 정보. 값의 출처는 도메인 이벤트뿐이다
         self._members: dict[str, list[str]] = {}
@@ -72,6 +77,7 @@ class MemberPanel(QWidget):
 
     def clear(self):
         self.list.clear()
+        self.header.setText(_header_text(0))
 
     def reset(self):
         """로그아웃 등 - 이전 계정의 참여자/아이콘이 다음 로그인에 남으면 안 됨"""
@@ -80,6 +86,7 @@ class MemberPanel(QWidget):
         self._nicknames.clear()
         self._active_channel = ""
         self.list.clear()
+        self.header.setText(_header_text(0))
 
     def count(self) -> int:
         return self.list.count()
@@ -93,7 +100,10 @@ class MemberPanel(QWidget):
                 # 닉네임은 고유성이 보장되지 않으므로 원래 아이디를 툴팁으로 확인 가능하게
                 item.setToolTip(user_id)
             item.setIcon(QIcon(self.avatar(user_id, AVATAR_LIST_PX)))
+            # 줄 높이를 못박아야 "여섯 줄"이 글꼴에 상관없이 정확히 여섯 줄이 된다
+            item.setSizeHint(QSize(0, MEMBER_ROW_HEIGHT))
             self.list.addItem(item)
+        self.header.setText(_header_text(self.list.count()))
 
     # ---------------- 표시 정보 ----------------
 
@@ -136,3 +146,8 @@ class MemberPanel(QWidget):
         """프로토콜이 바뀌면 아이콘/닉네임은 다른 세상 것이 되므로 비움"""
         self._avatars.clear()
         self._nicknames.clear()
+
+
+def _header_text(count: int) -> str:
+    """머리글에 인원수를 같이 보여준다 - 목록이 잘려 보이므로 전체가 몇 명인지 알 수 있게."""
+    return f"참여자 {count}명"

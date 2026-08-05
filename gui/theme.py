@@ -31,13 +31,26 @@ TIMESTAMP_BADGE_FONT_PX = 7
 TIMESTAMP_BADGE_HEIGHT_PX = 14
 
 UNREAD_BLINK_COLOR = "#ffcc4d"
+# 안읽음은 채널 항목 전체를 옅은 노랑으로 물들여 알린다(예전엔 작은 점 아이콘이었는데
+# 눈에 잘 안 띄었음). 깜빡일 때 진하게/옅게 오가고, 다 깜빡인 뒤에는 읽을 때까지 유지된다.
+# 값은 0~255 투명도 - 항목 배경이 비쳐 보여야 선택/마우스오버 상태를 덮지 않는다
+UNREAD_TINT_ALPHA_ON = 120     # 약 47%
+UNREAD_TINT_ALPHA_OFF = 30     # 약 12%
+UNREAD_TINT_ALPHA_IDLE = 76    # 약 30% - 깜빡임이 끝난 뒤 유지되는 색
+UNREAD_TINT_RADIUS = 10        # QSS의 border-radius와 같아야 모서리가 삐져나오지 않음
 UNREAD_BLINK_INTERVAL_MS = 350
 UNREAD_BLINK_COUNT = 4  # 안 보는 채널에 새 메시지가 오면 이 횟수만큼 반짝인 뒤 밝은 색으로 고정됨
-UNREAD_DOT_PX = 9
 
 # 채널 목록은 왼쪽 사이드바에 세로로 쌓는다. 예전엔 채팅창 위쪽 가로 탭이었는데,
 # 채널이 늘면 폭이 모자라 이름이 잘리고 탭이 들쭉날쭉해 보였음
+# 참여자 목록은 창 끝까지 늘리지 않고 이만큼만 보이고 나머지는 스크롤한다.
+# 목록이 창을 다 먹으면 아래에 둘 프로필/만든이 표시가 밀려나기 때문
+MEMBER_VISIBLE_ROWS = 6
+MEMBER_ROW_HEIGHT = 24
+
 CHANNEL_SIDEBAR_WIDTH = 190
+# 접었을 때 남는 띠 - 펴는 버튼 하나가 들어갈 만큼만
+CHANNEL_SIDEBAR_COLLAPSED_WIDTH = 26
 CHANNEL_ROW_HEIGHT = 44
 CHANNEL_ROW_GAP = 6  # QSS의 QListWidget#channelList::item margin-bottom과 값을 맞출 것
 ADD_TAB_LABEL = "+"

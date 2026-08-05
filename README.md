@@ -15,7 +15,7 @@ Libera.Chat 같은 표준 IRC 서버에 그대로 접속해서 쓰는 채팅 프
 ![춥채팅 실행 화면](docs/screenshot.png)
 
 [**최신 버전 내려받기**](https://github.com/NasusFullstack/chat/releases/latest) ·
-Windows · 설치 후 자동 업데이트
+[변경 내역](CHANGELOG.md) · Windows · 설치 후 자동 업데이트
 
 ---
 
