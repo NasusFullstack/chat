@@ -128,7 +128,7 @@ class TrayIcon(QObject):
         menu = QMenu()
         menu.addAction("열기", self.open_requested.emit)
         menu.addSeparator()
-        menu.addAction("환경설정...", self.open_settings)
+        menu.addAction("환경설정", self.open_settings)
         menu.addSeparator()
         menu.addAction("종료", self.quit_requested.emit)
         self._menu = menu   # 참조를 들고 있어야 메뉴가 사라지지 않음
