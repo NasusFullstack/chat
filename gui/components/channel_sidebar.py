@@ -17,18 +17,17 @@
   collapsed_changed(접힘) 접거나 폄(손잡이 화살표 방향이 이걸 따라감)
   settings_requested()    맨 아래 톱니바퀴 눌림(환경설정 창을 여는 일은 바깥이 함)
 """
-from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QMenu,
-                               QPushButton, QStyledItemDelegate, QVBoxLayout, QWidget)
+                               QPushButton, QVBoxLayout, QWidget)
 
 from gui.components.gear_button import GearButton
+from gui.components.unread_tint import UnreadTintDelegate
 
-from gui.theme import (ADD_TAB_LABEL, CHANNEL_ROW_GAP, CHANNEL_ROW_HEIGHT,
-                       CHANNEL_SCROLL_BTN_PX, CHANNEL_SIDEBAR_COLLAPSED_WIDTH,
-                       CHANNEL_SIDEBAR_WIDTH, UNREAD_BLINK_COLOR, UNREAD_BLINK_COUNT,
-                       UNREAD_BLINK_INTERVAL_MS, UNREAD_TINT_ALPHA_IDLE,
-                       UNREAD_TINT_ALPHA_OFF, UNREAD_TINT_ALPHA_ON, UNREAD_TINT_RADIUS)
+from gui.theme import (ADD_TAB_LABEL, CHANNEL_ROW_HEIGHT, CHANNEL_SCROLL_BTN_PX,
+                       CHANNEL_SIDEBAR_COLLAPSED_WIDTH, CHANNEL_SIDEBAR_WIDTH,
+                       UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS, UNREAD_TINT_ALPHA_IDLE,
+                       UNREAD_TINT_ALPHA_OFF, UNREAD_TINT_ALPHA_ON)
 
 
 class ChannelSidebar(QWidget):
@@ -77,8 +76,8 @@ class ChannelSidebar(QWidget):
         self.list.currentRowChanged.connect(self._on_row_changed)
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._show_menu)
-        # 안읽음 색칠은 그리는 사람을 바꿔서 한다 - 이유는 _UnreadTintDelegate 설명 참고
-        self._tint = _UnreadTintDelegate(self.list)
+        # 안읽음 색칠은 그리는 사람을 바꿔서 한다 - 이유는 unread_tint.py 설명 참고
+        self._tint = UnreadTintDelegate(self.list)
         self.list.setItemDelegate(self._tint)
         outer.addWidget(self.list, 0)
 
@@ -303,49 +302,3 @@ class ChannelSidebar(QWidget):
             self._sync_arrows()
         self.collapsed_changed.emit(collapsed)
 
-
-class _UnreadTintDelegate(QStyledItemDelegate):
-    """안읽음 채널 항목 위에 옅은 노란색을 덧칠하는 그리는이.
-
-    왜 항목의 배경색(`item.setBackground()`)을 안 쓰는가: 스타일시트에
-    `QListWidget#channelList::item { background-color: ... }`가 있으면 **항상 그쪽이 이겨서**
-    코드로 준 배경색은 무시된다(예전 탭에서 글자색으로 같은 일을 겪어 아이콘으로 우회했었다).
-    그리는이는 스타일이 다 그린 **뒤에** 덧칠하므로 이 싸움에서 자유롭고, 선택/마우스오버
-    상태도 그대로 비쳐 보인다(반투명이라 덮지 않고 물들이기만 함).
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._alphas: dict[str, int] = {}
-
-    def set_alpha(self, channel: str, alpha: int):
-        if alpha <= 0:
-            self._alphas.pop(channel, None)
-        else:
-            self._alphas[channel] = alpha
-        view = self.parent()
-        if view is not None:
-            view.viewport().update()
-
-    def alpha_of(self, channel: str) -> int:
-        return self._alphas.get(channel, 0)
-
-    def paint(self, painter: QPainter, option, index):
-        super().paint(painter, option, index)
-        alpha = self._alphas.get(index.data(Qt.ItemDataRole.UserRole), 0)
-        if alpha <= 0:
-            return
-        color = QColor(UNREAD_BLINK_COLOR)
-        color.setAlpha(alpha)
-        # 항목의 둥근 모서리를 그대로 따라가야 네모난 색판이 삐져나오지 않는다.
-        # 아래를 CHANNEL_ROW_GAP만큼 비우는 이유: 넘어오는 사각형은 줄 전체(44px)인데
-        # 알약은 QSS의 margin-bottom만큼 그 안쪽에 그려진다. 그대로 칠하면 항목 사이
-        # 틈까지 노랗게 번진다(실측으로 확인)
-        path = QPainterPath()
-        path.addRoundedRect(
-            QRectF(option.rect).adjusted(0.5, 0.5, -0.5, -CHANNEL_ROW_GAP - 0.5),
-            UNREAD_TINT_RADIUS, UNREAD_TINT_RADIUS)
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.fillPath(path, color)
-        painter.restore()

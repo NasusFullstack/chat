@@ -69,8 +69,6 @@ ADD_TAB_LABEL = "+"
 
 # 아래 둘은 예전 가로 탭 시절 값 - 남아있는 참조가 있어 유지만 함
 CHANNEL_TAB_FIXED_WIDTH = 140
-CHANNEL_TAB_HEIGHT = 34
-ADD_TAB_WIDTH = 40
 
 MENTION_COOLDOWN_SEC = 60  # 같은 채널에서 같은 사람을 다시 @호출하려면 이만큼 기다려야 함
 
