@@ -54,19 +54,6 @@ QPushButton#channelScrollBtn {
 QPushButton#channelScrollBtn:hover {
     color: __TEXT_STRONG__;
 }
-/* 채널 목록 접기/펴기 - 채널명 헤더와 같은 높이 줄에 놓여서 목록의 머리글 역할도 겸함 */
-QPushButton#channelToggleBtn {
-    background: transparent;
-    border: none;
-    color: __TEXT_DIM__;
-    font-size: 12px;
-    font-weight: bold;
-    padding: 0px 8px;
-    text-align: left;
-}
-QPushButton#channelToggleBtn:hover {
-    color: __TEXT_STRONG__;
-}
 /* 참여자 목록 - 여섯 줄만 보이므로 넘치는 사람은 얇은 스크롤바로 내려서 본다.
    기본 스크롤바(10px)는 좁은 열에서 이름을 가려서 더 얇게 준다 */
 QListWidget#memberList QScrollBar:vertical {

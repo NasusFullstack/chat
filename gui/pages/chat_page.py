@@ -29,8 +29,9 @@ from gui.components.channel_sidebar import ChannelSidebar
 from gui.components.member_panel import MemberPanel
 from gui.components.message_input import MessageInput
 from gui.components.message_log import ChannelLogView
+from gui.components.sidebar_handle import SidebarHandle
 from gui.link_preview import ImageFetcher
-from gui.theme import AVATAR_MSG_PX, CHANNEL_SIDEBAR_WIDTH
+from gui.theme import AVATAR_MSG_PX, CHANNEL_SIDEBAR_WIDTH, SIDEBAR_HANDLE_WIDTH
 
 # 참여자 헤더 높이 - 채팅 카드 상단과 참여자 카드 상단을 같은 높이에 두기 위한 값
 MEMBER_HEADER_HEIGHT = 34
@@ -66,6 +67,8 @@ class ChatPage(QWidget):
         self._mention_notice_timer: QTimer | None = None
         # 코어가 @호출 쿨타임으로 전송을 막으면 입력창 내용을 되살리기 위해 잠깐 보관
         self._pending_input_text = ""
+        # 지금 떠 있는 이모티콘 보관함(모달이 아니라 하나만 띄우고 참조를 들고 있음)
+        self._emoji_picker = None
 
         layout = QHBoxLayout()
         self.channel_sidebar = ChannelSidebar(MEMBER_HEADER_HEIGHT)
@@ -77,6 +80,22 @@ class ChatPage(QWidget):
         self.channel_sidebar.collapsed_changed.connect(
             lambda on: app_prefs.set_value("channel_sidebar_collapsed", on))
         layout.addWidget(self.channel_sidebar)
+
+        # 여닫기 손잡이는 사이드바와 대화창 '사이'에, 세로 가운데에 놓는다.
+        # 사이드바 안에 두면 접었을 때(폭 0) 같이 사라져 다시 펼 방법이 없어진다
+        handle_column = QVBoxLayout()
+        handle_column.setContentsMargins(0, 0, 0, 0)
+        handle_column.addStretch(1)
+        self.sidebar_handle = SidebarHandle()
+        self.sidebar_handle.set_collapsed(self.channel_sidebar.is_collapsed())
+        self.sidebar_handle.toggled.connect(self.channel_sidebar.toggle_collapsed)
+        self.channel_sidebar.collapsed_changed.connect(self.sidebar_handle.set_collapsed)
+        handle_column.addWidget(self.sidebar_handle, 0, Qt.AlignmentFlag.AlignHCenter)
+        handle_column.addStretch(1)
+        handle_host = QWidget()
+        handle_host.setLayout(handle_column)
+        handle_host.setFixedWidth(SIDEBAR_HANDLE_WIDTH + 6)   # 손잡이 양옆 숨쉴 틈
+        layout.addWidget(handle_host)
 
         center = QVBoxLayout()
         center.setSpacing(0)
@@ -120,6 +139,7 @@ class ChatPage(QWidget):
         self.message_input = MessageInput(self._completion_candidates)
         self.message_input.submitted.connect(self._on_input_submitted)
         self.message_input.emoji_requested.connect(self._open_emoji_picker)
+        self.message_input.clicked.connect(self._close_emoji_picker)
         center.addWidget(self.message_input)
         center_widget = QWidget()
         center_widget.setLayout(center)
@@ -165,16 +185,41 @@ class ChatPage(QWidget):
 
 
     def _open_emoji_picker(self):
-        """이모티콘 보관함을 열고, 고른 것을 메시지에 넣음."""
+        """이모티콘 보관함 열기/닫기.
+
+        모달(exec)로 띄우지 않는 이유: 모달이면 창이 떠 있는 동안 이모티콘 버튼도 입력창도
+        누를 수 없어서 "다시 눌러 닫기"가 안 된다. 하나만 띄우고 참조를 들고 있다가
+        같은 버튼을 다시 누르거나 입력창을 누르면 닫는다.
+        """
         from gui.emoji_picker import EmojiPicker
 
+        if self._emoji_picker is not None and self._emoji_picker.isVisible():
+            self._close_emoji_picker()
+            return
         picker = EmojiPicker(self, fetcher=self._image_fetcher)
         picker.emoji_chosen.connect(self._insert_emoji)
-        picker.exec()
-        self.message_input.focus()
+        picker.finished.connect(lambda _=0: setattr(self, "_emoji_picker", None))
+        self._emoji_picker = picker
+        picker.show()
+        picker.raise_()
+
+    def _close_emoji_picker(self):
+        picker, self._emoji_picker = self._emoji_picker, None
+        if picker is not None:
+            picker.close()
 
     def _insert_emoji(self, url: str):
-        self.message_input.insert_emoji(url)
+        """고른 이모티콘을 입력창에 넣음. 입력창에는 이름이 보이고 보낼 때 주소로 바뀐다."""
+        import emoji_store
+
+        name = ""
+        for item in emoji_store.load_emojis():
+            if item.get("url") == url:
+                name = item.get("name", "")
+                break
+        self.message_input.insert_emoji(url, name)
+        self._close_emoji_picker()
+        self.message_input.focus()
 
     def show_resource_cheat(self):
         """'show me the money'가 채널에 떴을 때 - 자원 오버레이를 채팅창 가운데에 잠깐 표시"""

@@ -33,6 +33,11 @@ class _ChatLogContent(QWidget):
     지금 폭 기준 값이라 실측과 정확히 일치했다. 그래서 그 값을 그대로 쓴다.
     """
 
+    # 배치를 재는 도중인지. Qt가 배치 계산 중에 다시 높이를 물어올 때 무한히 되풀이되는
+    # 것을 막는다(measured_height 설명 참고). 인스턴스마다 필요하지만 기본값이 있으면
+    # 되므로 클래스 속성으로 둔다 - 이 위젯은 __init__ 없이 만들어진다
+    _measuring = False
+
     def sizeHint(self):
         layout = self.layout()
         if layout is None:
@@ -50,11 +55,23 @@ class _ChatLogContent(QWidget):
 
         그래서 예측값 대신 '위젯들이 실제로 놓인 자리'를 쓴다. activate()로 배치를 먼저
         확정시키므로 방금 추가된 메시지도 포함된다.
+
+        **재진입 주의**: Qt는 배치를 계산하는 도중에 heightForWidth()를 다시 물어보고,
+        그 답을 여기서 구하면서 또 activate()를 부르면 배치 -> 질문 -> 배치가 끝없이
+        되풀이되어 스택이 터진다(파이썬 재귀가 아니라 Qt 내부 C 재귀라 RecursionError도
+        안 나고 앱이 그냥 죽는다. 배치 상태에 따라 걸릴 때도 안 걸릴 때도 있어서
+        '가끔 죽는' 형태로 나타났다). 이미 재는 중이면 activate()를 건너뛰고 지금까지
+        놓인 자리를 그대로 읽는다 - 이 값은 직전 배치 결과라 충분히 정확하다.
         """
         layout = self.layout()
         if layout is None:
             return 0
-        layout.activate()
+        if not self._measuring:
+            self._measuring = True
+            try:
+                layout.activate()
+            finally:
+                self._measuring = False
         bottom = 0
         for i in range(layout.count()):
             item = layout.itemAt(i).widget()
@@ -87,6 +104,16 @@ class ChannelLogView(QScrollArea):
         # 미리보기 이미지를 받아오는 담당자 - 모든 채널이 하나를 공유함(연결 재사용)
         self._image_fetcher = image_fetcher
         self.setWidgetResizable(True)
+        # 세로 스크롤바를 '항상 표시'로 두는 이유(모양 취향이 아니라 안정성 문제):
+        # 필요할 때만 띄우면(AsNeeded) 바가 뜰 때 viewport 폭이 줄고 -> 말풍선 줄바꿈이
+        # 달라져 내용 높이가 바뀌고 -> 바가 필요없어져 사라지고 -> 폭이 늘고 -> ... 가
+        # 끝없이 되풀이되어 앱이 죽는다. Qt 내부(C++) 레이아웃 안에서 도는 고리라
+        # 파이썬 예외도 안 나고 그냥 프로세스가 사라진다(스택 오버플로).
+        # 폭이 경계에 딱 걸릴 때만 걸려서 '가끔 죽는' 형태였는데, 사이드바 옆에 손잡이
+        # (18px)를 넣자 경계에 정확히 걸려 매번 재현됐다. 폭을 늘 예약해두는 방법과
+        # 가로 스크롤바를 끄는 방법은 둘 다 효과가 없었고(오히려 매번 죽었다), 이 방법만
+        # 열 번 중 열 번 안전했다. 되돌리지 말 것.
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         # 테두리는 QSS(QScrollArea#chatLog)에서 참여자 목록과 똑같은 모양으로 그림 -
         # 예전엔 탭 pane 쪽 테두리와 겹쳐서 선이 끊겨 보였음
         self.setObjectName("chatLog")

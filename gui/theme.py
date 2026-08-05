@@ -49,8 +49,20 @@ MEMBER_VISIBLE_ROWS = 6
 MEMBER_ROW_HEIGHT = 24
 
 CHANNEL_SIDEBAR_WIDTH = 190
-# 접었을 때 남는 띠 - 펴는 버튼 하나가 들어갈 만큼만
-CHANNEL_SIDEBAR_COLLAPSED_WIDTH = 26
+# 접으면 폭을 통째로 내준다(0). 여닫는 손잡이는 사이드바가 아니라 경계에 따로 있으므로
+# 띠를 남길 이유가 없다 - 접은 만큼 그대로 대화 영역이 넓어진다
+CHANNEL_SIDEBAR_COLLAPSED_WIDTH = 0
+
+# 사이드바와 대화창 경계에 붙는 여닫기 손잡이(gui/components/sidebar_handle.py가 직접 그림)
+SIDEBAR_HANDLE_WIDTH = 12
+SIDEBAR_HANDLE_HEIGHT = 56
+SIDEBAR_HANDLE_RADIUS = 6
+SIDEBAR_HANDLE_ARROW_PX = 4
+
+# 환경설정 톱니바퀴(gui/components/gear_button.py가 직접 그림)
+GEAR_BTN_PX = 22
+GEAR_TEETH = 8
+GEAR_TOOTH_PX = 2.5
 CHANNEL_ROW_HEIGHT = 44
 CHANNEL_ROW_GAP = 6  # QSS의 QListWidget#channelList::item margin-bottom과 값을 맞출 것
 ADD_TAB_LABEL = "+"

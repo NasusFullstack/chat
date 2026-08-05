@@ -175,9 +175,16 @@ picked = []
 picker.emoji_chosen.connect(picked.append)
 picker._on_picked(GIF)
 page._insert_emoji(GIF)
-checks.append(("고른 이모티콘이 입력창에 들어감", format_emoji(GIF) in page.message_input.line.text()))
-checks.append(("입력창에 주소 글자가 그대로 보이지 않음(표시로 감싸짐)",
-               page.message_input.line.text().count(EMOJI_OPEN) == 1))
+shown = page.message_input.line.text()
+# 입력창에는 사람이 읽을 수 있는 이름 토큰이 보이고, 실제 주소는 보낼 때 되돌아온다
+checks.append((f"입력창에 이름이 보임({shown!r})", "[:" in shown and "]" in shown))
+checks.append(("입력창에 주소가 그대로 보이지 않음", GIF not in shown))
+checks.append(("이모티콘 표시 문자도 입력창에는 안 보임", EMOJI_OPEN not in shown))
+sent = []
+page.message_input.submitted.connect(sent.append)
+page.message_input.submit()
+checks.append((f"보낼 때는 주소로 바뀌어 나감({sent[-1][:40] if sent else ''!r})",
+               bool(sent) and format_emoji(GIF) in sent[-1]))
 
 # ---------- 5) 보관함에서 빼기 ----------
 checks.append(("보관함에서 빼기", emoji_store.remove_emoji(PNG)

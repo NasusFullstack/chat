@@ -1,6 +1,6 @@
 """환경설정 창 - 트레이 아이콘 메뉴에서 연다.
 
-지금 담는 것은 알림 / 닫기 동작 / 테마다. 앱 전체 설정이 늘어나면 여기에 줄을 추가한다.
+지금 담는 것은 알림(표시 여부·내용 숨김) / 닫기 동작 / 테마다. 앱 전체 설정이 늘어나면 여기에 줄을 추가한다.
 로그인 정보는 여기서 다루지 않는다 - 그건 로그인 화면 소관이고 저장 파일도 따로다.
 """
 from PySide6.QtCore import Qt
@@ -39,6 +39,18 @@ class SettingsDialog(QDialog):
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         body.addWidget(hint)
+
+        self.preview_check = QCheckBox("알림에 보낸 사람과 내용 표시")
+        self.preview_check.setChecked(prefs["notify_preview"])
+        self.preview_check.setEnabled(prefs["notifications"])
+        # 알림 자체를 끄면 이 설정은 의미가 없으므로 같이 잠근다
+        self.notify_check.toggled.connect(self.preview_check.setEnabled)
+        body.addWidget(self.preview_check)
+        preview_hint = QLabel("끄면 \"새 메시지가 도착했습니다\"만 뜹니다. "
+                              "남이 화면을 볼 수 있는 자리에서 대화 내용이 노출되지 않습니다.")
+        preview_hint.setObjectName("hint")
+        preview_hint.setWordWrap(True)
+        body.addWidget(preview_hint)
 
         self.tray_check = QCheckBox("창을 닫아도 종료하지 않고 트레이에 두기")
         self.tray_check.setChecked(prefs["close_to_tray"])
@@ -88,6 +100,7 @@ class SettingsDialog(QDialog):
         prefs = app_prefs.load()
         prefs.update({
             "notifications": self.notify_check.isChecked(),
+            "notify_preview": self.preview_check.isChecked(),
             "close_to_tray": self.tray_check.isChecked(),
             "theme": self.theme_box.currentData(),
         })
