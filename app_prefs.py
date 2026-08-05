@@ -13,6 +13,9 @@ DEFAULTS = {
     "notifications": True,
     # 창을 닫으면 종료하지 않고 트레이(작업표시줄 오른쪽 아이콘)로 내려보낼지
     "close_to_tray": True,
+    # "창을 닫아도 계속 받습니다" 안내를 이미 보여줬는지. 처음 한 번만 알려주면 되고,
+    # 닫을 때마다 뜨면 성가시기만 하다
+    "tray_hint_shown": False,
 }
 
 
