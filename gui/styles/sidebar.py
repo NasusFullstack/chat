@@ -72,6 +72,10 @@ QLabel#footerMaker {
     background: transparent;
     font-size: 11px;
 }
+QLabel#footerGithub {
+    background: transparent;
+    font-size: 11px;
+}
 QLabel#footerCopyright {
     background: transparent;
     color: #62657a;
