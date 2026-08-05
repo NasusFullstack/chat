@@ -192,5 +192,41 @@ all_ok = True
 for name, ok in checks:
     print(f"[{'OK' if ok else 'FAIL'}] {name}")
     all_ok = all_ok and ok
+# --- 내용 숨김 설정: 알림은 뜨되 누가 뭐라 했는지는 감춘다 ---
+app_prefs.set_value("notify_preview", False)
+shown.clear()
+tray.notify("앨리스", "비밀 이야기", "#일반")
+tray._flush_pending()
+hidden_title, hidden_body = shown[-1] if shown else ("", "")
+checks.append(("내용 숨김이어도 알림은 뜬다", bool(shown)))
+checks.append((f"보낸 사람이 안 보임({hidden_title})", "앨리스" not in hidden_title))
+checks.append((f"내용이 안 보임({hidden_body})", "비밀" not in hidden_body))
+checks.append(("대신 새 메시지가 왔다고 알려줌", "새 메시지" in hidden_body))
+
+shown.clear()
+for i in range(3):
+    tray.notify(f"사람{i}", f"내용{i}", "#일반")
+tray._flush_pending()
+checks.append((f"여러 건이어도 건수만 알려줌({shown[-1][1] if shown else ''})",
+               bool(shown) and "3건" in shown[-1][1] and "사람" not in shown[-1][1]))
+app_prefs.set_value("notify_preview", True)
+
+# --- 알림 팝업 닫기 버튼 ---
+from gui.toast import ToastPopup   # noqa: E402
+
+popup = ToastPopup()
+opened = []
+popup.clicked.connect(lambda: opened.append(1))
+popup.show_message("앨리스", "안녕")
+for _ in range(3):
+    app.processEvents()
+checks.append(("알림이 떠 있음", popup.isVisible()))
+popup.close_btn.clicked.emit()
+for _ in range(3):
+    app.processEvents()
+checks.append(("닫기를 누르면 알림이 사라짐", not popup.isVisible()))
+checks.append(("닫기는 창을 열지 않음(내용만 치움)", not opened))
+checks.append(("닫은 뒤 자동 숨김 타이머도 멈춤", not popup._hide_timer.isActive()))
+
 print("\n전체 통과:", all_ok)
 _sys.exit(0 if all_ok else 1)

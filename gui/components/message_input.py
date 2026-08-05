@@ -8,11 +8,19 @@
 후보를 돌려주는 함수를 바깥에서 받아 쓴다(candidate_source). 그래서 채널이 바뀌든
 참여자가 들락거리든 이 파일은 손댈 일이 없다.
 
+이모티콘은 **보이는 것과 보내는 것이 다르다.** 입력창에는 `[:이름:]`처럼 사람이 읽을 수
+있는 토큰을 넣고, 보낼 때 그 토큰을 실제 주소로 바꾼다. 주소를 그대로 보여주면 한 줄이
+주소로 가득 차서 무엇을 쓰고 있는지 안 보인다.
+
 바깥으로 나가는 신호:
-  submitted(글자)   Enter 또는 전송 버튼
+  submitted(글자)   Enter 또는 전송 버튼 (이때는 이미 주소로 바뀐 글자)
+  emoji_requested() 이모티콘 버튼 눌림
+  clicked()         입력창을 눌렀다(이모티콘 창을 닫는 데 씀)
 """
 from PySide6.QtCore import QSize, QStringListModel, Qt, Signal
 from PySide6.QtWidgets import QCompleter, QHBoxLayout, QLineEdit, QPushButton, QWidget
+
+from PySide6.QtCore import QEvent
 
 from chat_core.commands import COMMAND_PREFIX, format_emoji
 from gui.helpers import _smiley_icon
@@ -29,12 +37,15 @@ class MessageInput(QWidget):
 
     submitted = Signal(str)
     emoji_requested = Signal()
+    clicked = Signal()
 
     def __init__(self, candidate_source, parent=None):
         """candidate_source(트리거문자) -> 후보 목록. 트리거는 '@' 또는 '/'."""
         super().__init__(parent)
         self._candidate_source = candidate_source
         self._completion_start = -1
+        # 입력창에 보이는 이모티콘 토큰 -> 실제 주소. 보낼 때 되돌린다
+        self._emoji_tokens: dict[str, str] = {}
 
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
@@ -52,6 +63,7 @@ class MessageInput(QWidget):
         self.line = QLineEdit()
         self.line.setPlaceholderText("메시지 입력 후 Enter (@닉네임으로 호출 가능)")
         self.line.returnPressed.connect(self.submit)
+        self.line.installEventFilter(self)   # 입력창을 누르면 알리기 위해
         row.addWidget(self.line)
 
         # 높이를 못박으면 글꼴에 따라 글자 아래가 잘린다(실측: 필요한 높이와 딱 같아서
@@ -88,6 +100,12 @@ class MessageInput(QWidget):
 
     def clear(self):
         self.line.clear()
+        self._emoji_tokens.clear()
+
+    def eventFilter(self, obj, event):
+        if obj is self.line and event.type() == QEvent.Type.MouseButtonPress:
+            self.clicked.emit()
+        return super().eventFilter(obj, event)
 
     def set_enabled(self, enabled: bool):
         self.line.setEnabled(enabled)
@@ -95,14 +113,36 @@ class MessageInput(QWidget):
     def focus(self):
         self.line.setFocus()
 
-    def insert_emoji(self, url: str):
-        """고른 이모티콘을 '표시로 감싼 주소'로 넣음(주소 글자는 대화에 안 보임)."""
+    def insert_emoji(self, url: str, name: str = ""):
+        """고른 이모티콘을 이름 토큰으로 넣음. 실제 주소는 보낼 때 되돌린다."""
         if not url:
             return
+        token = self._token_for(url, name)
         text = self.line.text()
         if text and not text.endswith(" "):
             text += " "
-        self.set_text(text + format_emoji(url))
+        self.set_text(text + token + " ")
+
+    def _token_for(self, url: str, name: str) -> str:
+        """그 이모티콘을 가리키는 표시 토큰. 이름이 겹치면 번호를 붙여 구분한다."""
+        for token, saved in self._emoji_tokens.items():
+            if saved == url:
+                return token
+        label = (name or "").strip() or "이모티콘"
+        token = f"[:{label}:]"
+        suffix = 2
+        while token in self._emoji_tokens:
+            token = f"[:{label}{suffix}:]"
+            suffix += 1
+        self._emoji_tokens[token] = url
+        return token
+
+    def _expand_emojis(self, text: str) -> str:
+        """보이는 이름 토큰을 실제 주소로 되돌린다(보내기 직전)."""
+        for token, url in self._emoji_tokens.items():
+            if token in text:
+                text = text.replace(token, format_emoji(url))
+        return text
 
     def submit(self):
         """Enter/전송. 자동완성 팝업이 떠 있으면 그 Enter는 '후보 선택'이지 '전송'이 아니다.
@@ -115,7 +155,7 @@ class MessageInput(QWidget):
         text = self.line.text().strip()
         if not text:
             return
-        self.submitted.emit(text)
+        self.submitted.emit(self._expand_emojis(text))
 
     # ---------------- 자동완성 ----------------
 

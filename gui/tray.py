@@ -31,6 +31,11 @@ NOTIFY_TIMEOUT_MS = 5000
 # 너무 길면 알림이 굼떠 보이고, 너무 짧으면 연속 대화에서 알림이 우수수 쌓인다
 NOTIFY_COALESCE_MS = 700
 
+# 내용을 숨기는 설정일 때 대신 보여줄 문구. 누가 무슨 말을 했는지는 감추되 "왔다"는 사실은
+# 알려야 알림을 켜둔 의미가 있다
+HIDDEN_TITLE = APP_TITLE
+HIDDEN_BODY = "새 메시지가 도착했습니다"
+
 
 def notification_body(text: str) -> str:
     """알림 본문으로 쓸 글자.
@@ -86,7 +91,7 @@ class TrayIcon(QObject):
         self._notify_action.setCheckable(True)
         self._notify_action.setChecked(app_prefs.get("notifications"))
         self._notify_action.toggled.connect(self._on_notify_toggled)
-        menu.addAction("환경설정...", self._open_settings)
+        menu.addAction("환경설정...", self.open_settings)
         menu.addSeparator()
         menu.addAction("종료", self.quit_requested.emit)
         self._menu = menu   # 참조를 들고 있어야 메뉴가 사라지지 않음
@@ -105,7 +110,8 @@ class TrayIcon(QObject):
     def _on_notify_toggled(self, checked: bool):
         app_prefs.set_value("notifications", checked)
 
-    def _open_settings(self):
+    def open_settings(self):
+        """환경설정 창. 트레이 메뉴와 채널 목록 아래 톱니바퀴가 같이 쓴다."""
         from gui.settings_dialog import SettingsDialog
 
         dialog = SettingsDialog()
@@ -139,6 +145,11 @@ class TrayIcon(QObject):
         if not self._pending:
             return
         items, self._pending = self._pending, []
+        if not app_prefs.get("notify_preview"):
+            # 내용 숨김 - 몇 건인지까지만 알린다(누가 보냈는지도 감춘다)
+            body = HIDDEN_BODY if len(items) == 1 else f"{HIDDEN_BODY} ({len(items)}건)"
+            self._toast.show_message(HIDDEN_TITLE, body)
+            return
         sender, text, channel = items[-1]      # 가장 최근 메시지를 보여줌
         body = notification_body(text)
         if len(items) > 1:

@@ -1,4 +1,4 @@
-"""왼쪽 채널 사이드바 - 접기 버튼 / 채널 목록 / '+' / 스크롤 화살표.
+"""왼쪽 채널 사이드바 - 채널 목록 / '+' / 스크롤 화살표.
 
 예전엔 이 234줄이 ChatPage 안에 섞여 있어서, 채널 목록을 손보려면 채팅 화면 전체를
 읽어야 했다. 여기로 옮기면서 지킨 것:
@@ -6,19 +6,23 @@
 - **이 컴포넌트는 채널 '목록'만 안다.** 대화 내용도, 참여자도, 입력창도 모른다.
   누가 눌렸다는 사실만 신호로 알리고, 실제로 무엇을 할지는 화면(ChatPage)이 정한다.
 - 안읽음 깜빡임도 여기 둔다. 깜빡이는 대상이 채널 항목이라 목록 밖에서 만질 이유가 없다.
-- **접기는 폭만 줄이는 일이라 여기서 스스로 한다.** 바깥은 아무것도 안 해도 된다 -
-  폭이 고정폭이라 줄어든 만큼 대화 영역이 저절로 넓어진다.
+- **접으면 폭을 0으로 내준다.** 접은 만큼 그대로 대화 영역이 넓어진다. 여닫는 손잡이는
+  여기 두지 않고 경계에 따로 있다(gui/components/sidebar_handle.py) - 접혔을 때 이 위젯은
+  아예 안 보여야 하므로, 손잡이가 여기 있으면 다시 펼 방법이 사라진다.
 
 바깥으로 나가는 신호:
   channel_selected(채널)  목록에서 고름
   add_requested()         '+' 눌림
   leave_requested(채널)   우클릭 -> 나가기
-  collapsed_changed(접힘) 접거나 폄(안읽음 표시를 다르게 알릴 때 쓸 수 있음)
+  collapsed_changed(접힘) 접거나 폄(손잡이 화살표 방향이 이걸 따라감)
+  settings_requested()    맨 아래 톱니바퀴 눌림(환경설정 창을 여는 일은 바깥이 함)
 """
 from PySide6.QtCore import QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath
-from PySide6.QtWidgets import (QFrame, QListWidget, QListWidgetItem, QMenu, QPushButton,
-                               QStyledItemDelegate, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QMenu,
+                               QPushButton, QStyledItemDelegate, QVBoxLayout, QWidget)
+
+from gui.components.gear_button import GearButton
 
 from gui.theme import (ADD_TAB_LABEL, CHANNEL_ROW_GAP, CHANNEL_ROW_HEIGHT,
                        CHANNEL_SCROLL_BTN_PX, CHANNEL_SIDEBAR_COLLAPSED_WIDTH,
@@ -41,6 +45,7 @@ class ChannelSidebar(QWidget):
     add_requested = Signal()
     leave_requested = Signal(str)
     collapsed_changed = Signal(bool)
+    settings_requested = Signal()
 
     def __init__(self, top_gap: int, parent=None):
         super().__init__(parent)
@@ -57,15 +62,9 @@ class ChannelSidebar(QWidget):
         outer.setSpacing(0)
         self._top_gap = top_gap
 
-        # 채팅창 위의 채널명 헤더와 같은 높이를 차지해야 첫 채널 항목의 윗선이 채팅 카드
-        # 윗선과 같은 높이에서 시작함. 예전엔 그냥 빈 공간이었는데, 접기 버튼을 여기 넣으면
-        # 새 자리를 만들지 않고도 버튼이 생긴다(세로 정렬도 그대로 유지됨)
-        self.toggle_btn = QPushButton()
-        self.toggle_btn.setObjectName("channelToggleBtn")
-        self.toggle_btn.setFixedHeight(top_gap)
-        self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.toggle_btn.clicked.connect(self.toggle_collapsed)
-        outer.addWidget(self.toggle_btn, 0)
+        # 채팅창 위의 채널명 헤더와 같은 높이만큼 비워둬야 첫 채널 항목의 윗선이
+        # 채팅 카드 윗선과 같은 높이에서 시작함
+        outer.addSpacing(top_gap)
 
         self.scroll_up = self._make_arrow("⌃", "이전 채널 보기", -1)
         outer.addWidget(self.scroll_up, 0)
@@ -97,7 +96,15 @@ class ChannelSidebar(QWidget):
         outer.addWidget(self.scroll_down, 0)
 
         outer.addStretch(1)
-        self._sync_toggle_look()
+
+        # 환경설정은 자주 쓰는 기능이 아니라 맨 아래 구석에 작게 둔다(트레이 메뉴에도 있음)
+        gear_row = QHBoxLayout()
+        gear_row.setContentsMargins(8, 0, 0, 8)
+        self.gear_btn = GearButton()
+        self.gear_btn.clicked.connect(self.settings_requested.emit)
+        gear_row.addWidget(self.gear_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        gear_row.addStretch(1)
+        outer.addLayout(gear_row)
 
     def _make_arrow(self, glyph: str, tip: str, direction: int) -> QPushButton:
         """채널이 많아 자리가 모자랄 때 목록을 미는 화살표.
@@ -194,8 +201,9 @@ class ChannelSidebar(QWidget):
     def _available_height(self, step: int) -> int:
         if self.height() <= 0:
             return 0
-        used = (self._top_gap + CHANNEL_ROW_HEIGHT          # 접기 버튼 줄 + '+' 버튼
-                + CHANNEL_SCROLL_BTN_PX * 2)                 # 위/아래 화살표
+        used = (self._top_gap + CHANNEL_ROW_HEIGHT          # 헤더 자리 + '+' 버튼
+                + CHANNEL_SCROLL_BTN_PX * 2                  # 위/아래 화살표
+                + self.gear_btn.height() + 8)                # 맨 아래 톱니바퀴 줄
         # 최소 한 칸은 보이게(너무 작으면 목록이 아예 안 보임)
         return max(step, self.height() - used)
 
@@ -285,24 +293,15 @@ class ChannelSidebar(QWidget):
         if collapsed == self._collapsed:
             return
         self._collapsed = collapsed
-        for widget in (self.list, self.add_btn, self.scroll_up, self.scroll_down):
+        for widget in (self.list, self.add_btn, self.scroll_up, self.scroll_down,
+                       self.gear_btn):
             widget.setVisible(not collapsed)
         self.setFixedWidth(CHANNEL_SIDEBAR_COLLAPSED_WIDTH if collapsed
                            else CHANNEL_SIDEBAR_WIDTH)
-        self._sync_toggle_look()
         if not collapsed:
             self.sync_height()
             self._sync_arrows()
         self.collapsed_changed.emit(collapsed)
-
-    def _sync_toggle_look(self):
-        """접힘 상태에 따라 버튼 모양을 바꾼다(펼침: 채널 + 접는 화살표 / 접힘: 펴는 화살표)."""
-        if self._collapsed:
-            self.toggle_btn.setText("»")
-            self.toggle_btn.setToolTip("채널 목록 펼치기")
-        else:
-            self.toggle_btn.setText("채널  «")
-            self.toggle_btn.setToolTip("채널 목록 접기")
 
 
 class _UnreadTintDelegate(QStyledItemDelegate):

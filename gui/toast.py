@@ -11,15 +11,19 @@
 - **여러 개 쌓지 않는다.** 하나만 두고 내용을 갈아끼운다 - 연달아 오는 대화에서 팝업이
   화면을 덮어버리지 않게. 묶는 일 자체는 TrayIcon이 하고 여기는 보여주기만 한다.
 """
-from PySide6.QtCore import QPropertyAnimation, Qt, QTimer, Signal
-from PySide6.QtGui import QGuiApplication, QPixmap
+from PySide6.QtCore import QPropertyAnimation, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-TOAST_WIDTH = 320
-SCREEN_MARGIN = 16       # 화면 가장자리에서 띄울 간격(작업표시줄과 겹치지 않게)
+from gui.styles.palette import colors
+
+TOAST_WIDTH = 380
+SCREEN_MARGIN = 8        # 화면 가장자리에서 띄울 간격(작업표시줄 영역은 이미 피해 있음)
 SHOW_MS = 5000           # 이만큼 보여준 뒤 서서히 사라짐
 FADE_MS = 350
-ICON_PX = 36
+ICON_PX = 44
+CLOSE_PX = 16            # 닫기 버튼 - 내용을 가리지 않게 작게
+CLOSE_MARK_PX = 4        # X 자의 팔 길이
 
 
 class ToastPopup(QWidget):
@@ -42,7 +46,7 @@ class ToastPopup(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(14, 12, 14, 12)
+        row.setContentsMargins(16, 14, 12, 14)
         row.setSpacing(10)
 
         self.icon_label = QLabel()
@@ -63,6 +67,13 @@ class ToastPopup(QWidget):
         self.body_label.setWordWrap(True)
         column.addWidget(self.body_label)
         row.addLayout(column, 1)
+
+        # 닫기 버튼. 알림은 5초 뒤 저절로 사라지지만, 지금 당장 치우고 싶을 때가 있다.
+        # 글자 X 대신 선으로 그리는 이유는 손잡이(sidebar_handle.py)와 같다 - 글꼴에 따라
+        # 크기와 정렬이 달라지지 않게. 색은 테마의 옅은 회색이라 디자인을 해치지 않는다
+        self.close_btn = _CloseMark()
+        self.close_btn.clicked.connect(self._dismiss)
+        row.addWidget(self.close_btn, 0, Qt.AlignmentFlag.AlignTop)
 
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
@@ -114,6 +125,14 @@ class ToastPopup(QWidget):
             self.setWindowOpacity(1.0)
             self._fading_out = False
 
+    def _dismiss(self):
+        """닫기 버튼 - 창을 열지 않고 알림만 치운다(clicked를 내보내지 않는 이유)."""
+        self._hide_timer.stop()
+        self._fade.stop()
+        self.hide()
+        self.setWindowOpacity(1.0)
+        self._fading_out = False
+
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._hide_timer.stop()
@@ -124,3 +143,48 @@ class ToastPopup(QWidget):
     def set_icon(self, icon):
         if icon is not None and not icon.isNull():
             self.icon_label.setPixmap(icon.pixmap(ICON_PX, ICON_PX))
+
+
+class _CloseMark(QWidget):
+    """옅은 회색 X. 마우스를 올리면 또렷해진다."""
+
+    clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(CLOSE_PX, CLOSE_PX)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("알림 닫기")
+        self._hover = False
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.pos()):
+            self.clicked.emit()
+        # 부모(알림 전체)의 클릭은 '창 열기'라서, 닫기를 눌렀을 때 창까지 열리면 안 된다
+        event.accept()
+
+    def paintEvent(self, _event):
+        theme = colors()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self._hover:
+            # 눌러도 되는 자리라는 걸 알려주는 옅은 동그라미(평소엔 X만 보임)
+            circle = QPainterPath()
+            circle.addEllipse(QRectF(self.rect()))
+            painter.fillPath(circle, QColor(theme["BG_ITEM_HOVER"]))
+        pen = QPen(QColor(theme["TEXT_SOFT" if self._hover else "TEXT_FAINT"]), 1.4)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        cx, cy, arm = self.width() / 2, self.height() / 2, CLOSE_MARK_PX / 2 * 1.6
+        painter.drawLine(int(cx - arm), int(cy - arm), int(cx + arm), int(cy + arm))
+        painter.drawLine(int(cx + arm), int(cy - arm), int(cx - arm), int(cy + arm))

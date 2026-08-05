@@ -9,6 +9,7 @@ _os.environ["QT_QPA_PLATFORM"] = "offscreen"
 _sys.path.insert(0, _REPO)
 _sys.path.insert(0, _HERE)
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel
 
 app = QApplication.instance() or QApplication([])
@@ -74,19 +75,34 @@ checks.append(("사람이 늘어도 만든이 표시가 밀려나지 않음",
 # --- 채널 목록 접기/펴기 ---
 sidebar = page.channel_sidebar
 open_width = sidebar.width()
-sidebar.toggle_collapsed()
+from PySide6.QtCore import QPoint       # noqa: E402
+from PySide6.QtTest import QTest        # noqa: E402
+
+# 실제로 손잡이를 눌러서 접힌다(핸들러 직접 호출이 아니라 진짜 클릭 경로로)
+QTest.mouseClick(page.sidebar_handle, Qt.MouseButton.LeftButton,
+                 pos=QPoint(page.sidebar_handle.width() // 2,
+                            page.sidebar_handle.height() // 2))
 for _ in range(4):
     app.processEvents()
-checks.append((f"접으면 폭이 줄어듦({open_width} -> {sidebar.width()})",
-               sidebar.width() < open_width))
+checks.append((f"접으면 폭을 통째로 내줌({open_width} -> {sidebar.width()})",
+               sidebar.width() == 0))
 checks.append(("접으면 채널 목록이 숨음", not sidebar.list.isVisible()))
-checks.append(("접어도 펴는 버튼은 남아 있음", sidebar.toggle_btn.isVisible()))
+checks.append(("접어도 손잡이는 남아 있음(다시 펼 수 있어야 함)",
+               page.sidebar_handle.isVisible()))
+checks.append(("손잡이 화살표가 '펴는 쪽'을 가리킴", page.sidebar_handle._collapsed is True))
 checks.append(("접어도 만든이 표시는 그대로 보임", footer.isVisible()))
 sidebar.toggle_collapsed()
 for _ in range(4):
     app.processEvents()
 checks.append((f"다시 펴면 원래 폭으로 돌아옴({sidebar.width()})", sidebar.width() == open_width))
 checks.append(("다시 펴면 채널 목록이 보임", sidebar.list.isVisible()))
+checks.append(("손잡이 화살표가 '접는 쪽'으로 돌아옴", page.sidebar_handle._collapsed is False))
+handle_x = page.sidebar_handle.mapTo(page, QPoint(0, 0)).x()   # 부모 기준 x는 의미가 없음
+checks.append((f"손잡이는 사이드바와 대화창 사이에 있음(사이드바 끝 {sidebar.x() + sidebar.width()} <= 손잡이 {handle_x})",
+               sidebar.x() + sidebar.width() <= handle_x))
+checks.append(("손잡이가 창 세로 가운데쯤에 있음",
+               abs((page.sidebar_handle.mapTo(page, QPoint(0, 0)).y()
+                    + page.sidebar_handle.height() / 2) - page.height() / 2) <= 2))
 
 # 채널이 적을 때는 화살표가 없어야 함
 for i in range(2):

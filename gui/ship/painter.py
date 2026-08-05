@@ -3,7 +3,7 @@
 자원 치트의 숫자와 같은 이유로 그림 파일에 기대지 않는 길을 함께 둔다 - 파일이 없어도
 기능이 죽지 않아야 하기 때문.
 """
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPen, QPolygonF
 
 from gui.ship.sprite import (_ENGINE, _HULL_DARK, _HULL_LIGHT, _HULL_MID, _OUTLINE,
