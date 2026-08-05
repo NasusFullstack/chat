@@ -36,6 +36,45 @@ HIDDEN_TITLE = APP_TITLE
 HIDDEN_BODY = "새 메시지가 도착했습니다"
 
 
+def compose_notification(items: list, preview: bool, detail: str) -> tuple[str, str]:
+    """모아둔 메시지들로 알림 제목과 본문을 만든다(위젯을 모르는 순수 함수라 시험하기 쉽다).
+
+    보여주는 정도는 네 가지다:
+      preview=True   보낸 사람과 내용 둘 다
+      detail=sender  누가 보냈는지만 (내용은 가림)
+      detail=message 내용만 (누가 보냈는지는 가림)
+      detail=none    둘 다 가림 - "새 메시지가 도착했습니다"만
+
+    여러 건이 묶였을 때: 보여주는 게 있으면 가장 최근 것 + "외 N건", 다 가렸으면 건수만.
+    """
+    sender, text, channel = items[-1]          # 가장 최근 메시지를 보여줌
+    show_sender = preview or detail == "sender"
+    show_body = preview or detail == "message"
+
+    if show_sender:
+        title = f"{sender} ({channel})" if channel else sender
+    else:
+        title = HIDDEN_TITLE
+
+    if show_body:
+        body = notification_body(text)
+    else:
+        body = HIDDEN_BODY
+
+    if len(items) > 1:
+        others = len(items) - 1
+        if not show_sender and not show_body:
+            return title, f"{HIDDEN_BODY} ({len(items)}건)"
+        senders = {who for who, _, _ in items}
+        # 보낸 사람을 보여주는 중일 때만 몇 명인지가 뜻이 있다
+        if show_sender and len(senders) > 1:
+            extra = f"외 {others}건 · {len(senders)}명"
+        else:
+            extra = f"외 {others}건"
+        body = f"{body}  ({extra})"
+    return title, body
+
+
 def notification_body(text: str) -> str:
     """알림 본문으로 쓸 글자.
 
@@ -83,13 +122,12 @@ class TrayIcon(QObject):
         self._tray.setToolTip(APP_TITLE)
         self._tray.activated.connect(self._on_activated)
 
+        # 알림 켜고 끄기는 여기 두지 않는다 - 환경설정 창에 계층으로 정리돼 있고(알림 표시 ->
+        # 내용 표시 -> 무엇까지), 같은 설정이 두 곳에 있으면 한쪽만 고쳐져 어긋난다.
+        # 메뉴는 '열기 / 환경설정 / 종료'로만 둔다
         menu = QMenu()
         menu.addAction("열기", self.open_requested.emit)
         menu.addSeparator()
-        self._notify_action = menu.addAction("알림 표시")
-        self._notify_action.setCheckable(True)
-        self._notify_action.setChecked(app_prefs.get("notifications"))
-        self._notify_action.toggled.connect(self._on_notify_toggled)
         menu.addAction("환경설정...", self.open_settings)
         menu.addSeparator()
         menu.addAction("종료", self.quit_requested.emit)
@@ -106,24 +144,12 @@ class TrayIcon(QObject):
                       QSystemTrayIcon.ActivationReason.DoubleClick):
             self.open_requested.emit()
 
-    def _on_notify_toggled(self, checked: bool):
-        app_prefs.set_value("notifications", checked)
-
     def open_settings(self):
         """환경설정 창. 트레이 메뉴와 채널 목록 아래 톱니바퀴가 같이 쓴다."""
         from gui.settings_dialog import SettingsDialog
 
         dialog = SettingsDialog()
-        if dialog.exec():
-            self.refresh_from_prefs()
-
-    def refresh_from_prefs(self):
-        """설정 창에서 바꾼 값을 메뉴 체크 표시에 반영."""
-        if self._tray is None:
-            return
-        self._notify_action.blockSignals(True)
-        self._notify_action.setChecked(app_prefs.get("notifications"))
-        self._notify_action.blockSignals(False)
+        dialog.exec()
 
     # ---------------- 알림 ----------------
 
@@ -144,20 +170,8 @@ class TrayIcon(QObject):
         if not self._pending:
             return
         items, self._pending = self._pending, []
-        if not app_prefs.get("notify_preview"):
-            # 내용 숨김 - 몇 건인지까지만 알린다(누가 보냈는지도 감춘다)
-            body = HIDDEN_BODY if len(items) == 1 else f"{HIDDEN_BODY} ({len(items)}건)"
-            self._toast.show_message(HIDDEN_TITLE, body)
-            return
-        sender, text, channel = items[-1]      # 가장 최근 메시지를 보여줌
-        body = notification_body(text)
-        if len(items) > 1:
-            others = len(items) - 1
-            senders = {who for who, _, _ in items}
-            # 여러 사람이면 몇 명인지까지 알려줘야 누가 말 걸었는지 감이 온다
-            extra = f"외 {others}건" if len(senders) == 1 else f"외 {others}건 · {len(senders)}명"
-            body = f"{body}  ({extra})"
-        title = f"{sender} ({channel})" if channel else sender
+        title, body = compose_notification(
+            items, app_prefs.get("notify_preview"), app_prefs.get("notify_detail"))
         self._toast.show_message(title, body)
 
     def set_icon(self, icon):

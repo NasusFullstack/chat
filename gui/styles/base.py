@@ -115,6 +115,43 @@ QCheckBox::indicator:checked {
     background-color: __ACCENT__;
     border: 1px solid __ACCENT__;
 }
+/* 위 항목이 꺼져서 못 고르는 상태 - 숨기지 않고 짙은 회색으로 흐린다.
+   숨겨버리면 그런 설정이 있다는 것 자체를 모르게 된다 */
+QCheckBox:disabled, QRadioButton:disabled, QLabel#hint:disabled {
+    color: __TEXT_DISABLED__;
+}
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {
+    border: 1px solid __LINE_DISABLED__;
+    background-color: __BG__;
+}
+/* 라디오는 체크박스와 같은 모양새로 두되 동그라미로 - 하나만 고르는 것임이 보이게 */
+QRadioButton {
+    spacing: 8px;
+}
+QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid __LINE__;
+    border-radius: 8px;
+    background-color: __BG_CONTROL__;
+}
+QRadioButton::indicator:hover {
+    border: 1px solid __ACCENT__;
+}
+QRadioButton::indicator:checked {
+    background-color: __ACCENT__;
+    border: 4px solid __BG_CONTROL__;
+}
+/* 체크/선택된 상태여도 못 고르는 중이면 강조색이 남으면 안 된다. 순서 주의 - QSS는
+   나중에 나온 규칙이 이기므로 이 두 줄이 위의 checked 규칙보다 뒤에 있어야 한다 */
+QCheckBox::indicator:checked:disabled {
+    background-color: __LINE_DISABLED__;
+    border: 1px solid __LINE_DISABLED__;
+}
+QRadioButton::indicator:checked:disabled {
+    background-color: __TEXT_DISABLED__;
+    border: 4px solid __BG__;
+}
 QLabel#title {
     font-size: 20px;
     font-weight: bold;

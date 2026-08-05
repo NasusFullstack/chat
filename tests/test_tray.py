@@ -192,8 +192,27 @@ all_ok = True
 for name, ok in checks:
     print(f"[{'OK' if ok else 'FAIL'}] {name}")
     all_ok = all_ok and ok
+# --- 알림에 무엇까지 보여줄지 네 가지 (순수 함수라 화면 없이 검사) ---
+from gui.tray import compose_notification   # noqa: E402
+
+one = [("앨리스", "비밀 이야기", "#일반")]
+full = compose_notification(one, True, "none")
+only_sender = compose_notification(one, False, "sender")
+only_msg = compose_notification(one, False, "message")
+nothing = compose_notification(one, False, "none")
+checks.append((f"전부 표시{full}", "앨리스" in full[0] and "비밀" in full[1]))
+checks.append((f"사람만 표시{only_sender}", "앨리스" in only_sender[0] and "비밀" not in only_sender[1]))
+checks.append((f"메시지만 표시{only_msg}", "앨리스" not in only_msg[0] and "비밀" in only_msg[1]))
+checks.append((f"모두 숨김{nothing}", "앨리스" not in nothing[0] and "비밀" not in nothing[1]))
+
+many = [("앨리스", "안녕", "#일반"), ("밥", "나도", "#일반"), ("앨리스", "저녁 먹자", "#일반")]
+checks.append(("여러 건이면 사람 수까지 알려줌", "2명" in compose_notification(many, True, "none")[1]))
+checks.append(("모두 숨김일 때는 건수만", "3건" in compose_notification(many, False, "none")[1]
+               and "앨리스" not in compose_notification(many, False, "none")[1]))
+
 # --- 내용 숨김 설정: 알림은 뜨되 누가 뭐라 했는지는 감춘다 ---
 app_prefs.set_value("notify_preview", False)
+app_prefs.set_value("notify_detail", "none")
 shown.clear()
 tray.notify("앨리스", "비밀 이야기", "#일반")
 tray._flush_pending()
@@ -210,6 +229,25 @@ tray._flush_pending()
 checks.append((f"여러 건이어도 건수만 알려줌({shown[-1][1] if shown else ''})",
                bool(shown) and "3건" in shown[-1][1] and "사람" not in shown[-1][1]))
 app_prefs.set_value("notify_preview", True)
+
+# --- 환경설정 창: 위가 꺼지면 아래가 흐려진다 ---
+dlg = SettingsDialog()
+dlg.notify_check.setChecked(True)
+dlg.preview_check.setChecked(True)
+app.processEvents()
+checks.append(("전부 표시 중이면 세부 선택은 잠김",
+               not any(r.isEnabled() for r in dlg._detail_radios)))
+dlg.preview_check.setChecked(False)
+app.processEvents()
+checks.append(("전부 표시를 끄면 세부 선택이 열림",
+               all(r.isEnabled() for r in dlg._detail_radios)))
+dlg.notify_check.setChecked(False)
+app.processEvents()
+checks.append(("알림 자체를 끄면 아래가 전부 잠김",
+               not dlg.preview_check.isEnabled()
+               and not any(r.isEnabled() for r in dlg._detail_radios)))
+checks.append(("고른 세부 항목을 읽을 수 있음", dlg.selected_detail() in ("sender", "message", "none")))
+dlg.deleteLater()
 
 # --- 알림 팝업 닫기 버튼 ---
 from gui.toast import ToastPopup   # noqa: E402

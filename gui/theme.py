@@ -14,6 +14,8 @@ DEVELOPER_GITHUB = "NasusFullstack"          # 깃허브 계정
 GITHUB_URL = "https://github.com/NasusFullstack/chat"
 COPYRIGHT_YEAR = 2026
 FOOTER_LOGO_PX = 52
+# 환경설정 > 정보 탭의 로고(사이드바 아래 것보다 크게 - 볼 자리가 넉넉함)
+INFO_LOGO_PX = 72
 # 채널이 많아 자리가 모자랄 때 목록을 미는 화살표 버튼 높이
 CHANNEL_SCROLL_BTN_PX = 18
 
