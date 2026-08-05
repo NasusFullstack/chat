@@ -10,6 +10,8 @@ IS_WINDOWS = sys.platform == "win32"
 # 사이드바 아래에 두는 만든이 표시
 DEVELOPER_EMAIL = "seven7973@gmail.com"
 DEVELOPER_NAME = "NasusFullstack"
+DEVELOPER_GITHUB = "NasusFullstack"          # 깃허브 계정
+GITHUB_URL = "https://github.com/NasusFullstack/chat"
 COPYRIGHT_YEAR = 2026
 FOOTER_LOGO_PX = 52
 # 채널이 많아 자리가 모자랄 때 목록을 미는 화살표 버튼 높이

@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (QFrame, QLabel, QListWidget, QListWidgetItem, QMe
 from gui.helpers import _build_unread_dot_icon, _find_logo_image
 from gui.theme import (ADD_TAB_LABEL, APP_TITLE, CHANNEL_ROW_GAP, CHANNEL_ROW_HEIGHT,
                        CHANNEL_SCROLL_BTN_PX, CHANNEL_SIDEBAR_WIDTH, COPYRIGHT_YEAR,
-                       DEVELOPER_EMAIL, DEVELOPER_NAME, FOOTER_LOGO_PX, UNREAD_BLINK_COLOR,
+                       DEVELOPER_EMAIL, DEVELOPER_GITHUB, DEVELOPER_NAME, FOOTER_LOGO_PX,
+                       GITHUB_URL, UNREAD_BLINK_COLOR,
                        UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS)
 from version import APP_VERSION
 
@@ -285,6 +286,18 @@ class _SidebarFooter(QWidget):
         maker.setOpenExternalLinks(True)
         maker.setToolTip("만든 사람에게 메일 보내기")
         column.addWidget(maker)
+
+        # 만든 사람 이름만 있으면 그게 깃허브 계정인지 알 수 없어서, 아이콘 대신 글자로
+        # 밝히고 저장소로 바로 갈 수 있게 링크를 건다
+        github = QLabel(
+            f'<a href="{GITHUB_URL}" style="color:#8f92a6; text-decoration:none;">'
+            f"GitHub @{DEVELOPER_GITHUB}</a>")
+        github.setObjectName("footerGithub")
+        github.setTextFormat(Qt.TextFormat.RichText)
+        github.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        github.setOpenExternalLinks(True)
+        github.setToolTip(GITHUB_URL)
+        column.addWidget(github)
 
         copyright_label = QLabel(f"© {COPYRIGHT_YEAR} {DEVELOPER_NAME}")
         copyright_label.setObjectName("footerCopyright")
