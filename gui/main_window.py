@@ -142,8 +142,8 @@ class MainWindow(QMainWindow):
             self._handle_send, self._handle_add_channel, self._handle_leave_channel,
             self._handle_set_avatar, self._handle_all_channels_left,
         )
-        # 채널 목록 아래 톱니바퀴 - 트레이 메뉴의 '환경설정...'과 같은 창을 연다.
-        # 트레이가 여는 이유: 설정을 바꾸면 트레이 메뉴의 체크 표시도 같이 맞춰야 함
+        # 채널 목록 아래 톱니바퀴 - 트레이 메뉴의 '환경설정'과 같은 창을 연다
+        # (설정 창을 여는 곳이 둘이지만 여는 코드는 트레이 쪽 하나만 둔다)
         self.chat_page.channel_sidebar.settings_requested.connect(self._tray.open_settings)
 
         self.stack.addWidget(self.startup_page)
