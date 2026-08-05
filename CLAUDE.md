@@ -31,13 +31,18 @@ gui/                GUI 어댑터 (PySide6) - 화면만 담당
     channel_page.py     채널 선택
     chat_page.py        채팅
   components/         화면을 이루는 부품 - 각자 자기 일만 알고 신호로만 대화
-    channel_sidebar.py  왼쪽 채널 목록/추가/나가기/안읽음/아래 만든이 표시
-    member_panel.py     오른쪽 참여자 목록/아이콘/닉네임
+    channel_sidebar.py  왼쪽 채널 목록/추가/나가기/접기/안읽음 색칠
+    app_footer.py       로고·버전·메일·GitHub 표시(참여자 열 맨 아래)
+    member_panel.py     오른쪽 참여자 목록(6명까지)/인원수/아이콘/닉네임
     message_input.py    입력창/이모티콘 버튼/전송/자동완성(@닉네임, /명령)
     message_item.py     메시지 한 줄(아이콘+글자+미리보기+이모티콘+시간)
     message_log.py      그 줄들을 쌓는 채널별 대화 목록
   styles/             QSS를 영역별로 나눠둔 곳(합치면 예전과 글자까지 동일)
+    palette.py          테마별 색표. QSS는 __ACCENT__처럼 이름만 쓰고 색은 여기서 정함
   theme.py            크기/색 상수 + 스타일시트 조립
+  tray.py             트레이 아이콘/메뉴 + 알림 묶기(운영체제 알림은 안 씀)
+  toast.py            알림 팝업을 앱이 직접 그림(앱과 같은 디자인)
+  settings_dialog.py  환경설정(알림/닫기 동작/테마)
   startup_page.py     시작화면(큰 로고 + 진행 상태)
   update_flow.py      업데이트 진행을 시작화면에 표시하는 흐름
   cheat_overlay.py    'show me the money' 자원 오버레이
@@ -45,6 +50,7 @@ gui/                GUI 어댑터 (PySide6) - 화면만 담당
   link_preview.py     링크 미리보기 - 받아오기부터 그리기까지 전부 클라이언트가 함
   emoji_picker.py     이모티콘 보관함 창 / emoji_view.py 메시지 안 이모티콘
 error_log.py        예상 못 한 오류를 파일로 남김(배포본은 콘솔이 없어서 필요)
+app_prefs.py        앱 설정(알림/트레이/테마/채널 목록 접힘) - 로그인 정보와 별도 파일
 emoji_store.py      이모티콘 보관함(주소만 로컬 저장)
 cli_client.py       CLI 어댑터 (asyncio) - 터미널 출력만 담당
 gui_client.py       GUI 진입점 (파사드)
@@ -244,9 +250,20 @@ RFC 1459: IRC 한 줄은 CR-LF 포함 512바이트를 넘을 수 없고, 실제 
 `self.tabs` 폭을 기준으로 채널 추가/창 리사이즈 시점에 모든 탭에 미리 반영한다
 (`ChatPage._push_wrap_width` → `ChannelLogView.set_container_width`).
 
-### 4. 탭 안읽음 표시는 아이콘으로 (글자색 금지)
+### 4. QSS가 색을 정한 자리는 코드로 못 바꾼다 - 덧칠은 델리게이트로
 `QTabBar::tab { color: ... }`가 QSS에 있으면 `setTabTextColor()`가 **절대 안 먹는다**
-(스타일시트가 항상 이김). 그래서 안읽음 깜빡임은 `setTabIcon()`으로 한다.
+(스타일시트가 항상 이김). 항목 배경도 마찬가지여서 `item.setBackground()`도 무시된다.
+
+지금 안읽음 표시는 채널 줄 전체를 옅은 노랑으로 물들이는 방식인데, 이건
+`_UnreadTintDelegate`가 **스타일이 다 그린 뒤에 반투명으로 덧칠**해서 해결한다. 그리는
+사람을 바꾸는 것이므로 QSS와 싸우지 않고, 선택/마우스오버 상태도 그대로 비쳐 보인다.
+("어느 항목이 지금 안읽음인가"는 QSS로 표현할 수 없다 - 선택자가 위젯 단위라 목록 안
+개별 항목을 고를 방법이 없다. 그래서 이 부분만 파이썬이 그린다.)
+
+덧칠할 때 주의: 델리게이트에 넘어오는 사각형은 **줄 전체**이고 QSS의 `margin`은 그
+안쪽에 그려진다(실측: 줄이 0, 44, 88...에서 시작하고 알약은 그보다 6px 짧다). 그대로
+칠하면 항목 사이 틈까지 물든다. 같은 이유로 목록 높이 계산에 `margin`을 더하면 안 된다 -
+채널 수만큼 빈 공간이 쌓이고 잘라낸 자리가 줄 경계와 어긋난다.
 
 ### 5. disabled 탭은 클릭 이벤트를 못 받는다
 "+" 채널 추가 탭을 `setTabEnabled(False)`로 뒀더니 눌러도 아무 반응이 없었다. enabled로 두고,
@@ -381,6 +398,9 @@ python tests/run_all.py wrap link    이름에 그 단어가 든 것만
 같은 것을 다시 묻게 된다(움짤 잘림이 실제로 그렇게 됐다).
 
 ## 배포
+
+**사용자가 보는 변경 내역은 `CHANGELOG.md`에 적는다.** 커밋 메시지는 개발자용이라
+사용자가 "뭐가 바뀌었는지" 알 방법이 없었다. 릴리즈 노트도 여기서 그대로 복사해 쓴다.
 
 태그를 푸시하면 GitHub Actions가 빌드해서 릴리즈에 올린다.
 ```

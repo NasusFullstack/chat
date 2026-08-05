@@ -15,7 +15,6 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, _REPO)
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QMenu
 
@@ -130,10 +129,10 @@ print("\n[6] 안읽음 표시가 사이드바에 뜨는가")
 page.append_message("chanA", "Mong", "안녕", False, 1.0)  # chanA는 비활성
 QTest.qWait(60)
 row_a = page.channel_sidebar.row_of("chanA")
-check("비활성 채널 줄에 표시 아이콘", row_a >= 0 and not page.channel_sidebar.list.item(row_a).icon().isNull(),
-      "아이콘 없음")
+check("비활성 채널 줄이 노랗게 물듦", row_a >= 0 and page.channel_sidebar.unread_alpha("chanA") > 0,
+      "물들지 않음")
 click_row(row_a)
-check("그 채널을 보면 표시가 사라짐", page.channel_sidebar.list.item(row_a).icon().isNull())
+check("그 채널을 보면 노란색이 사라짐", page.channel_sidebar.unread_alpha("chanA") == 0)
 
 print("\n[7] 채널 제거")
 page.remove_channel("chanA")

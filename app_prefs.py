@@ -16,6 +16,10 @@ DEFAULTS = {
     # "창을 닫아도 계속 받습니다" 안내를 이미 보여줬는지. 처음 한 번만 알려주면 되고,
     # 닫을 때마다 뜨면 성가시기만 하다
     "tray_hint_shown": False,
+    # 채널 목록을 접어둔 채로 껐다면 다음에도 접힌 채로 열림
+    "channel_sidebar_collapsed": False,
+    # 화면 테마(gui/styles/palette.py의 THEMES 키). 지금은 기본 테마 하나뿐이고 추가 예정
+    "theme": "dark",
 }
 
 
@@ -48,7 +52,9 @@ def load() -> dict:
 
 def save(prefs: dict) -> None:
     merged = dict(DEFAULTS)
-    merged.update({k: bool(v) for k, v in prefs.items() if k in DEFAULTS})
+    for key, value in prefs.items():
+        if key in DEFAULTS:
+            merged[key] = bool(value) if isinstance(DEFAULTS[key], bool) else str(value)
     try:
         with open(PREFS_FILE, "w", encoding="utf-8") as fp:
             json.dump(merged, fp, ensure_ascii=False)
@@ -56,11 +62,11 @@ def save(prefs: dict) -> None:
         pass
 
 
-def get(key: str) -> bool:
+def get(key: str):
     return load().get(key, DEFAULTS.get(key, False))
 
 
-def set_value(key: str, value: bool) -> None:
+def set_value(key: str, value) -> None:
     prefs = load()
-    prefs[key] = bool(value)
+    prefs[key] = value
     save(prefs)

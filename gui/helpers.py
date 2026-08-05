@@ -11,7 +11,7 @@ import sys
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
-from gui.theme import AVATAR_GRID_SIZE, UNREAD_DOT_PX
+from gui.theme import AVATAR_GRID_SIZE
 
 _MENTION_TOKEN_RE = re.compile(r"@([^\s@]+)")
 
@@ -142,20 +142,6 @@ def _hashed_avatar_pixmap(user_id: str) -> QPixmap:
     painter.end()
     return pixmap
 
-
-def _build_unread_dot_icon(color: str) -> QIcon:
-    """탭 안 읽음 표시용 점 아이콘. QTabBar::tab { color: ... }를 QSS에 못박아둬서
-    QTabBar.setTabTextColor()로는 글자색이 절대 안 바뀌길래(스타일시트가 항상 우선함),
-    스타일시트 영향을 안 받는 아이콘으로 깜빡이게 함"""
-    pixmap = QPixmap(UNREAD_DOT_PX, UNREAD_DOT_PX)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(color))
-    painter.drawEllipse(0, 0, UNREAD_DOT_PX, UNREAD_DOT_PX)
-    painter.end()
-    return QIcon(pixmap)
 
 
 def _titlebar_icon(kind: str, color: str = "#cfd0da") -> QIcon:

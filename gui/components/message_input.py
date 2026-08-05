@@ -50,10 +50,15 @@ class MessageInput(QWidget):
         row.addWidget(self.emoji_btn)
 
         self.line = QLineEdit()
-        self.line.setFixedHeight(EMOJI_BTN_PX)
         self.line.setPlaceholderText("메시지 입력 후 Enter (@닉네임으로 호출 가능)")
         self.line.returnPressed.connect(self.submit)
         row.addWidget(self.line)
+
+        # 높이를 못박으면 글꼴에 따라 글자 아래가 잘린다(실측: 필요한 높이와 딱 같아서
+        # 여유가 0이었음). 최소 높이만 주고 필요하면 더 커지게 두고, 버튼이 그 높이를 따라간다
+        input_height = max(EMOJI_BTN_PX, self.line.sizeHint().height() + 4)
+        self.line.setMinimumHeight(input_height)
+        self.emoji_btn.setFixedSize(input_height, input_height)
 
         self.send_btn = QPushButton("전송")
         self.send_btn.clicked.connect(self.submit)

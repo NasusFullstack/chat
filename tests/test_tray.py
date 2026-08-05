@@ -143,17 +143,22 @@ from gui.tray import NOTIFY_COALESCE_MS, TrayIcon
 shown = []
 
 
-class FakeTrayBackend:
-    """진짜 알림 대신 호출만 받아 적는다(운영체제가 그리는 부분은 시험할 수 없음)."""
+class FakeToast:
+    """진짜 팝업 대신 호출만 받아 적는다(뜨는 모양 자체는 화면으로 확인해야 함)."""
 
-    def showMessage(self, title, body, icon=None, timeout=0):  # noqa: N802 - Qt 규약
+    def show_message(self, title, body):
         shown.append((title, body))
+
+    def set_icon(self, icon):
+        pass
+
+    def hide(self):
+        pass
 
 
 tray = TrayIcon(window.windowIcon(), window)
-# 오프스크린에는 진짜 트레이가 없으므로 알림을 받아 적는 가짜를 꽂는다.
-# 묶기 장치는 트레이 유무와 무관하게 준비되므로 이 검사는 어디서든 돈다
-tray._tray = FakeTrayBackend()
+# 알림은 이제 우리 팝업(gui/toast.py)으로 뜨므로 거기에 가짜를 꽂는다
+tray._toast = FakeToast()
 app_prefs.set_value("notifications", True)
 if True:
 

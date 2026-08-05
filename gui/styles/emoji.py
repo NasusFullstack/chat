@@ -3,58 +3,58 @@
 QSS = """
 /* 입력창 왼쪽의 이모티콘 보관함 버튼 - 웃는 얼굴만 있는 정사각형 */
 QPushButton#emojiBtn {
-    background: #2b2d3a;
-    color: #c8cad8;
-    border: 1px solid #3a3d4e;
+    background: __BG_CONTROL_ALT__;
+    color: __TEXT_SOFT__;
+    border: 1px solid __LINE_CONTROL__;
     border-radius: 8px;
     padding: 0px;
 }
 QPushButton#emojiAddBtn {
-    background: #2b2d3a;
-    color: #c8cad8;
-    border: 1px solid #3a3d4e;
+    background: __BG_CONTROL_ALT__;
+    color: __TEXT_SOFT__;
+    border: 1px solid __LINE_CONTROL__;
     border-radius: 8px;
     padding: 5px 10px;
 }
 QPushButton#emojiAddBtn:hover {
-    background: #343747;
-    color: #ffffff;
+    background: __BG_HOVER_SOFT__;
+    color: __TEXT_STRONG__;
 }
 QPushButton#emojiBtn:hover {
-    background: #343747;
-    color: #ffffff;
+    background: __BG_HOVER_SOFT__;
+    color: __TEXT_STRONG__;
 }
 /* 이모티콘 보관함 창 */
 QWidget#emojiCell {
-    background: #24262f;
-    border: 1px solid #33364a;
+    background: __BG_CELL__;
+    border: 1px solid __LINE_SOFTER__;
     border-radius: 8px;
 }
 QWidget#emojiCell:hover {
-    border: 1px solid #6c5ce7;
+    border: 1px solid __ACCENT_SOFT__;
 }
 QLabel#emojiName {
-    color: #9a9cad;
+    color: __TEXT_DIM__;
     font-size: 11px;
     background: transparent;
 }
 QLabel#emojiEmpty {
-    color: #7f8296;
+    color: __TEXT_DIMMER__;
     background: transparent;
 }
 QLabel#emojiPageLabel {
-    color: #c8cad8;
+    color: __TEXT_SOFT__;
     background: transparent;
 }
 QPushButton#emojiNavBtn {
-    background: #2b2d3a;
-    color: #c8cad8;
-    border: 1px solid #3a3d4e;
+    background: __BG_CONTROL_ALT__;
+    color: __TEXT_SOFT__;
+    border: 1px solid __LINE_CONTROL__;
     border-radius: 6px;
     padding: 4px 0px;
 }
 QPushButton#emojiNavBtn:disabled {
-    color: #55586a;
-    border: 1px solid #2f3242;
+    color: __TEXT_DISABLED__;
+    border: 1px solid __LINE_DISABLED__;
 }
 """

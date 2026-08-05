@@ -1,13 +1,14 @@
 """환경설정 창 - 트레이 아이콘 메뉴에서 연다.
 
-지금 담는 것은 두 가지뿐이다(알림, 닫기 동작). 앱 전체 설정이 늘어나면 여기에 줄을 추가한다.
+지금 담는 것은 알림 / 닫기 동작 / 테마다. 앱 전체 설정이 늘어나면 여기에 줄을 추가한다.
 로그인 정보는 여기서 다루지 않는다 - 그건 로그인 화면 소관이고 저장 파일도 따로다.
 """
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
+                               QPushButton, QVBoxLayout, QWidget)
 
 import app_prefs
+from gui.styles.palette import DEFAULT_THEME, theme_choices
 from gui.theme import IS_WINDOWS
 from gui.themed_dialogs import _MiniTitleBar
 
@@ -48,6 +49,27 @@ class SettingsDialog(QDialog):
         tray_hint.setWordWrap(True)
         body.addWidget(tray_hint)
 
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setObjectName("settingsDivider")
+        body.addWidget(line)
+
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(QLabel("테마"))
+        self.theme_box = QComboBox()
+        for key, label in theme_choices():
+            self.theme_box.addItem(label, key)
+        saved_theme = prefs.get("theme", DEFAULT_THEME)
+        index = self.theme_box.findData(saved_theme)
+        self.theme_box.setCurrentIndex(index if index >= 0 else 0)
+        theme_row.addWidget(self.theme_box, 1)
+        body.addLayout(theme_row)
+        theme_hint = QLabel("지금은 기본 테마 하나입니다. 색 구성은 이미 테마 단위로 묶여 "
+                            "있어서, 다음 버전에서 테마가 추가되면 여기서 바로 고를 수 있습니다.")
+        theme_hint.setObjectName("hint")
+        theme_hint.setWordWrap(True)
+        body.addWidget(theme_hint)
+
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         cancel = QPushButton("취소")
@@ -63,8 +85,12 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(380)
 
     def _save(self):
-        app_prefs.save({
+        prefs = app_prefs.load()
+        prefs.update({
             "notifications": self.notify_check.isChecked(),
             "close_to_tray": self.tray_check.isChecked(),
+            "theme": self.theme_box.currentData(),
         })
+        # 접힘 상태처럼 이 창에서 안 다루는 설정은 그대로 둬야 함(load 후 갱신하는 이유)
+        app_prefs.save(prefs)
         self.accept()

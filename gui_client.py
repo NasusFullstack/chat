@@ -60,10 +60,10 @@ from gui.theme import (
     AVATAR_MAX_B64_CHARS, AVATAR_MSG_PX, CHANNEL_TAB_FIXED_WIDTH, CONNECT_TIMEOUT_MS,
     DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT, IS_WINDOWS, MENTION_COOLDOWN_SEC, NICKNAME_MAX_LEN,
     STYLE_SHEET, TIMESTAMP_BADGE_FONT_PX, TIMESTAMP_BADGE_HEIGHT_PX, UNREAD_BLINK_COLOR,
-    UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS, UNREAD_DOT_PX,
+    UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
 )
 from gui.helpers import (
-    _MENTION_TOKEN_RE, _app_dir, _build_unread_dot_icon, _decode_avatar_pixmap,
+    _MENTION_TOKEN_RE, _app_dir, _decode_avatar_pixmap,
     _find_app_icon, _find_default_cert, _format_ts, _friendly_connection_error,
     _hashed_avatar_pixmap, _linkify, _titlebar_icon,
 )
