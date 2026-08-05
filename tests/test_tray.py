@@ -119,7 +119,57 @@ checks.append(("이모티콘만 보낸 경우도 주소가 안 뜬다",
                only == "(이모티콘)"))
 
 long_body = notification_body("가" * 300)
-checks.append((f"아주 긴 메시지는 잘린다({len(long_body)}자)", len(long_body) <= 120))
+checks.append((f"긴 메시지는 20자에서 잘리고 ...이 붙는다 -> {long_body!r}",
+               long_body == "가" * 20 + "..."))
+
+short_body = notification_body("짧은 말")
+checks.append(("짧은 메시지에는 ...이 안 붙는다", short_body == "짧은 말"))
+
+# ---------- 6) 연달아 와도 알림이 쌓이지 않고 최신 하나만 ----------
+from PySide6.QtCore import QEventLoop, QTimer as _QTimer
+from gui.tray import NOTIFY_COALESCE_MS, TrayIcon
+
+shown = []
+
+
+class FakeTrayBackend:
+    """진짜 알림 대신 호출만 받아 적는다(운영체제가 그리는 부분은 시험할 수 없음)."""
+
+    def showMessage(self, title, body, icon=None, timeout=0):  # noqa: N802 - Qt 규약
+        shown.append((title, body))
+
+
+tray = TrayIcon(window.windowIcon(), window)
+# 오프스크린에는 진짜 트레이가 없으므로 알림을 받아 적는 가짜를 꽂는다.
+# 묶기 장치는 트레이 유무와 무관하게 준비되므로 이 검사는 어디서든 돈다
+tray._tray = FakeTrayBackend()
+app_prefs.set_value("notifications", True)
+if True:
+
+    # 한꺼번에 몰려온 상황
+    tray.notify("지현", "첫 번째", "#일반")
+    tray.notify("지현", "두 번째", "#일반")
+    tray.notify("태호", "세 번째", "#일반")
+
+    loop = QEventLoop()
+    _QTimer.singleShot(NOTIFY_COALESCE_MS + 300, loop.quit)
+    loop.exec()
+
+    checks.append((f"연달아 3건이 와도 알림은 한 번만 뜬다({len(shown)}회)", len(shown) == 1))
+    if shown:
+        title, body = shown[0]
+        checks.append((f"가장 최근 메시지를 보여준다 -> {body!r}", "세 번째" in body))
+        checks.append((f"제목은 마지막 보낸 사람 -> {title!r}", title.startswith("태호")))
+        checks.append(("나머지가 몇 건인지 알려준다", "외 2건" in body))
+        checks.append(("여러 사람이면 인원도 알려준다", "2명" in body))
+
+    # 시간이 지난 뒤 온 메시지는 따로 뜬다
+    shown.clear()
+    tray.notify("민수", "나중에 온 것", "#일반")
+    loop2 = QEventLoop()
+    _QTimer.singleShot(NOTIFY_COALESCE_MS + 300, loop2.quit)
+    loop2.exec()
+    checks.append(("나중에 온 메시지는 새로 뜬다", len(shown) == 1))
 
 print("=== 검증 결과 (트레이/알림/환경설정) ===")
 all_ok = True

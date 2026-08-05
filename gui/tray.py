@@ -13,17 +13,22 @@
   open_requested()   아이콘을 누르거나 메뉴에서 '열기'
   quit_requested()   메뉴에서 '종료' (진짜 종료는 창 쪽에서 처리)
 """
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 import app_prefs
 from chat_core.commands import split_emoji_parts
 from gui.theme import APP_TITLE
 
-# 알림에 넣을 본문 길이 상한. 길면 운영체제가 알아서 자르지만, 그 전에 우리가 잘라야
-# 줄바꿈이 이상하게 끊기지 않는다
-NOTIFY_BODY_MAX = 120
+# 알림 본문 길이 상한. 알림은 "누가 뭐라고 했는지" 훑어보는 용도라 짧아야 한다 -
+# 길면 알림 자체가 화면을 오래 가리고, 어차피 다 읽을 거면 창을 열게 된다
+NOTIFY_BODY_MAX = 20
 NOTIFY_TIMEOUT_MS = 5000
+
+# 연달아 온 메시지를 하나로 묶는 시간. 카톡/라인처럼 알림이 세로로 여러 개 쌓이지 않고
+# 항상 '가장 최근 것 하나'만 보이게 하기 위함이다. 이 시간 안에 더 오면 앞의 것을 대체한다.
+# 너무 길면 알림이 굼떠 보이고, 너무 짧으면 연속 대화에서 알림이 우수수 쌓인다
+NOTIFY_COALESCE_MS = 700
 
 
 def notification_body(text: str) -> str:
@@ -40,7 +45,7 @@ def notification_body(text: str) -> str:
             pieces.append(value)
     body = " ".join(" ".join(pieces).split())   # 이어 붙이며 생긴 공백 정리
     if len(body) > NOTIFY_BODY_MAX:
-        body = body[:NOTIFY_BODY_MAX - 1] + "…"
+        body = body[:NOTIFY_BODY_MAX] + "..."
     return body
 
 
@@ -50,6 +55,14 @@ class TrayIcon(QObject):
 
     def __init__(self, icon, parent=None):
         super().__init__(parent)
+        # 짧은 시간에 몰려온 메시지를 하나로 묶기 위한 대기열.
+        # 트레이가 없는 환경에서도 만들어 둔다 - 있고 없고에 따라 코드가 갈리면
+        # 그 경로만 시험이 안 되고, 나중에 트레이가 생겨도 대응이 안 된다
+        self._pending: list[tuple[str, str, str]] = []
+        self._coalesce = QTimer(self)
+        self._coalesce.setSingleShot(True)
+        self._coalesce.timeout.connect(self._flush_pending)
+
         self.available = QSystemTrayIcon.isSystemTrayAvailable()
         if not self.available:
             # 트레이가 없는 환경(일부 리눅스 데스크톱 등) - 아무 것도 안 하고 조용히 넘어간다.
@@ -74,6 +87,7 @@ class TrayIcon(QObject):
         self._menu = menu   # 참조를 들고 있어야 메뉴가 사라지지 않음
         self._tray.setContextMenu(menu)
         self._tray.show()
+
 
     # ---------------- 사용자 조작 ----------------
 
@@ -110,7 +124,24 @@ class TrayIcon(QObject):
         """
         if self._tray is None or not app_prefs.get("notifications"):
             return
+        # 바로 띄우지 않고 잠깐 모은다. 연달아 오면 앞의 것을 대체해서, 우리 알림이
+        # 세로로 여러 개 쌓이지 않고 항상 최신 하나만 보이게 한다(카톡/라인과 같은 방식).
+        # 다른 앱 알림과의 배치는 운영체제가 정하는 것이라 우리가 관여하지 않는다
+        self._pending.append((sender, text, channel))
+        self._coalesce.start(NOTIFY_COALESCE_MS)
+
+    def _flush_pending(self):
+        if not self._pending or self._tray is None:
+            return
+        items, self._pending = self._pending, []
+        sender, text, channel = items[-1]      # 가장 최근 메시지를 보여줌
         body = notification_body(text)
+        if len(items) > 1:
+            others = len(items) - 1
+            senders = {who for who, _, _ in items}
+            # 여러 사람이면 몇 명인지까지 알려줘야 누가 말 걸었는지 감이 온다
+            extra = f"외 {others}건" if len(senders) == 1 else f"외 {others}건 · {len(senders)}명"
+            body = f"{body}  ({extra})"
         title = f"{sender} ({channel})" if channel else sender
         self._tray.showMessage(title, body, QSystemTrayIcon.MessageIcon.Information,
                                NOTIFY_TIMEOUT_MS)
