@@ -66,7 +66,18 @@ event = QCloseEvent()
 window.closeEvent(event)
 checks.append(("창을 닫아도 종료되지 않음(닫기가 무시됨)", not event.isAccepted()))
 checks.append(("창은 숨겨짐", not window.isVisible()))
-checks.append(("트레이에 남아있다고 알려줌", bool(notified)))
+checks.append(("처음 닫을 때는 트레이에 남아있다고 알려줌", bool(notified)))
+
+# 두 번째부터는 안내가 안 떠야 함(매번 뜨면 성가심)
+notified.clear()
+window.show()
+for _ in range(3):
+    app.processEvents()
+event_again = QCloseEvent()
+window.closeEvent(event_again)
+checks.append(("두 번째부터는 안내가 안 뜬다", not notified))
+checks.append(("두 번째에도 창은 여전히 트레이로 내려간다",
+               not event_again.isAccepted() and not window.isVisible()))
 
 window.show_from_tray()
 for _ in range(4):

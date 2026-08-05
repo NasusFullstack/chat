@@ -346,8 +346,11 @@ class MainWindow(QMainWindow):
         if not self._quitting and self._tray.available and app_prefs.get("close_to_tray"):
             event.ignore()
             self.hide()
-            self._tray.notify(APP_TITLE, "창을 닫아도 계속 받습니다. 종료하려면 "
-                                         "이 아이콘을 우클릭해 '종료'를 누르세요.")
+            # 안내는 처음 한 번만. 닫을 때마다 뜨면 성가시기만 하다
+            if not app_prefs.get("tray_hint_shown"):
+                app_prefs.set_value("tray_hint_shown", True)
+                self._tray.notify(APP_TITLE, "창을 닫아도 계속 받습니다. 종료하려면 "
+                                             "이 아이콘을 우클릭해 '종료'를 누르세요.")
             return
         # 종료하면서 소켓이 끊기는 것도 disconnected로 오므로, 여기서 미리 막지 않으면
         # 앱이 닫히는 중에 재접속 타이머가 걸림
