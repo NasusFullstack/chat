@@ -103,6 +103,24 @@ window.notify_new_message("지현", "설정 껐으니 안 떠야 함", "#일반"
 checks.append(("설정을 끄면 알림이 안 뜬다", not notified))
 app_prefs.set_value("notifications", True)
 
+# ---------- 5) 알림 본문 (누가 / 뭐라고) ----------
+from chat_core.commands import format_emoji
+from gui.tray import notification_body
+
+plain = notification_body("새 버전 올렸어?")
+checks.append(("평범한 메시지는 그대로 보인다", plain == "새 버전 올렸어?"))
+
+mixed = notification_body("이거 봐 " + format_emoji("https://example.com/dog.gif"))
+checks.append((f"이모티콘은 주소 대신 말로 바뀐다 -> {mixed!r}",
+               "example.com" not in mixed and "(이모티콘)" in mixed))
+
+only = notification_body(format_emoji("https://example.com/cat.png"))
+checks.append(("이모티콘만 보낸 경우도 주소가 안 뜬다",
+               only == "(이모티콘)"))
+
+long_body = notification_body("가" * 300)
+checks.append((f"아주 긴 메시지는 잘린다({len(long_body)}자)", len(long_body) <= 120))
+
 print("=== 검증 결과 (트레이/알림/환경설정) ===")
 all_ok = True
 for name, ok in checks:
