@@ -80,6 +80,33 @@ bar.setValue(bar.maximum() - 20)
 settle()
 checks.append(("맨 아래 근처로 이동", bar.value() >= bar.maximum() - 40))
 
+# 내가 친 메시지는 위쪽을 보고 있어도 맨 아래로 내려와야 함
+bar.setValue(int(bar.maximum() * 0.2))
+settle()
+up_there = bar.value()
+page.append_message("#a", "Mong", "내가 친 메시지", True, 4.0)
+settle()
+checks.append((f"내가 치면 위를 보고 있어도 맨 아래로 내려온다({up_there} -> {bar.value()})",
+               bar.value() >= bar.maximum() - 40))
+
+# 남이 친 메시지는 여전히 안 끌어내림(위 동작이 남의 메시지까지 바꾸면 안 됨)
+bar.setValue(int(bar.maximum() * 0.2))
+settle()
+up_again = bar.value()
+page.append_message("#a", "hjsong", "남이 친 메시지", False, 5.0)
+settle()
+checks.append((f"남이 치면 여전히 안 끌려간다({up_again} -> {bar.value()})",
+               bar.value() == up_again))
+
+# 입력창으로 실제 전송했을 때도 곧바로 내려가야 함
+bar.setValue(int(bar.maximum() * 0.2))
+settle()
+page.message_input.line.setText("입력창에서 보냄")
+page.message_input.submit()
+settle()
+checks.append(("입력창으로 보내면 곧바로 맨 아래로 내려온다",
+               bar.value() >= bar.maximum() - 40))
+
 print("=== 검증 결과 (새 메시지 따라가기) ===")
 all_ok = True
 for name, ok in checks:
