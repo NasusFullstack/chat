@@ -4,7 +4,7 @@
 ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/PySide6-Qt%206-41CD52?logo=qt&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-49%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-50%20passing-brightgreen)
 
 **IRC 채팅 GUI 클라이언트 — Python + PySide6로 만든 윈도우 데스크톱 앱.**
 
@@ -29,6 +29,7 @@ Libera.Chat 같은 표준 IRC 서버에 그대로 접속해서 쓰는 채팅 프
 | **끊겨도 알아서 복구** | 연결이 끊기면 간격을 늘려가며 재접속하고, 보던 채널로 되돌아감 |
 | **링크 미리보기 / 이모티콘** | 이미지·움짤·뉴스 카드를 클라이언트에서 직접 렌더링(서버 자원을 쓰지 않음) |
 | **창을 닫아도 계속 받음** | 트레이에 상주하고, 새 메시지는 앱이 직접 그린 팝업으로 알림(보여줄 범위를 네 단계로 조절) |
+| **누가 뭘로 접속했나** | CTCP VERSION으로 상대 클라이언트를 알아내 참여자 목록에 로고로 표시(WeeChat·irssi·Discord 다리 등) |
 | **IRC에 없는 것들을 얹음** | 프로필 아이콘·표시 닉네임·@호출 알림을 CTCP 프레임으로 주고받아, 다른 IRC 클라이언트와 같은 채널에 있어도 대화가 깨지지 않음 |
 
 ## 어떻게 만들었나
@@ -55,7 +56,7 @@ server.py        asyncio 서버 (TLS)
 **프로토콜 분기를 코드에서 없앴습니다.** `if protocol == "irc"` 같은 분기 대신 전략 객체와
 표(registry)를 씁니다. 새 프로토콜은 클래스 하나 만들고 표에 한 줄 등록하면 됩니다.
 
-**회귀 테스트 49개**가 실제 서버를 띄워서 돕니다(`python tests/run_all.py`).
+**회귀 테스트 50개**가 실제 서버를 띄워서 돕니다(`python tests/run_all.py`).
 화면을 건드리는 작업은 [픽셀 단위 비교 도구](tests/ui_snapshot.py)로 리팩토링 전후가
 같은지 확인합니다 — 기능 테스트는 배치가 몇 px 틀어진 것을 못 잡기 때문입니다.
 
@@ -195,6 +196,10 @@ python cli_client.py <서버주소> <포트> [cert.pem 경로] [ssl여부: on/of
   연달아 오면 하나로 묶여 최신 것만 뜸
 - 알림에 무엇까지 보여줄지 선택: 보낸 사람과 내용 / 사람만 / 메시지만 / 모두 숨김
 - 환경설정(트레이 메뉴 또는 채널 목록 아래 톱니바퀴) — 알림 / 테마 / 정보 탭
+
+**참여자**
+- 그 사람이 무슨 프로그램으로 접속했는지 로고로 표시 (한 마디도 안 한 사람도 알 수 있음)
+- 로고는 공식 사이트에서 한 번만 받아 저장하고, 못 받으면 글자 배지로 대체
 
 **보기 편하게**
 - 채널 목록을 접었다 펼 수 있음 (경계 가운데 손잡이, 접으면 대화창이 그만큼 넓어짐)

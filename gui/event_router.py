@@ -128,6 +128,12 @@ def _system_notice(view, event):
 
 def _userlist_updated(view, event):
     view.chat_page.update_userlist(event.channel, event.users)
+    # 새로 보이는 사람들에게 "무슨 프로그램 쓰세요?"를 천천히 물어본다(gui/version_prober.py)
+    view.probe_client_versions(event.channel)
+
+
+def _client_version_updated(view, event):
+    view.chat_page.set_client_version(event.user_id, event.version)
 
 
 def _avatar_updated(view, event):
@@ -197,6 +203,7 @@ EVENT_HANDLERS = {
     domain_events.SystemNotice: _system_notice,
     domain_events.UserlistUpdated: _userlist_updated,
     domain_events.AvatarUpdated: _avatar_updated,
+    domain_events.ClientVersionUpdated: _client_version_updated,
     domain_events.NicknameUpdated: _nickname_updated,
     domain_events.CheatActivated: _cheat_activated,
     domain_events.CheatBlocked: _cheat_blocked,

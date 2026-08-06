@@ -27,6 +27,7 @@ from gui import event_router
 from gui.login_request import parse_login_values
 from gui.reconnect import ReconnectPolicy
 from gui.tray import TrayIcon
+from gui.version_prober import VersionProber
 from updater import POST_UPDATE_FLAG
 from gui.helpers import _friendly_connection_error
 from gui.network import ChatClient
@@ -128,6 +129,10 @@ class MainWindow(QMainWindow):
         self._tray.open_requested.connect(self.show_from_tray)
         self._tray.quit_requested.connect(self.quit_app)
 
+        # 참여자들이 무슨 프로그램을 쓰는지 알아보는 담당자. 한꺼번에 물으면 서버가
+        # 홍수로 보고 끊으므로 간격을 두고 한 명씩 묻는다(gui/version_prober.py)
+        self._prober = VersionProber(self._ask_client_version, self)
+
         self._connect_timer = QTimer(self)
         self._connect_timer.setSingleShot(True)
         self._connect_timer.timeout.connect(self._on_connect_timeout)
@@ -166,6 +171,15 @@ class MainWindow(QMainWindow):
         # 화면이 바뀔 때마다 그 화면에 맞는 크기 정책을 적용
         self.stack.currentChanged.connect(self._apply_size_policy_for_page)
         self._apply_size_policy_for_page(self.stack.currentIndex())
+
+    def _ask_client_version(self, user_id: str):
+        self.session.request_client_version(user_id)
+
+    def probe_client_versions(self, channel: str):
+        """그 채널에서 아직 모르는 사람들을 물어볼 줄에 세운다(설정에서 끌 수 있음)."""
+        if not app_prefs.get("show_client_badges"):
+            return
+        self._prober.enqueue(self.session.unknown_client_users(channel))
 
     def _apply_size_policy_for_page(self, _index: int):
         """채팅 화면만 크기 조절을 허용하고, 폼 화면들은 내용이 다 보이는 크기로 고정.
@@ -299,6 +313,7 @@ class MainWindow(QMainWindow):
             "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
         )
         self.chat_page.reset()
+        self._prober.reset()   # 서버가 바뀌면 사람도 프로그램도 다른 세상이다
         self.login_page.show_status("")
         self.stack.setCurrentWidget(self.login_page)
 

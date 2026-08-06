@@ -22,6 +22,12 @@ MAX_NICK_RETRIES = 3
 CTCP_DELIM = "\x01"
 AVATAR_CTCP_TAG = "FCAVATAR"
 
+# 상대가 무슨 프로그램으로 접속했는지 알아내는 표준 방법(CTCP VERSION).
+# \x01VERSION\x01을 귓속말로 보내면 클라이언트가 알아서 NOTICE로 답한다 - 사람이
+# 아무 말도 안 하고 있어도 되고, 대부분의 클라이언트는 화면에 띄우지도 않는다.
+# 답을 안 주는 경우도 있다(응답을 꺼둔 사람) - 그때는 그냥 모르는 채로 둔다
+VERSION_CTCP_TAG = "VERSION"
+
 # IRC 한 줄은 CR-LF 포함 512바이트를 넘을 수 없다(RFC 1459). 실제 서버는 넘는 줄을
 # 그냥 잘라버리므로, 아바타를 한 줄에 다 실으면 조용히 깨진다(실측: 2028바이트를
 # 보내면 510바이트로 잘려서 도착 -> 아이콘도 안 오고 잘린 쓰레기가 채팅에 그대로 뜸).
@@ -180,6 +186,36 @@ def normalize_channel(name: str) -> str:
     if name and name[0] not in "#&+!":
         name = "#" + name
     return name
+
+
+def format_ctcp_version_request(nick: str) -> str:
+    """그 사람에게 '무슨 프로그램 쓰세요?'라고 묻는 줄."""
+    return format_privmsg(nick, f"{CTCP_DELIM}{VERSION_CTCP_TAG}{CTCP_DELIM}")
+
+
+def format_ctcp_version_reply(nick: str, version: str) -> str:
+    """물어온 사람에게 우리 프로그램 이름을 돌려주는 줄.
+
+    답은 반드시 NOTICE로 보낸다 - PRIVMSG로 답하면 상대 클라이언트가 그걸 또 다른
+    CTCP 요청으로 보고 되받아치며 무한 반복될 수 있어서, RFC가 NOTICE를 못박아 뒀다.
+    """
+    return format_notice(nick, f"{CTCP_DELIM}{VERSION_CTCP_TAG} {version}{CTCP_DELIM}")
+
+
+def is_ctcp_version_request(text: str) -> bool:
+    return text.strip(CTCP_DELIM).strip().upper() == VERSION_CTCP_TAG
+
+
+def parse_ctcp_version_reply(text: str) -> str | None:
+    """'VERSION WeeChat 4.4.2' -> 'WeeChat 4.4.2'. 아니면 None."""
+    if len(text) < 2 or not (text.startswith(CTCP_DELIM) and text.endswith(CTCP_DELIM)):
+        return None
+    inner = text[1:-1]
+    prefix = VERSION_CTCP_TAG + " "
+    if not inner.upper().startswith(prefix):
+        return None
+    value = inner[len(prefix):].strip()
+    return value or None
 
 
 def format_ctcp_avatar(target: str, avatar_b64: str) -> list[str]:

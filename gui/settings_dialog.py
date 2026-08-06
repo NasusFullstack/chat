@@ -121,6 +121,13 @@ class SettingsDialog(QDialog):
         column.addWidget(self.tray_check)
         column.addWidget(_hint("끄면 창을 닫을 때 프로그램이 완전히 종료됩니다. "
                                "켜두면 작업표시줄 오른쪽 아이콘에서 '종료'를 눌러야 끝납니다."))
+
+        self.badge_check = QCheckBox("참여자가 쓰는 프로그램을 로고로 표시")
+        self.badge_check.setChecked(prefs["show_client_badges"])
+        column.addWidget(self.badge_check)
+        column.addWidget(_hint("참여자 목록 오른쪽에 그 사람이 접속한 프로그램(춥채팅, WeeChat 등)의 "
+                               "로고가 작게 뜹니다. 알아보려면 상대에게 한 번씩 물어보는 신호를 "
+                               "보내야 해서, 원치 않으면 끌 수 있습니다."))
         column.addStretch(1)
 
         self.notify_check.toggled.connect(self._sync_enabled)
@@ -222,6 +229,7 @@ class SettingsDialog(QDialog):
             "notify_preview": self.preview_check.isChecked(),
             "notify_detail": self.selected_detail(),
             "close_to_tray": self.tray_check.isChecked(),
+            "show_client_badges": self.badge_check.isChecked(),
             "theme": self.theme_box.currentData(),
         })
         app_prefs.save(prefs)

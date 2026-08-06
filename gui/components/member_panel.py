@@ -1,4 +1,4 @@
-"""오른쪽 참여자 목록 - 인원수 헤더 + 아이콘 붙은 이름 목록.
+"""오른쪽 참여자 목록 - 인원수 헤더 + 아이콘 붙은 이름 + 접속 프로그램 로고.
 
 여기 담긴 것은 "지금 채널에 누가 있고, 각자 어떤 아이콘/닉네임으로 보이는가"뿐이다.
 대화 내용도, 채널 목록도, 입력창도 모른다.
@@ -14,6 +14,8 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 import avatar_store
+from gui.client_badges import ClientBadges, short_label
+from gui.components.client_badge_delegate import ClientBadgeDelegate
 from gui.helpers import _decode_avatar_pixmap, _hashed_avatar_pixmap
 from gui.theme import AVATAR_LIST_PX, MEMBER_ROW_HEIGHT, MEMBER_VISIBLE_ROWS
 
@@ -21,7 +23,7 @@ from gui.theme import AVATAR_LIST_PX, MEMBER_ROW_HEIGHT, MEMBER_VISIBLE_ROWS
 class MemberPanel(QWidget):
     """채널 참여자 목록."""
 
-    def __init__(self, header_height: int, parent=None):
+    def __init__(self, header_height: int, parent=None, fetcher=None):
         super().__init__(parent)
         column = QVBoxLayout(self)
         # 세 열(채널/채팅/참여자)의 여백을 0으로 통일해야 세로 시작점이 같아짐
@@ -50,6 +52,11 @@ class MemberPanel(QWidget):
         self._avatars: dict[str, QPixmap] = {}
         self._nicknames: dict[str, str] = {}
         self._active_channel = ""
+        # 그 사람이 무슨 프로그램으로 접속했는지(CTCP VERSION 응답 그대로)
+        self._client_versions: dict[str, str] = {}
+        # 로고는 나중에 도착할 수 있으므로(인터넷에서 받아옴) 오면 다시 그린다
+        self._badges = ClientBadges(fetcher=fetcher, on_ready=lambda _key: self.list.viewport().update())
+        self.list.setItemDelegate(ClientBadgeDelegate(self._badge_for, self.list))
 
         # 예전에 본 적 있는 사람의 아이콘을 로컬에서 되살림. 실제 IRC 서버는 아이콘을
         # 저장해주지 않아서, 이게 없으면 상대가 다시 보내줄 때까지 기본 도트만 보인다
@@ -101,6 +108,7 @@ class MemberPanel(QWidget):
         self._members.clear()
         self._avatars.clear()
         self._nicknames.clear()
+        self._client_versions.clear()
         self._active_channel = ""
         self.list.clear()
         self.header.setText(_header_text(0))
@@ -113,14 +121,39 @@ class MemberPanel(QWidget):
         for user_id in self._members.get(self._active_channel, []):
             display = self.display_name(user_id)
             item = QListWidgetItem(display)
+            # 보이는 이름과 별개로 실제 아이디를 달아둔다 - 오른쪽 로고를 그리는이가
+            # "이 줄이 누구인가"를 이 값으로 알아본다(닉네임은 바뀔 수 있으므로)
+            item.setData(Qt.ItemDataRole.UserRole, user_id)
             if display != user_id:
                 # 닉네임은 고유성이 보장되지 않으므로 원래 아이디를 툴팁으로 확인 가능하게
                 item.setToolTip(user_id)
+            version = self._client_versions.get(user_id)
+            if version:
+                # 로고만으로는 정확히 뭔지 모르므로 툴팁에 프로그램 이름을 같이 보여준다
+                tip = item.toolTip()
+                name = short_label(version)
+                item.setToolTip(f"{tip}\n{name}" if tip else name)
             item.setIcon(QIcon(self.avatar(user_id, AVATAR_LIST_PX)))
             # 줄 높이를 못박아야 "여섯 줄"이 글꼴에 상관없이 정확히 여섯 줄이 된다
             item.setSizeHint(QSize(0, MEMBER_ROW_HEIGHT))
             self.list.addItem(item)
         self.header.setText(_header_text(self.list.count()))
+
+    def _badge_for(self, user_id):
+        """그 사람 줄 오른쪽에 그릴 작은 로고(모르면 None)."""
+        version = self._client_versions.get(user_id)
+        return self._badges.badge(version) if version else None
+
+    def set_client_version(self, user_id: str, version: str):
+        """그 사람이 쓰는 프로그램을 알아냈을 때 - 로고가 바뀌므로 다시 그린다."""
+        if not version:
+            return
+        self._client_versions[user_id] = version
+        if self._active_channel:
+            self._redraw()
+
+    def client_version(self, user_id: str) -> str:
+        return self._client_versions.get(user_id, "")
 
     # ---------------- 표시 정보 ----------------
 

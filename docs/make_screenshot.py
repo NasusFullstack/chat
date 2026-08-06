@@ -34,6 +34,12 @@ page.member_panel.set_members("#일반", ["몽키", "hjsong", "앨리스", "Bob"
 page.member_panel.set_nickname("hjsong", "준성")
 page.member_panel.show_channel("#일반")
 
+# 참여자 목록 오른쪽에 뜨는 '무엇으로 접속했나' 로고도 보이게 한다
+for who, client in [("몽키", "ChupChat 2.0.3"), ("hjsong", "WeeChat 4.4.2"),
+                    ("앨리스", "HexChat 2.16.2"), ("Bob", "irssi v1.4.5"),
+                    ("다람쥐", "matterbridge (discord)"), ("고양이", "mIRC v7.75")]:
+    page.set_client_version(who, client)
+
 now = time.time()
 talk = [
     ("앨리스", "다들 주말에 뭐 했어?", False, 1400),

@@ -298,7 +298,9 @@ class CliAdapter:
         elif isinstance(event, events.GenericError):
             self._out(f"[오류] {event.text}")
 
-        # AvatarUpdated / NicknameUpdated는 터미널에 그릴 게 없어서 조용히 무시
+        # AvatarUpdated / NicknameUpdated / ClientVersionUpdated는 터미널에 그릴 게
+        # 없어서 조용히 무시. 다만 CTCP VERSION에 답하는 일은 코어가 하므로, CLI로
+        # 접속해도 남들 눈에는 '춥채팅'으로 제대로 보인다
         # (코어가 캐시는 갱신해두므로 닉네임은 메시지 표시에 자동 반영됨)
 
     def _print_history(self, history: list[dict]):

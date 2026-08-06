@@ -7,7 +7,7 @@
 import time
 
 import irc_protocol
-from chat_core import commands, events
+from chat_core import commands, constants, events
 from chat_core.protocols.common_commands import CommonCommands
 
 # 서버가 명령에 대한 답으로 돌려주는 숫자 응답 중 사용자에게 그대로 보여줄 것들.
@@ -336,10 +336,19 @@ class IrcProtocol(CommonCommands):
                     channel, f"{old_nick}님이 {new_nick}(으)로 닉네임을 변경했습니다."
                 ))
 
+    def request_client_version(self, session, user_id: str) -> None:
+        session.transport(irc_protocol.format_ctcp_version_request(user_id))
+
     def _on_privmsg(self, session, msg):
         sender = msg.source_nick
         target = msg.params[0] if msg.params else ""
         text = msg.trailing
+        if irc_protocol.is_ctcp_version_request(text):
+            # 남이 우리에게 "무슨 프로그램 쓰냐"고 물어온 것 - 예의상 답한다.
+            # (이 답이 있어야 우리 사용자끼리도 서로를 알아본다)
+            session.transport(
+                irc_protocol.format_ctcp_version_reply(sender, constants.our_client_version()))
+            return
         if irc_protocol.is_ctcp_frame(text):
             # 우리끼리 쓰는 숨김 프레임은 채팅으로 표시하거나 기록에 남기지 않음.
             # 해석에 실패해도 여기서 끝내는 게 중요함 - 서버가 512바이트에서 잘라버린
@@ -385,6 +394,11 @@ class IrcProtocol(CommonCommands):
         session.apply_avatar(sender, "".join(parts[i] for i in range(1, total + 1)))
 
     def _on_notice(self, session, msg):
+        version = irc_protocol.parse_ctcp_version_reply(msg.trailing)
+        if version is not None:
+            # 우리가 물어본 것에 대한 답 - 채팅창에 띄우지 않고 조용히 기록만 한다
+            session.apply_client_version(msg.source_nick, version)
+            return
         # 등록 전에는 채널이 없으므로 빈 채널로 보냄 - 어댑터가 로그인 화면 등에 표시
         channel = session.active_channel if session.my_id else ""
         session.emit(events.SystemNotice(channel, msg.trailing))

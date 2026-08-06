@@ -20,6 +20,9 @@ DEFAULTS = {
     # "창을 닫아도 계속 받습니다" 안내를 이미 보여줬는지. 처음 한 번만 알려주면 되고,
     # 닫을 때마다 뜨면 성가시기만 하다
     "tray_hint_shown": False,
+    # 참여자가 무슨 프로그램으로 접속했는지 알아보고 목록에 작은 로고로 표시할지.
+    # 알아보려면 상대에게 CTCP VERSION을 한 번 보내야 해서, 원치 않으면 끌 수 있게 둔다
+    "show_client_badges": True,
     # 채널 목록을 접어둔 채로 껐다면 다음에도 접힌 채로 열림
     "channel_sidebar_collapsed": False,
     # 화면 테마(gui/styles/palette.py의 THEMES 키). 지금은 기본 테마 하나뿐이고 추가 예정

@@ -149,7 +149,9 @@ class ChatPage(QWidget):
         # 시작함. 안 맞추면 카드 상단이 어긋나 어설퍼 보였음
         right.setSpacing(0)
         right.setContentsMargins(0, 0, 0, 0)
-        self.member_panel = MemberPanel(MEMBER_HEADER_HEIGHT)
+        # 로고를 인터넷에서 받아와야 하므로 받아오기 담당자를 같이 넘긴다
+        self._image_fetcher = ImageFetcher(self)
+        self.member_panel = MemberPanel(MEMBER_HEADER_HEIGHT, fetcher=self._image_fetcher)
         right.addWidget(self.member_panel, 0)
         # 프로필 변경은 참여자 목록에 바로 붙는다(내 아이콘도 저 목록에 보이므로 같은 덩어리)
         right.addSpacing(_CARD_TO_CONTROL_GAP)
@@ -170,10 +172,6 @@ class ChatPage(QWidget):
         layout.addWidget(right_widget, 1)
         self.setLayout(layout)
         self._update_input_enabled()
-
-        # 미리보기 이미지를 받아오는 담당자(모든 채널 공유). 서버는 이미지 '주소'만
-        # 알려주고 그림 자체는 여기서 직접 받아옴 - gui/link_preview.py 설명 참고
-        self._image_fetcher = ImageFetcher(self)
 
         # 치트 오버레이는 레이아웃에 넣지 않고 채팅 영역 위에 겹쳐 띄움(테두리/배경 없이)
         self._cheat_overlay = CheatOverlay(self._center_stack)
@@ -482,6 +480,10 @@ class ChatPage(QWidget):
 
     def set_avatar(self, user_id: str, avatar_b64: str | None):
         self.member_panel.set_avatar(user_id, avatar_b64)
+
+    def set_client_version(self, user_id: str, version: str):
+        """그 사람이 무슨 프로그램으로 접속했는지 - 참여자 목록에 작은 로고로 표시된다."""
+        self.member_panel.set_client_version(user_id, version)
 
     def set_nickname(self, user_id: str, nickname: str | None):
         self.member_panel.set_nickname(user_id, nickname)
