@@ -289,6 +289,33 @@ check("WeeChat Android는 휴대폰으로(일반 WeeChat과 구분)",
 check("일반 WeeChat은 그대로 WeeChat",
       resolve_spec("WeeChat 4.4.2", "x").key == "weechat")
 
+# 앱 목록에 없는 프로그램이어도 응답에 적힌 운영체제로 판단해야 한다.
+# (표에 앱을 하나씩 등록하는 것보다 이 방법이 훨씬 많이 잡는다)
+from gui.client_badges import kind_for  # noqa: E402
+
+for version, expected, why in [
+        ("WeeChat 4.4.2 (Android)", "phone", "안드로이드라고 적혀 있음"),
+        ("irssi v1.4.5 - running on Android 13", "phone", "안드로이드에서 돌고 있음"),
+        ("Palaver 2.0 (iOS 17.2)", "phone", "iOS라고 적혀 있음"),
+        ("SomeNewApp 1.0 iPhone", "phone", "처음 보는 앱이지만 아이폰"),
+        ("Quasseldroid 1.1", "phone", "이름부터 안드로이드판"),
+        ("HexChat 2.16.2 [x64] / Windows 11", "", "PC라서 표시 없음"),
+        ("mIRC v7.75", "", "PC"),
+        ("MyCoolBot 1.0", "robot", "이름이 Bot으로 끝남"),
+        ("SomeThing 1.0 relay bridge", "robot", "다리라고 밝힘")]:
+    got = kind_for(version, "x")
+    check(f"{version[:30]} -> {expected or 'PC'} ({why})", got == expected, got)
+check("이름이 ~Bot이면 사람이 아니다", kind_for("AwesomeApp 2", "GitHubBot") == "robot")
+# 실측: hjsong_mobile이 "IRCCloud irccloud.com"이라고만 답했다. IRCCloud는 웹에서 쓰든
+# 휴대폰에서 쓰든 같은 말을 하므로, 응답만으로는 절대 알 수 없고 이름을 봐야 한다
+check("응답에 단서가 없어도 이름이 ~_mobile이면 휴대폰",
+      kind_for("IRCCloud irccloud.com", "hjsong_mobile") == "phone")
+check("이름에 droid가 들어가도 휴대폰", kind_for("SomeApp 1", "user-droid") == "phone")
+only_main, only_marker = ClientBadges(fetcher=None).badges("", nick="누구_mobile")
+check("프로그램을 몰라도 이름만으로 휴대폰 표시는 뜬다",
+      only_main is None and only_marker is not None)
+check("보통 닉네임은 사람으로 본다", kind_for("HexChat 2.16", "hjsong") == "")
+
 shape_badges = ClientBadges(fetcher=None)
 for version in ("Anope-2.0.21", "Goguma 0.7"):
     made = shape_badges.badge(version)
@@ -308,14 +335,13 @@ panel.set_members("#일반", ["몽키", "앨리스"])
 panel.show_channel("#일반")
 for _ in range(4):
     app.processEvents()
-check("아직 모르는 사람에게는 로고가 없다", not panel._badge_for("앨리스"))
+check("아직 모르는 사람에게는 로고가 없다", panel._badge_for("앨리스") == (None, None))
 
 page.set_client_version("앨리스", "WeeChat 4.4.2")
 for _ in range(4):
     app.processEvents()
-badges_shown = panel._badge_for("앨리스")
-check("알아낸 사람에게는 로고가 생긴다", bool(badges_shown) and not badges_shown[0].isNull())
-badge = badges_shown[0]
+badge, _marker = panel._badge_for("앨리스")
+check("알아낸 사람에게는 로고가 생긴다", badge is not None and not badge.isNull())
 
 row = panel.list.item(1)
 check("줄에 실제 아이디가 달려 있다(로고를 그릴 때 필요)",
@@ -330,14 +356,16 @@ check("로그아웃하면 프로그램 정보도 지워진다", panel.client_ver
 
 # 로고 옆에 종류 표시가 따로 붙는다(겹쳐 그리면 12px에서 안 보인다)
 two = ClientBadges(fetcher=None)
-check("PC 프로그램은 로고 하나만", len(two.badges("WeeChat 4.4.2")) == 1)
-check("휴대폰이면 로고 + 휴대폰 표시 둘",
-      len(two.badges("WeeChat Android 0.19")) == 2)
-check("봇/서비스도 로고 + 로봇 표시 둘", len(two.badges("Anope-2.0.21")) == 2)
+pc_main, pc_marker = two.badges("WeeChat 4.4.2")
+check("PC 프로그램은 로고만(표시 칸은 비움)", pc_main is not None and pc_marker is None)
+m_main, m_marker = two.badges("WeeChat Android 0.19")
+check("휴대폰이면 로고와 표시가 둘 다", m_main is not None and m_marker is not None)
+b_main, b_marker = two.badges("Anope-2.0.21")
+check("봇/서비스도 로고와 표시가 둘 다", b_main is not None and b_marker is not None)
 check("디스코드 연결도 봇이므로 표시가 붙는다",
-      len(two.badges("girc (github.com/x/girc)", nick="Discord")) == 2)
+      two.badges("girc (github.com/x/girc)", nick="Discord")[1] is not None)
 check("표시도 닉네임 글자를 안 넘는다",
-      all(b.width() <= CLIENT_BADGE_PX for b in two.badges("Goguma 0.7")))
+      all(b.width() <= CLIENT_BADGE_PX for b in two.badges("Goguma 0.7") if b))
 
 # ---------- 6) 디스코드 다리처럼 '물어봐도 소용없는' 계정 ----------
 # 채널이 통째로 디스코드와 이어져 있는 경우, 그 계정은 사람이 쓰는 IRC 프로그램이 아니라
@@ -346,10 +374,10 @@ panel.set_members("#일반", ["Discord", "PDLab", "몽키"])
 panel.show_channel("#일반")
 for _ in range(4):
     app.processEvents()
-check("이름이 Discord면 답이 없어도 로고가 뜬다", bool(panel._badge_for("Discord")))
+check("이름이 Discord면 답이 없어도 로고가 뜬다", panel._badge_for("Discord")[0] is not None)
 check("이름으로 짐작한 것임을 툴팁에 밝힌다",
       "짐작" in (panel.list.item(0).toolTip() or ""), panel.list.item(0).toolTip())
-check("아무 단서도 없는 사람은 그대로 비워둔다", not panel._badge_for("몽키"))
+check("아무 단서도 없는 사람은 그대로 비워둔다", panel._badge_for("몽키") == (None, None))
 check("봇 이름으로 답해도 다리로 알아본다",
       spec_for_nick("discord-bridge") is not None)
 
@@ -358,8 +386,8 @@ check("봇 이름으로 답해도 다리로 알아본다",
 page.set_client_version("PDLab", "PircBotX 2.3.1")
 for _ in range(4):
     app.processEvents()
-unknown_badge = panel._badge_for("PDLab")
-check("모르는 프로그램도 배지가 나온다", bool(unknown_badge))
+unknown_badge = panel._badge_for("PDLab")[0]
+check("모르는 프로그램도 배지가 나온다", unknown_badge is not None)
 check("툴팁에 응답 원문이 그대로 보인다(표에 추가할 수 있게)",
       "PircBotX 2.3.1" in (panel.list.item(1).toolTip() or ""), panel.list.item(1).toolTip())
 

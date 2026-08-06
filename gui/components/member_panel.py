@@ -155,12 +155,8 @@ class MemberPanel(QWidget):
         쓰는 IRC 프로그램이 아니라 디스코드와 IRC를 이어주는 봇이라서, CTCP VERSION에
         답하더라도 봇 이름("PircBotX" 등)이 나온다. 이런 건 이름으로 알아본다.
         """
-        version = self._client_versions.get(user_id)
-        if version:
-            return self._badges.badges(version, nick=user_id)
-        if spec_for_nick(user_id) is not None:
-            return self._badges.badges("", nick=user_id)  # 답이 없어도 이름으로 확실한 경우
-        return []
+        version = self._client_versions.get(user_id, "")
+        return self._badges.badges(version, nick=user_id)
 
     def set_client_version(self, user_id: str, version: str):
         """그 사람이 쓰는 프로그램을 알아냈을 때 - 로고가 바뀌므로 다시 그린다."""
