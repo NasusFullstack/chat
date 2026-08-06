@@ -64,8 +64,11 @@ panel.set_members("#a", [f"user{i}" for i in range(9)])
 for _ in range(4):
     app.processEvents()
 checks.append((f"인원수가 갱신됨({panel.header.text()})", "9명" in panel.header.text()))
-checks.append((f"목록 높이가 {MEMBER_VISIBLE_ROWS}줄로 고정됨({panel.list.height()}px)",
-               panel.list.height() == MEMBER_ROW_HEIGHT * MEMBER_VISIBLE_ROWS + 2))
+# 높이만 보면 안 되고 '실제로 몇 줄이 보이는가'를 봐야 함(테두리/여백이 자리를 먹어서
+# 줄 높이 x 6으로 잡으면 여섯 번째 줄이 반쯤 잘렸음)
+visible_rows = panel.list.viewport().height() / MEMBER_ROW_HEIGHT
+checks.append((f"딱 {MEMBER_VISIBLE_ROWS}줄이 온전히 보임(보이는 줄 {visible_rows:.2f})",
+               abs(visible_rows - MEMBER_VISIBLE_ROWS) < 0.05))
 checks.append(("아홉 명이면 스크롤로 내려서 봄",
                panel.list.verticalScrollBar().maximum() > 0))
 checks.append(("스크롤바가 얇음(6px)", panel.list.verticalScrollBar().width() == 6))

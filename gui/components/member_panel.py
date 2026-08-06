@@ -40,7 +40,8 @@ class MemberPanel(QWidget):
         self.list.setIconSize(QSize(AVATAR_LIST_PX, AVATAR_LIST_PX))
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # 창 끝까지 늘리지 않고 여섯 줄만 - 그 아래 프로필 버튼과 만든이 표시가 밀려나지
-        # 않게. 넘치는 사람은 얇은 스크롤바로 내려서 본다
+        # 않게. 넘치는 사람은 얇은 스크롤바로 내려서 본다.
+        # 여기서는 대략의 값만 주고, 화면에 뜬 뒤 _fit_rows()가 정확히 맞춘다
         self.list.setFixedHeight(MEMBER_ROW_HEIGHT * MEMBER_VISIBLE_ROWS + 2)
         column.addWidget(self.list, 0)
 
@@ -56,6 +57,22 @@ class MemberPanel(QWidget):
             pixmap = _decode_avatar_pixmap(avatar_b64)
             if pixmap is not None:
                 self._avatars[user_id] = pixmap
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_rows()
+
+    def _fit_rows(self):
+        """딱 여섯 줄이 온전히 보이도록 높이를 맞춘다.
+
+        줄 높이 x 6으로만 잡으면 **여섯 번째 줄이 반쯤 잘린다** - 목록 위젯의 테두리와
+        스타일시트가 준 안쪽 여백이 그만큼 자리를 먹기 때문이다(실측: 10px). 그 값은
+        화면에 뜨고 스타일이 적용된 뒤에야 알 수 있어서 여기서 잰다.
+        """
+        chrome = self.list.height() - self.list.viewport().height()   # 테두리 + 여백
+        wanted = MEMBER_ROW_HEIGHT * MEMBER_VISIBLE_ROWS + chrome
+        if chrome > 0 and self.list.height() != wanted:
+            self.list.setFixedHeight(wanted)
 
     # ---------------- 목록 ----------------
 
