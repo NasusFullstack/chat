@@ -162,6 +162,10 @@ class ChatSession:
         self.client_versions[user_id] = version
         self._emit(events.ClientVersionUpdated(user_id, version))
 
+    def forget_client_version(self, user_id: str):
+        """그 사람이 무슨 프로그램을 쓰는지 다시 알아봐야 할 때(예: 새로 접속해 들어옴)."""
+        self.client_versions.pop(user_id, None)
+
     def request_client_version(self, user_id: str):
         """그 사람에게 무슨 프로그램을 쓰는지 물어본다.
 

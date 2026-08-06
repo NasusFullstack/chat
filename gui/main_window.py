@@ -134,7 +134,14 @@ class MainWindow(QMainWindow):
         # 홍수로 보고 끊으므로 간격을 두고 한 명씩 묻는다(gui/version_prober.py)
         self._prober = VersionProber(self._ask_client_version, self)
         self._probe_refused_at = 0.0   # 서버가 거절한 시각(뒤늦게 오는 답들을 삼키는 데 씀)
-        self._channel_probed: set[str] = set()   # 채널 단위로 한 번씩만 물어보기 위한 기록
+        # 채널별로 '마지막으로 채널에 한 줄 물어본 시각'. 한 번만 묻고 끝내면 그 뒤에
+        # 들어온 사람은 영영 표시가 안 된다. 그렇다고 들어올 때마다 보내면 채널 사람들
+        # 화면에 요청이 자꾸 찍히므로, 사이에 시간 간격을 둔다
+        self._channel_probed: dict[str, float] = {}
+        # 채널별로 '직전에 보고 있던 참여자'. 이 목록에 없던 사람이 나타나면 방금 들어온
+        # 것이므로, 예전에 알아둔 프로그램을 그대로 믿지 않고 다시 물어본다
+        # (같은 닉네임으로 다른 프로그램을 켜고 들어올 수 있다)
+        self._seen_members: dict[str, set] = {}
 
         self._connect_timer = QTimer(self)
         self._connect_timer.setSingleShot(True)
@@ -182,6 +189,12 @@ class MainWindow(QMainWindow):
         """그 채널에서 아직 모르는 사람에게만, 그것도 아껴서 물어본다.
 
         서버와 상대에게 부담을 주지 않으려고 이렇게 아낀다:
+        0. 새로 들어온 사람은 **예전 기억을 버리고 다시 확인한다.** 같은 닉네임으로
+           다른 프로그램을 켜고 들어올 수 있어서, 기억을 그대로 믿으면 엉뚱한 로고가
+           며칠씩 붙어 있게 된다. 처음 채널에 들어가 참여자 목록을 받을 때는 해당 없음
+           (그때는 저장해둔 것을 그대로 써서 조용히 시작한다)
+           다만 사람이 들락거릴 때마다 요청이 나가면 채널 사람들 화면이 시끄러우므로,
+           채널에 묻는 것은 몇 분에 한 번으로 제한한다
         1. **예전에 알아낸 사람은 안 묻는다** - 저장해둔 것을 그대로 쓴다
            (client_version_store, 기한이 지나면 그때 한 번 다시 물음)
         2. **지금 보고 있는 채널만** 묻는다 - 여러 채널에 들어가 있어도 한꺼번에
@@ -196,13 +209,17 @@ class MainWindow(QMainWindow):
             return
         if channel != self.session.active_channel:
             return
-        if not client_version_store.probe_allowed(self._host):
-            # 개인별로 묻는 길이 막힌 서버 - 채널에 한 줄만 던져 본다(대상이 하나라
-            # 멀티타겟 규칙에 안 걸린다). 채널당 한 번만.
-            if channel not in self._channel_probed:
-                self._channel_probed.add(channel)
-                self.session.request_client_versions_in_channel(channel)
-            return
+        # 방금 들어온 사람은 예전 기억을 버리고 다시 확인한다
+        current = set(self.session.members.get(channel, ()))
+        previous = self._seen_members.get(channel)
+        self._seen_members[channel] = current
+        if previous is not None:
+            for user_id in current - previous:
+                if user_id == self.session.my_id:
+                    continue
+                self.session.forget_client_version(user_id)
+                client_version_store.forget(self._host, user_id)
+
         unknown = self.session.unknown_client_users(channel)
         if not unknown:
             return
@@ -216,12 +233,15 @@ class MainWindow(QMainWindow):
                 ask.append(user_id)
         if not ask:
             return
-        if len(ask) > 1:
-            if channel not in self._channel_probed:
-                self._channel_probed.add(channel)
-                self.session.request_client_versions_in_channel(channel)
+        # 한 명뿐이고 개인에게 물어도 되는 서버면 그 사람에게만(가장 조용한 방법)
+        if len(ask) == 1 and client_version_store.probe_allowed(self._host):
+            self._prober.enqueue(ask)
             return
-        self._prober.enqueue(ask)
+        # 여럿이거나 개인 요청이 막힌 서버 - 채널에 한 줄. 다만 너무 자주 보내지 않는다
+        last = self._channel_probed.get(channel, 0.0)
+        if time.time() - last >= self._CHANNEL_PROBE_COOLDOWN_SEC:
+            self._channel_probed[channel] = time.time()
+            self.session.request_client_versions_in_channel(channel)
 
     # 서버가 "그런 요청은 못 받는다"고 알려주는 말들. 서버마다 문구가 달라서 표로 둔다.
     # (실제로 UnrealIRCd가 "Multi-target messaging is not allowed"로 거절했고,
@@ -234,6 +254,10 @@ class MainWindow(QMainWindow):
         "ctcp is not allowed",
         "excess flood",
     )
+
+    # 채널에 한 줄 물어보는 것 사이의 최소 간격. 새로 들어온 사람도 결국 표시되지만,
+    # 사람이 들락거릴 때마다 채널 전체에 요청이 나가지는 않는다
+    _CHANNEL_PROBE_COOLDOWN_SEC = 180
 
     # 거절이 한 번 나온 뒤 이만큼은 같은 경고를 우리 탓으로 보고 삼킨다.
     # 이미 보내놓은 요청들의 답이 뒤늦게 도착하기 때문(실제로 멈춘 뒤에도 한 줄 더 떴다)
@@ -404,6 +428,7 @@ class MainWindow(QMainWindow):
         self.chat_page.reset()
         self._prober.reset()   # 서버가 바뀌면 사람도 프로그램도 다른 세상이다
         self._channel_probed.clear()
+        self._seen_members.clear()
         self.login_page.show_status("")
         self.stack.setCurrentWidget(self.login_page)
 

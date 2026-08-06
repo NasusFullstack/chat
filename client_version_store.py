@@ -109,6 +109,17 @@ def probe_allowed(host: str) -> bool:
     return not _read().get(host, {}).get(_REFUSED_KEY)
 
 
+def forget(host: str, nick: str) -> None:
+    """그 사람에 대한 기억만 지운다.
+
+    같은 닉네임으로 **다른 프로그램**을 켜고 다시 들어올 수 있다. 그때 예전 기억을
+    그대로 쓰면 엉뚱한 로고가 며칠씩 붙어 있게 된다.
+    """
+    data = _read()
+    if data.get(host, {}).pop(nick, None) is not None:
+        _write(data)
+
+
 def forget_host(host: str) -> None:
     data = _read()
     if data.pop(host, None) is not None:

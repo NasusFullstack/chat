@@ -324,6 +324,63 @@ for version in ("Anope-2.0.21", "Goguma 0.7"):
     check(f"{version.split()[0]} 배지도 작다({CLIENT_BADGE_PX}px 이하)",
           made.width() <= CLIENT_BADGE_PX)
 
+# ---------- 4-6) 나중에 들어온 사람도 표시된다 ----------
+# 예전엔 채널당 한 번만 묻고 끝내서, 그 뒤에 들어온 사람은 영영 로고가 안 떴다
+client_version_store.STORE_FILE = _os.path.join(
+    _os.environ.get("TEMP", _HERE), "test_client_versions4.json")
+if _os.path.exists(client_version_store.STORE_FILE):
+    _os.remove(client_version_store.STORE_FILE)
+
+win2 = g.MainWindow()
+win2._host = "irc.join"
+lines = []
+# 로그인 전 기본 세션은 커스텀 프로토콜이라(우리 서버엔 우리 클라이언트만 있으므로)
+# 채널에 묻는 일 자체를 하지 않는다. 실제 IRC 접속과 같은 상태로 바꿔서 검사한다
+win2.session = build_session("irc", "irc.join", 6667, transport=lines.append,
+                             on_event=win2._on_domain_event)
+win2.session.my_id = "몽키"
+win2.session.active_channel = "#a"
+win2.session.members["#a"] = {"몽키", "앨리스", "Bob"}
+win2.probe_client_versions("#a")
+check("여럿이면 채널에 한 줄로 묻는다", len(lines) == 1 and lines[0].startswith("PRIVMSG #a"),
+      lines)
+
+# 곧바로 또 들어와도 채널에 연달아 보내지는 않는다(사람들 화면이 시끄러워짐)
+win2.session.members["#a"].add("다람쥐")
+win2.probe_client_versions("#a")
+check("바로 뒤에 또 들어오면 연달아 보내지 않는다", len(lines) == 1, lines)
+
+# 시간이 지나면 다시 묻는다 - 그래야 나중에 들어온 사람도 결국 표시된다
+win2._channel_probed["#a"] = 0.0
+win2.probe_client_versions("#a")
+check("시간이 지난 뒤 들어온 사람은 다시 확인한다", len(lines) == 2, lines)
+
+# 한 명만 모를 때는 그 사람에게만 조용히 묻는다(채널 전체를 건드릴 이유가 없음)
+win2._prober.reset()
+lines.clear()
+for who in ("앨리스", "Bob", "다람쥐"):
+    win2.session.client_versions[who] = "WeeChat 4.4.2"
+win2.session.members["#a"].add("새사람")
+win2.probe_client_versions("#a")
+check("한 명만 모르면 그 사람에게만 묻는다(채널 전체 요청 없음)",
+      not lines and win2._prober.pending() == 1,
+      (lines, win2._prober.pending()))
+# 같은 닉네임으로 다른 프로그램을 켜고 다시 들어오는 경우
+client_version_store.remember("irc.join", "변덕쟁이", "WeeChat 4.4.2")
+win2.session.members["#a"] = {"몽키", "앨리스", "Bob", "다람쥐", "새사람"}
+win2.probe_client_versions("#a")            # 지금 목록을 기억시켜 둔다
+win2.session.members["#a"].add("변덕쟁이")   # 방금 들어옴
+win2.session.client_versions["변덕쟁이"] = "WeeChat 4.4.2"
+win2.probe_client_versions("#a")
+check("새로 들어오면 예전에 알던 프로그램을 버린다(다른 걸 켰을 수 있으므로)",
+      "변덕쟁이" not in win2.session.client_versions, win2.session.client_versions)
+check("저장해둔 기억도 지운다",
+      "변덕쟁이" not in client_version_store.load("irc.join"))
+
+win2.deleteLater()
+if _os.path.exists(client_version_store.STORE_FILE):
+    _os.remove(client_version_store.STORE_FILE)
+
 # ---------- 5) 화면 표시 ----------
 page = g.ChatPage(on_send=lambda c, t: None, on_add_channel=lambda: None,
                   on_leave_channel=lambda c: None, on_set_avatar=lambda: None)
