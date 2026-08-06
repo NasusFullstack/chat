@@ -4,6 +4,15 @@
 
 ---
 
+## v2.0.6
+알아보는 프로그램을 **16종 → 30종**으로 늘리고, 종류별로 다르게 보여줍니다.
+
+- **로고가 뜨는 것**: 춥채팅 · Discord · WeeChat · HexChat · irssi · mIRC · The Lounge · Kiwi IRC · **IRCCloud · Konversation · KVIrc · senpai · ZNC**
+- **봇과 서비스는 로봇 모양**으로 표시합니다. NickServ·ChanServ 같은 서비스(Anope/Atheme), Eggdrop·Sopel·Limnoria 같은 봇, 그리고 봇 라이브러리로 접속한 계정까지. 사람이 아니라는 게 한눈에 보입니다
+- **휴대폰에서 접속한 사람은 휴대폰 모양**으로 표시합니다. Goguma · Palaver(iOS) · Revolution IRC · AndChat · HoloIRC · Igloo · Mutter · Colloquy · WeeChat Android
+- 이름이 `~Serv`로 끝나면(NickServ, ChanServ 등) 답을 안 해도 서비스로 봅니다
+- Textual · Quassel · Halloy는 아직 글자 배지입니다(공식 로고 주소를 못 찾았습니다)
+
 ## v2.0.5
 **접속 프로그램 확인 방식을 바꿔서, 막히던 서버에서도 제대로 뜹니다.**
 

@@ -96,7 +96,8 @@ app = QApplication.instance() or QApplication([])
 import gui_client as g  # noqa: E402
 
 app.setStyleSheet(g.STYLE_SHEET)
-from gui.client_badges import CLIENT_BADGE_PX, ClientBadges, short_label, spec_for  # noqa: E402
+from gui.client_badges import (CLIENT_BADGE_PX, ClientBadges,  # noqa: E402
+                               resolve_spec, short_label, spec_for, spec_for_nick)
 
 for version, expected in [("WeeChat 4.4.2", "weechat"),
                           ("HexChat 2.16.2 [x64] / Windows 11", "hexchat"),
@@ -255,14 +256,46 @@ check("그 한 줄이 채널 대상 CTCP VERSION이다",
       ch_sent[0] == "PRIVMSG #pdlab :VERSION".replace("\x01", ""), repr(ch_sent[0]))
 
 # 다리 봇은 자기가 쓰는 라이브러리 이름을 답한다(실측: girc) - 이름 쪽을 믿어야 한다
-from gui.client_badges import resolve_spec  # noqa: E402
-
 real_bridge = "girc (github.com/lrstanley/girc) using go1.19.5 (linux, amd64)"
 check("다리 봇이 라이브러리 이름을 답해도 디스코드로 본다",
       resolve_spec(real_bridge, "Discord").key == "discord",
       resolve_spec(real_bridge, "Discord").key)
 check("사람이 쓰는 프로그램은 응답 그대로 판단한다",
       resolve_spec("WeeChat 3.5 (Mar 31 2022 11:36:01)", "hjsong").key == "weechat")
+
+# ---------- 4-5) 사람이 아닌 것들과 휴대폰 ----------
+# 실측: PDLab이 "Anope-2.0.21-git (...) services.pdlab.kr :UnrealIRCd 4+"라고 답했다.
+# 사람이 쓰는 클라이언트가 아니라 서비스(NickServ/ChanServ를 돌리는 것)다
+anope = "Anope-2.0.21-git (g15f5be7) services.pdlab.kr :UnrealIRCd 4+ - (enc_sha256)"
+spec = resolve_spec(anope, "PDLab")
+check(f"서비스를 알아본다({spec.label if spec else None})",
+      spec is not None and spec.shape == "robot")
+check("이름이 ~Serv면 서비스로 본다(NickServ/ChanServ 관례)",
+      spec_for_nick("NickServ") is not None and spec_for_nick("NickServ").shape == "robot")
+check("사람 이름은 서비스로 오해하지 않는다", spec_for_nick("hjsong") is None)
+
+for version, shape, what in [("Eggdrop v1.9.5", "robot", "봇"),
+                             ("Sopel 8.0.0", "robot", "봇"),
+                             ("PircBotX 2.3.1", "robot", "봇 라이브러리"),
+                             ("Goguma 0.7.0", "phone", "휴대폰"),
+                             ("Palaver 1.2", "phone", "아이폰"),
+                             ("Revolution IRC 1.0", "phone", "안드로이드")]:
+    got = resolve_spec(version, "x")
+    check(f"{version.split()[0]}은 {what} 모양", got is not None and got.shape == shape,
+          got.shape if got else None)
+
+check("WeeChat Android는 휴대폰으로(일반 WeeChat과 구분)",
+      resolve_spec("WeeChat Android 0.19", "x").shape == "phone")
+check("일반 WeeChat은 그대로 WeeChat",
+      resolve_spec("WeeChat 4.4.2", "x").key == "weechat")
+
+shape_badges = ClientBadges(fetcher=None)
+for version in ("Anope-2.0.21", "Goguma 0.7"):
+    made = shape_badges.badge(version)
+    check(f"{version.split()[0]} 배지가 그려진다(인터넷 없이도)",
+          made is not None and not made.isNull())
+    check(f"{version.split()[0]} 배지도 작다({CLIENT_BADGE_PX}px 이하)",
+          made.width() <= CLIENT_BADGE_PX)
 
 # ---------- 5) 화면 표시 ----------
 page = g.ChatPage(on_send=lambda c, t: None, on_add_channel=lambda: None,
@@ -297,8 +330,6 @@ check("로그아웃하면 프로그램 정보도 지워진다", panel.client_ver
 # ---------- 6) 디스코드 다리처럼 '물어봐도 소용없는' 계정 ----------
 # 채널이 통째로 디스코드와 이어져 있는 경우, 그 계정은 사람이 쓰는 IRC 프로그램이 아니라
 # 이어주는 봇이다. CTCP로 물어도 봇 이름이 나오거나 아예 답이 없다 - 이름으로 알아본다
-from gui.client_badges import spec_for_nick  # noqa: E402
-
 panel.set_members("#일반", ["Discord", "PDLab", "몽키"])
 panel.show_channel("#일반")
 for _ in range(4):
