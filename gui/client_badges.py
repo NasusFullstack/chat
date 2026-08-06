@@ -18,8 +18,8 @@ import os
 import re
 import sys
 
-from PySide6.QtCore import QBuffer, QByteArray, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPixmap
+from PySide6.QtCore import QBuffer, QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
 
 from gui.helpers import _find_logo_image
 
@@ -37,13 +37,16 @@ class ClientSpec:
     """
 
     def __init__(self, key: str, label: str, pattern: str, letter: str, color: str,
-                 logo_url: str = ""):
+                 logo_url: str = "", shape: str = ""):
         self.key = key
         self.label = label            # 사람에게 보여줄 이름(툴팁)
         self.regex = re.compile(pattern, re.IGNORECASE)
-        self.letter = letter          # 로고를 못 구했을 때 그릴 글자
+        self.letter = letter          # 로고도 도형도 없을 때 그릴 글자
         self.color = color            # 그 프로그램의 대표색
         self.logo_url = logo_url
+        # 로고 대신 직접 그릴 도형: "robot"(봇/서비스) / "phone"(휴대폰용 프로그램).
+        # 종류가 많고 저마다 로고를 구하기 어려운 것들을 한 눈에 묶어 보여주기 위함
+        self.shape = shape
 
     def matches(self, version: str) -> bool:
         return bool(self.regex.search(version))
@@ -56,6 +59,10 @@ CLIENT_SPECS = [
     ClientSpec("discord", "Discord", r"discord|matterbridge|bridge", "D", "#5865F2",
                "https://assets-global.website-files.com/6257adef93867e50d84d30e2/"
                "636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png"),
+    # 안드로이드판을 일반 WeeChat보다 먼저 둔다 - 순서가 곧 우선순위라 반대로 두면
+    # "WeeChat Android"가 그냥 WeeChat으로 잡힌다
+    ClientSpec("weechat_android", "WeeChat Android", r"weechat.?android", "W", "#57a64a",
+               shape="phone"),
     ClientSpec("weechat", "WeeChat", r"weechat", "W", "#57a64a",
                "https://weechat.org/favicon.ico"),
     ClientSpec("hexchat", "HexChat", r"hexchat", "H", "#3a7bd5",
@@ -68,14 +75,42 @@ CLIENT_SPECS = [
                "https://thelounge.chat/favicon.ico"),
     ClientSpec("kiwi", "Kiwi IRC", r"kiwi", "K", "#42b3a5",
                "https://kiwiirc.com/favicon.ico"),
+    ClientSpec("irccloud", "IRCCloud", r"irccloud", "C", "#1a86e0",
+               "https://www.irccloud.com/favicon.ico"),
+    ClientSpec("konversation", "Konversation", r"konversation", "K", "#1d99f3",
+               "https://konversation.kde.org/favicon.ico"),
+    ClientSpec("kvirc", "KVIrc", r"kvirc", "K", "#c0392b",
+               "https://www.kvirc.net/favicon.ico"),
+    ClientSpec("senpai", "senpai", r"senpai", "s", "#9b5de5",
+               "https://senpai.chat/favicon.ico"),
+    ClientSpec("znc", "ZNC", r"\bznc\b", "Z", "#6b7079",
+               "https://wiki.znc.in/favicon.ico"),
+
+    # 로고 주소를 못 구한 것들 - 글자 배지로 나온다(주소를 알게 되면 한 줄만 채우면 됨)
     ClientSpec("textual", "Textual", r"textual", "T", "#4f8ef7"),
     ClientSpec("quassel", "Quassel", r"quassel", "Q", "#8a6fbf"),
-    ClientSpec("konversation", "Konversation", r"konversation", "K", "#1d99f3"),
-    ClientSpec("kvirc", "KVIrc", r"kvirc", "K", "#c0392b"),
     ClientSpec("halloy", "Halloy", r"halloy", "h", "#e6a44b"),
-    ClientSpec("goguma", "Goguma", r"goguma", "g", "#e07a5f"),
-    ClientSpec("senpai", "senpai", r"senpai", "s", "#9b5de5"),
-    ClientSpec("znc", "ZNC", r"\bznc\b", "Z", "#6b7079"),
+
+    # --- 휴대폰에서 쓰는 것들: 로고 대신 휴대폰 모양 (어디서 접속했는지가 더 중요) ---
+    ClientSpec("goguma", "Goguma (모바일)", r"goguma", "g", "#e07a5f", shape="phone"),
+    ClientSpec("palaver", "Palaver (iOS)", r"palaver", "P", "#4a90d9", shape="phone"),
+    ClientSpec("revolution", "Revolution IRC (안드로이드)", r"revolution ?irc", "R",
+               "#3ddc84", shape="phone"),
+    ClientSpec("andchat", "AndChat (안드로이드)", r"andchat", "A", "#3ddc84", shape="phone"),
+    ClientSpec("holoirc", "HoloIRC (안드로이드)", r"holoirc", "H", "#3ddc84", shape="phone"),
+    ClientSpec("igloo", "Igloo (iOS)", r"\bigloo\b", "I", "#4a90d9", shape="phone"),
+    ClientSpec("mutter", "Mutter (iOS)", r"\bmutter\b", "M", "#4a90d9", shape="phone"),
+    ClientSpec("colloquy", "Colloquy", r"colloquy", "C", "#4a90d9", shape="phone"),
+
+    # --- 사람이 아닌 것들: 서비스/봇은 로봇 모양으로 묶는다 ---
+    # (종류가 많고 저마다 로고를 구하기 어렵다. 사람인지 아닌지가 먼저 보이는 게 중요)
+    ClientSpec("services", "IRC 서비스", r"anope|atheme|ircservices|services\.", "S",
+               "#8a8f9e", shape="robot"),
+    ClientSpec("eggdrop", "Eggdrop (봇)", r"eggdrop", "E", "#8a8f9e", shape="robot"),
+    ClientSpec("sopel", "Sopel (봇)", r"sopel|willie", "S", "#8a8f9e", shape="robot"),
+    ClientSpec("limnoria", "Limnoria (봇)", r"limnoria|supybot", "L", "#8a8f9e", shape="robot"),
+    ClientSpec("botlib", "봇", r"pircbot|girc|irc-framework|twisted|node-irc|python-irc|\bbot\b",
+               "B", "#8a8f9e", shape="robot"),
 ]
 UNKNOWN_COLOR = "#6e7185"
 
@@ -93,6 +128,9 @@ def spec_for(version: str) -> ClientSpec | None:
 # 닉네임만 보고 짐작해도 되는 것들. 다리(bridge) 계정은 보통 이름 자체가 Discord다.
 # 응답으로 알아내지 못했을 때만 쓰는 보조 수단이라 아주 확실한 것만 넣는다
 NICK_HINTS = (("discord", "discord"), ("matterbridge", "discord"))
+# 이름 끝이 이렇게 끝나면 사람이 아니라 서비스다(NickServ/ChanServ/OperServ...).
+# 이건 IRC의 오랜 관례라 사람이 그런 이름을 쓰는 일은 거의 없다
+SERVICE_NICK_SUFFIXES = ("serv",)
 
 
 def spec_for_nick(nick: str) -> ClientSpec | None:
@@ -102,9 +140,16 @@ def spec_for_nick(nick: str) -> ClientSpec | None:
     lowered = nick.lower()
     for needle, key in NICK_HINTS:
         if needle in lowered:
-            for spec in CLIENT_SPECS:
-                if spec.key == key:
-                    return spec
+            return _spec_by_key(key)
+    if lowered.endswith(SERVICE_NICK_SUFFIXES):
+        return _spec_by_key("services")
+    return None
+
+
+def _spec_by_key(key: str) -> ClientSpec | None:
+    for spec in CLIENT_SPECS:
+        if spec.key == key:
+            return spec
     return None
 
 
@@ -184,6 +229,8 @@ class ClientBadges:
             if pixmap is not None:
                 return pixmap
         if spec is not None:
+            if spec.shape:
+                return _shape_badge(spec.shape, spec.color, size)   # 로고를 안 쓰는 종류
             self._fetch_logo(spec)
             return _letter_badge(spec.letter, spec.color, size)
         return _letter_badge(_initial(version), UNKNOWN_COLOR, size)
@@ -236,6 +283,44 @@ def _letter_badge(letter: str, color: str, size: int) -> QPixmap:
     painter.setFont(font)
     painter.setPen(QColor("#ffffff"))
     painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, letter[:1])
+    painter.end()
+    return pixmap
+
+
+def _shape_badge(shape: str, color: str, size: int) -> QPixmap:
+    """로고 대신 직접 그리는 도형. 12px에서도 알아볼 수 있게 아주 단순하게 그린다."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    body = QColor(color)
+    if shape == "phone":
+        # 세로로 긴 네모 하나 + 위쪽에 수화구 선 하나면 휴대폰으로 읽힌다
+        width = size * 0.58
+        rect = QRectF((size - width) / 2, 0.5, width, size - 1)
+        path = QPainterPath()
+        path.addRoundedRect(rect, size * 0.18, size * 0.18)
+        painter.fillPath(path, body)
+        pen = QPen(QColor("#ffffff"), max(1.0, size * 0.09))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(rect.center().x() - width * 0.18, rect.top() + size * 0.16),
+                         QPointF(rect.center().x() + width * 0.18, rect.top() + size * 0.16))
+    else:
+        # 로봇: 더듬이 + 네모 머리 + 눈 두 개
+        head = QRectF(0.5, size * 0.28, size - 1, size * 0.62)
+        path = QPainterPath()
+        path.addRoundedRect(head, size * 0.22, size * 0.22)
+        painter.fillPath(path, body)
+        pen = QPen(body, max(1.0, size * 0.1))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(QPointF(size / 2, size * 0.06), QPointF(size / 2, size * 0.28))
+        painter.setBrush(QColor("#ffffff"))
+        painter.setPen(Qt.PenStyle.NoPen)
+        eye = size * 0.13
+        painter.drawEllipse(QPointF(size * 0.35, size * 0.58), eye, eye)
+        painter.drawEllipse(QPointF(size * 0.65, size * 0.58), eye, eye)
     painter.end()
     return pixmap
 
