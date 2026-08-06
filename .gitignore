@@ -34,3 +34,4 @@ emojis.json
 tests/_ui_snapshots/
 app_prefs.json
 client_logos.json
+client_versions.json

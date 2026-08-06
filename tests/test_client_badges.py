@@ -117,19 +117,108 @@ check("로고를 못 받아도 글자 배지가 나온다",
 check(f"배지가 작다({CLIENT_BADGE_PX}px)", weechat_badge.width() <= CLIENT_BADGE_PX)
 
 # ---------- 4) 한 번에 우르르 묻지 않기 ----------
-from gui.version_prober import VersionProber  # noqa: E402
+from gui.version_prober import (MAX_PROBES_PER_ROUND, PROBE_INTERVAL_MS,  # noqa: E402
+                                VersionProber)
 
 asked = []
 prober = VersionProber(asked.append)
 prober.enqueue(["a", "b", "c", "d"])
-check("줄을 세우고 첫 한 명만 바로 묻는다", asked == ["a"], asked)
-check("나머지는 기다린다", prober.pending() == 3, prober.pending())
+check("줄만 세우고 곧바로 묻지는 않는다(들어가는 순간 서버가 바쁨)", asked == [], asked)
+check("네 명이 줄에 섬", prober.pending() == 4, prober.pending())
 prober._ask_next()
-check("시간이 지나면 다음 사람", asked == ["a", "b"], asked)
+prober._ask_next()
+check("시간이 지나면 한 명씩", asked == ["a", "b"], asked)
 prober.enqueue(["a", "b"])
 check("이미 물어본 사람은 다시 안 묻는다", prober.pending() == 2, prober.pending())
+check(f"간격이 넉넉하다({PROBE_INTERVAL_MS}ms)", PROBE_INTERVAL_MS >= 3000)
+prober.enqueue([f"user{i}" for i in range(100)])
+check(f"한 번에 {MAX_PROBES_PER_ROUND}명을 넘겨 세우지 않는다",
+      prober.pending() <= MAX_PROBES_PER_ROUND + 2, prober.pending())
 prober.reset()
 check("초기화하면 줄이 비워진다", prober.pending() == 0)
+
+# ---------- 4-1) 한 번 알아낸 것은 기억해서 다시 안 묻는다 ----------
+import client_version_store  # noqa: E402
+
+client_version_store.STORE_FILE = _os.path.join(
+    _os.environ.get("TEMP", _HERE), "test_client_versions.json")
+if _os.path.exists(client_version_store.STORE_FILE):
+    _os.remove(client_version_store.STORE_FILE)
+
+client_version_store.remember("irc.test", "앨리스", "WeeChat 4.4.2")
+check("기억한 것을 다시 꺼내 쓸 수 있다",
+      client_version_store.load("irc.test").get("앨리스") == "WeeChat 4.4.2")
+check("다른 서버의 기억과 섞이지 않는다", client_version_store.load("other.test") == {})
+
+import time as _time  # noqa: E402
+
+first = _time.time()
+client_version_store.remember("irc.test", "앨리스", "WeeChat 4.4.2")   # 같은 값 다시
+raw = client_version_store._read()["irc.test"]["앨리스"]
+check("같은 값이면 적은 시각을 건드리지 않는다(기한이 영원히 미뤄지지 않게)",
+      raw[1] <= first, raw)
+
+client_version_store.remember("irc.test", "앨리스", "HexChat 2.16")     # 프로그램을 바꿈
+check("바뀐 프로그램은 갱신된다",
+      client_version_store.load("irc.test").get("앨리스") == "HexChat 2.16")
+
+old = client_version_store._read()
+old["irc.test"]["옛날사람"] = ["irssi v1.0", _time.time() - client_version_store.REMEMBER_SEC - 10]
+client_version_store._write(old)
+check(f"{client_version_store.REMEMBER_DAYS}일이 지난 기억은 쓰지 않는다(다시 한 번 물어봄)",
+      "옛날사람" not in client_version_store.load("irc.test"))
+_os.remove(client_version_store.STORE_FILE)
+
+# ---------- 4-2) 서버가 거절하면 멈춘다 ----------
+client_version_store.STORE_FILE = _os.path.join(
+    _os.environ.get("TEMP", _HERE), "test_client_versions2.json")
+if _os.path.exists(client_version_store.STORE_FILE):
+    _os.remove(client_version_store.STORE_FILE)
+
+check("처음에는 물어봐도 된다", client_version_store.probe_allowed("irc.test"))
+client_version_store.mark_probe_refused("irc.test")
+check("거절당한 서버에는 다시 안 묻는다", not client_version_store.probe_allowed("irc.test"))
+check("거절 표시가 사람 목록에 섞이지 않는다",
+      client_version_store.load("irc.test") == {}, client_version_store.load("irc.test"))
+check("다른 서버는 그대로 물어봐도 된다", client_version_store.probe_allowed("other.test"))
+_os.remove(client_version_store.STORE_FILE)
+
+# 거절 문구를 알아보는가(실제로 받은 문구 그대로)
+from gui.main_window import MainWindow  # noqa: E402
+
+markers = MainWindow._PROBE_REFUSED_MARKERS
+real = "Multi-target messaging is not allowed (MangMang2)"
+check(f"실제로 받은 거절 문구를 알아본다({real})",
+      any(m in real.lower() for m in markers))
+check("보통 서버 안내는 거절로 오해하지 않는다",
+      not any(m in "환영합니다! 메인 채널은 #pdlab 입니다".lower() for m in markers))
+
+# ---------- 4-3) 물어보지 않고도 우리 클라이언트를 알아본다 ----------
+import avatar_store  # noqa: E402
+
+quiet_sent = []
+quiet_seen = []
+quiet = build_session("irc", "irc.test", 6667, transport=quiet_sent.append,
+                      on_event=quiet_seen.append)
+quiet.my_id = "몽키"
+tiny_png = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmM"
+            "IQAAAABJRU5ErkJggg==")
+frame = irc_protocol.format_ctcp_avatar("#일반", tiny_png)[0]
+body = frame.split(" :", 1)[1]
+quiet.handle_incoming(irc_protocol.parse_line(f":앨리스!u@h PRIVMSG #일반 :{body}"))
+check("아이콘 프레임을 보낸 사람은 물어보지 않아도 춥채팅인 걸 안다",
+      constants.OUR_CLIENT_NAME in quiet.client_versions.get("앨리스", ""),
+      quiet.client_versions)
+check("그러느라 서버에 아무 것도 보내지 않는다", not quiet_sent, quiet_sent)
+
+# 모르는 CTCP 응답은 채팅창에 새면 안 된다(실제로 샜던 문구)
+quiet_seen.clear()
+quiet.handle_incoming(irc_protocol.parse_line(
+    ":앨리스!u@h NOTICE 몽키 :ERRMSG VERSION :that is an unknown CTCP query".replace(
+        "\x01", "")))
+check("모르는 CTCP 응답이 채팅창에 안 뜬다",
+      not any(isinstance(e, events.SystemNotice) for e in quiet_seen),
+      [type(e).__name__ for e in quiet_seen])
 
 # ---------- 5) 화면 표시 ----------
 page = g.ChatPage(on_send=lambda c, t: None, on_add_channel=lambda: None,
