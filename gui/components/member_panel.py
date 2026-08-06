@@ -14,7 +14,7 @@ from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 import avatar_store
-from gui.client_badges import ClientBadges, short_label
+from gui.client_badges import ClientBadges, short_label, spec_for_nick
 from gui.components.client_badge_delegate import ClientBadgeDelegate
 from gui.helpers import _decode_avatar_pixmap, _hashed_avatar_pixmap
 from gui.theme import AVATAR_LIST_PX, MEMBER_ROW_HEIGHT, MEMBER_VISIBLE_ROWS
@@ -128,11 +128,20 @@ class MemberPanel(QWidget):
                 # 닉네임은 고유성이 보장되지 않으므로 원래 아이디를 툴팁으로 확인 가능하게
                 item.setToolTip(user_id)
             version = self._client_versions.get(user_id)
+            nick_spec = spec_for_nick(user_id)
+            if not version and nick_spec is not None:
+                # 답을 못 받았지만 이름으로 알 수 있는 경우(디스코드 다리 등)
+                guess = f"{nick_spec.label} (이름으로 짐작)"
+                tip = item.toolTip()
+                item.setToolTip(f"{tip}\n{guess}" if tip else guess)
             if version:
-                # 로고만으로는 정확히 뭔지 모르므로 툴팁에 프로그램 이름을 같이 보여준다
+                # 로고만으로는 정확히 뭔지 모르므로 툴팁에 프로그램 이름을 같이 보여준다.
+                # 모르는 프로그램이면 **답한 원문 그대로**도 보여준다 - 그래야 무엇인지
+                # 알아보고 다음에 표에 추가할 수 있다
                 tip = item.toolTip()
                 name = short_label(version)
-                item.setToolTip(f"{tip}\n{name}" if tip else name)
+                detail = name if name == version else f"{name}\n{version}"
+                item.setToolTip(f"{tip}\n{detail}" if tip else detail)
             item.setIcon(QIcon(self.avatar(user_id, AVATAR_LIST_PX)))
             # 줄 높이를 못박아야 "여섯 줄"이 글꼴에 상관없이 정확히 여섯 줄이 된다
             item.setSizeHint(QSize(0, MEMBER_ROW_HEIGHT))
@@ -140,9 +149,18 @@ class MemberPanel(QWidget):
         self.header.setText(_header_text(self.list.count()))
 
     def _badge_for(self, user_id):
-        """그 사람 줄 오른쪽에 그릴 작은 로고(모르면 None)."""
+        """그 사람 줄 오른쪽에 그릴 작은 로고(모르면 None).
+
+        디스코드 다리(bridge) 계정처럼 **물어봐도 답할 수 없는** 경우가 있다. 그건 사람이
+        쓰는 IRC 프로그램이 아니라 디스코드와 IRC를 이어주는 봇이라서, CTCP VERSION에
+        답하더라도 봇 이름("PircBotX" 등)이 나온다. 이런 건 이름으로 알아본다.
+        """
         version = self._client_versions.get(user_id)
-        return self._badges.badge(version) if version else None
+        if version:
+            return self._badges.badge(version, nick=user_id)
+        if spec_for_nick(user_id) is not None:
+            return self._badges.badge("", nick=user_id)   # 답이 없어도 이름으로 확실한 경우
+        return None
 
     def set_client_version(self, user_id: str, version: str):
         """그 사람이 쓰는 프로그램을 알아냈을 때 - 로고가 바뀌므로 다시 그린다."""
