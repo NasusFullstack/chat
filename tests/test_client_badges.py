@@ -250,6 +250,32 @@ check(f"로고가 닉네임 글자({metrics}px)를 넘지 않는다", badge.heig
 panel.reset()
 check("로그아웃하면 프로그램 정보도 지워진다", panel.client_version("앨리스") == "")
 
+# ---------- 6) 디스코드 다리처럼 '물어봐도 소용없는' 계정 ----------
+# 채널이 통째로 디스코드와 이어져 있는 경우, 그 계정은 사람이 쓰는 IRC 프로그램이 아니라
+# 이어주는 봇이다. CTCP로 물어도 봇 이름이 나오거나 아예 답이 없다 - 이름으로 알아본다
+from gui.client_badges import spec_for_nick  # noqa: E402
+
+panel.set_members("#일반", ["Discord", "PDLab", "몽키"])
+panel.show_channel("#일반")
+for _ in range(4):
+    app.processEvents()
+check("이름이 Discord면 답이 없어도 로고가 뜬다", panel._badge_for("Discord") is not None)
+check("이름으로 짐작한 것임을 툴팁에 밝힌다",
+      "짐작" in (panel.list.item(0).toolTip() or ""), panel.list.item(0).toolTip())
+check("아무 단서도 없는 사람은 그대로 비워둔다", panel._badge_for("몽키") is None)
+check("봇 이름으로 답해도 다리로 알아본다",
+      spec_for_nick("discord-bridge") is not None)
+
+# 모르는 응답의 배지는 '?'가 아니라 응답의 첫 글자다.
+# 12px에서 굵은 물음표는 곡선이 뭉개져 숫자 7처럼 보인다는 신고를 받았다
+page.set_client_version("PDLab", "PircBotX 2.3.1")
+for _ in range(4):
+    app.processEvents()
+unknown_badge = panel._badge_for("PDLab")
+check("모르는 프로그램도 배지가 나온다", unknown_badge is not None)
+check("툴팁에 응답 원문이 그대로 보인다(표에 추가할 수 있게)",
+      "PircBotX 2.3.1" in (panel.list.item(1).toolTip() or ""), panel.list.item(1).toolTip())
+
 print("=== 검증 결과 (접속 프로그램 표시) ===")
 all_ok = True
 for name, ok, *detail in checks:

@@ -90,12 +90,36 @@ def spec_for(version: str) -> ClientSpec | None:
     return None
 
 
+# 닉네임만 보고 짐작해도 되는 것들. 다리(bridge) 계정은 보통 이름 자체가 Discord다.
+# 응답으로 알아내지 못했을 때만 쓰는 보조 수단이라 아주 확실한 것만 넣는다
+NICK_HINTS = (("discord", "discord"), ("matterbridge", "discord"))
+
+
+def spec_for_nick(nick: str) -> ClientSpec | None:
+    """이름만 보고 짐작. 응답으로 못 알아냈을 때만 쓴다."""
+    if not nick:
+        return None
+    lowered = nick.lower()
+    for needle, key in NICK_HINTS:
+        if needle in lowered:
+            for spec in CLIENT_SPECS:
+                if spec.key == key:
+                    return spec
+    return None
+
+
 def short_label(version: str) -> str:
     """툴팁에 쓸 짧은 이름. 아는 프로그램이면 그 이름, 모르면 응답의 첫 낱말."""
     spec = spec_for(version)
     if spec is not None:
         return spec.label
     return version.split()[0] if version.split() else version
+
+
+def _initial(version: str) -> str:
+    """모르는 프로그램의 배지에 쓸 한 글자 - 응답의 첫 글자(없으면 물결표)."""
+    stripped = (version or "").strip()
+    return stripped[0].upper() if stripped else "~"
 
 
 def _app_dir() -> str:
@@ -121,20 +145,24 @@ class ClientBadges:
         self._requested: set[str] = set()          # 이미 받아오기를 시도한 것
         self._stored = _load_stored()
 
-    def badge(self, version: str, size: int = CLIENT_BADGE_PX) -> QPixmap | None:
+    def badge(self, version: str, size: int = CLIENT_BADGE_PX,
+              nick: str = "") -> QPixmap | None:
         """그 사람의 프로그램 로고. 모르면 글자 배지, 그것도 안 되면 None."""
-        spec = spec_for(version)
-        key = spec.key if spec is not None else "unknown"
+        spec = spec_for(version) or spec_for_nick(nick)
+        # 모르는 프로그램이면 응답의 첫 글자를 쓴다. 예전엔 물음표를 그렸는데 12px에서
+        # 곡선이 뭉개져 숫자 7처럼 보였다(실제로 그렇게 보인다는 신고를 받음).
+        # 첫 글자를 쓰면 뭉개져도 최소한 무엇의 앞글자인지는 짐작할 수 있다
+        key = spec.key if spec is not None else f"unknown:{_initial(version)}"
         cached = self._pixmaps.get((key, size))
         if cached is not None:
             return cached
 
-        pixmap = self._build(spec, key, size)
+        pixmap = self._build(spec, key, size, version)
         if pixmap is not None:
             self._pixmaps[(key, size)] = pixmap
         return pixmap
 
-    def _build(self, spec, key: str, size: int) -> QPixmap | None:
+    def _build(self, spec, key: str, size: int, version: str = "") -> QPixmap | None:
         if key == "chupchat":
             ours = _our_icon(size)
             if ours is not None:
@@ -147,7 +175,7 @@ class ClientBadges:
         if spec is not None:
             self._fetch_logo(spec)
             return _letter_badge(spec.letter, spec.color, size)
-        return _letter_badge("?", UNKNOWN_COLOR, size)
+        return _letter_badge(_initial(version), UNKNOWN_COLOR, size)
 
     def _fetch_logo(self, spec: ClientSpec):
         """공식 사이트에서 로고를 한 번만 받아온다(다음 실행부터는 저장된 것을 씀)."""
