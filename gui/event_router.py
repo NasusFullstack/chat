@@ -117,8 +117,10 @@ def _message_received(view, event):
 
 
 def _system_notice(view, event):
-    # 서버가 우리 요청을 거절한 것이면 그 요청을 멈춰야 한다(계속 보내면 경고만 쌓임)
-    view.note_server_message(event.text)
+    # 서버가 우리 요청을 거절한 것이면 그 요청을 멈추고, 그 경고는 화면에 안 보여준다
+    # (우리가 보낸 것 때문에 난 오류라 우리 안내문 한 줄로 갈음한다)
+    if view.note_server_message(event.text):
+        return
     if not event.channel:
         # 등록 전 NOTICE 등 - 채널이 없으면 로그인 화면 상태줄에 표시.
         # 서버가 보내는 접속 안내는 오류가 아니므로 빨간색으로 보여주면 안 됨

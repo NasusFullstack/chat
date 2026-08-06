@@ -139,7 +139,7 @@ class MemberPanel(QWidget):
                 # 모르는 프로그램이면 **답한 원문 그대로**도 보여준다 - 그래야 무엇인지
                 # 알아보고 다음에 표에 추가할 수 있다
                 tip = item.toolTip()
-                name = short_label(version)
+                name = short_label(version, user_id)
                 detail = name if name == version else f"{name}\n{version}"
                 item.setToolTip(f"{tip}\n{detail}" if tip else detail)
             item.setIcon(QIcon(self.avatar(user_id, AVATAR_LIST_PX)))

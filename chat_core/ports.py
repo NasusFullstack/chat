@@ -63,6 +63,10 @@ class ProtocolPort(Protocol):
         """상대가 무슨 프로그램을 쓰는지 물어봄(프로토콜마다 방법이 다름)."""
         ...
 
+    def request_client_versions_in_channel(self, session: Any, channel: str) -> None:
+        """채널 전체에 한 번에 물어봄(개인별로 묻는 길이 막힌 서버에서 쓰는 우회로)."""
+        ...
+
     def publish_nickname(self, session: Any, nickname: str) -> None:
         ...
 

@@ -133,6 +133,8 @@ class MainWindow(QMainWindow):
         # 참여자들이 무슨 프로그램을 쓰는지 알아보는 담당자. 한꺼번에 물으면 서버가
         # 홍수로 보고 끊으므로 간격을 두고 한 명씩 묻는다(gui/version_prober.py)
         self._prober = VersionProber(self._ask_client_version, self)
+        self._probe_refused_at = 0.0   # 서버가 거절한 시각(뒤늦게 오는 답들을 삼키는 데 씀)
+        self._channel_probed: set[str] = set()   # 채널 단위로 한 번씩만 물어보기 위한 기록
 
         self._connect_timer = QTimer(self)
         self._connect_timer.setSingleShot(True)
@@ -179,19 +181,28 @@ class MainWindow(QMainWindow):
     def probe_client_versions(self, channel: str):
         """그 채널에서 아직 모르는 사람에게만, 그것도 아껴서 물어본다.
 
-        서버와 상대에게 부담을 주지 않으려고 세 겹으로 아낀다:
+        서버와 상대에게 부담을 주지 않으려고 이렇게 아낀다:
         1. **예전에 알아낸 사람은 안 묻는다** - 저장해둔 것을 그대로 쓴다
            (client_version_store, 기한이 지나면 그때 한 번 다시 물음)
         2. **지금 보고 있는 채널만** 묻는다 - 여러 채널에 들어가 있어도 한꺼번에
            수십 명에게 보내지 않는다. 다른 채널은 그 채널을 볼 때 알아본다
-        3. 나머지는 프로브가 몇 초에 한 명씩 천천히 묻는다
+        3. 모르는 사람이 여럿이면 **채널에 한 줄**만 보낸다. 실측(home.pdlab.kr)에서
+           개인에게 연달아 보내면 서버가 막지만("Multi-target messaging is not
+           allowed"), 채널로 한 줄 보내면 전원이 답했다. 줄 수도 N개 -> 1개다
+        4. 한 명뿐이면(누가 나중에 혼자 들어온 경우) 그 사람에게만 조용히 물어본다.
+           한 명에게 보내는 건 실측에서도 막히지 않았고, 채널 전체를 건드릴 이유가 없다
         """
         if not app_prefs.get("show_client_badges"):
             return
         if channel != self.session.active_channel:
             return
         if not client_version_store.probe_allowed(self._host):
-            return   # 예전에 이 서버가 거절했음 - 다시 보내지 않는다
+            # 개인별로 묻는 길이 막힌 서버 - 채널에 한 줄만 던져 본다(대상이 하나라
+            # 멀티타겟 규칙에 안 걸린다). 채널당 한 번만.
+            if channel not in self._channel_probed:
+                self._channel_probed.add(channel)
+                self.session.request_client_versions_in_channel(channel)
+            return
         unknown = self.session.unknown_client_users(channel)
         if not unknown:
             return
@@ -203,6 +214,13 @@ class MainWindow(QMainWindow):
                 self.session.apply_client_version(user_id, known)   # 묻지 않고 바로 표시
             else:
                 ask.append(user_id)
+        if not ask:
+            return
+        if len(ask) > 1:
+            if channel not in self._channel_probed:
+                self._channel_probed.add(channel)
+                self.session.request_client_versions_in_channel(channel)
+            return
         self._prober.enqueue(ask)
 
     # 서버가 "그런 요청은 못 받는다"고 알려주는 말들. 서버마다 문구가 달라서 표로 둔다.
@@ -217,15 +235,28 @@ class MainWindow(QMainWindow):
         "excess flood",
     )
 
-    def note_server_message(self, text: str):
-        """서버가 보낸 말 중에 '우리 요청을 거절한다'는 뜻이 있으면 그 요청을 멈춘다."""
+    # 거절이 한 번 나온 뒤 이만큼은 같은 경고를 우리 탓으로 보고 삼킨다.
+    # 이미 보내놓은 요청들의 답이 뒤늦게 도착하기 때문(실제로 멈춘 뒤에도 한 줄 더 떴다)
+    _PROBE_REFUSAL_QUIET_SEC = 60
+
+    def note_server_message(self, text: str) -> bool:
+        """서버가 우리 요청을 거절하는 말이면 요청을 멈춘다.
+
+        돌려주는 값이 True면 **그 말을 화면에 보여주지 말라**는 뜻이다. 우리가 보낸 것
+        때문에 난 오류라서, 사용자에게는 우리 안내문 한 줄이면 충분하다. 서버가 참여자
+        수만큼 돌려주므로 그대로 두면 경고가 줄줄이 쌓인다(실제 화면에서 확인).
+        """
         if not text:
-            return
+            return False
         lowered = text.lower()
         if not any(marker in lowered for marker in self._PROBE_REFUSED_MARKERS):
-            return
-        if not self._prober.is_working():
-            return   # 우리 때문에 난 말이 아님(그냥 서버 안내였을 수 있음)
+            return False
+        recently_refused = (time.time() - self._probe_refused_at) < self._PROBE_REFUSAL_QUIET_SEC
+        if not (self._prober.is_working() or recently_refused):
+            return False   # 우리 때문에 난 말이 아님(그냥 서버 안내였을 수 있음)
+        if recently_refused:
+            return True    # 이미 알렸다 - 뒤늦게 온 답들은 조용히 버린다
+        self._probe_refused_at = time.time()
         self._prober.reset()
         client_version_store.mark_probe_refused(self._host)
         # 왜 로고가 안 뜨는지 모르면 고장으로 보이므로 한 번은 알려준다
@@ -233,6 +264,7 @@ class MainWindow(QMainWindow):
             self.session.active_channel,
             "이 서버는 접속 프로그램 확인을 허용하지 않아 껐습니다. "
             "(참여자 로고는 우리 클라이언트끼리만 표시됩니다)")
+        return True
 
     def remember_client_version(self, user_id: str, version: str):
         """알아낸 것을 서버별로 적어둔다 - 다음에 켤 때는 안 물어봐도 된다."""
@@ -371,6 +403,7 @@ class MainWindow(QMainWindow):
         )
         self.chat_page.reset()
         self._prober.reset()   # 서버가 바뀌면 사람도 프로그램도 다른 세상이다
+        self._channel_probed.clear()
         self.login_page.show_status("")
         self.stack.setCurrentWidget(self.login_page)
 
