@@ -146,3 +146,14 @@ class ConnectionClosed:
 @dataclass(frozen=True)
 class GenericError:
     text: str
+
+
+@dataclass(frozen=True)
+class ClientVersionUpdated:
+    """그 사람이 무슨 프로그램으로 접속했는지 알아냈다(CTCP VERSION 응답).
+
+    version은 상대가 준 문자열 그대로다("WeeChat 4.4.2", "HexChat 2.16.2" 등).
+    무엇으로 볼지(아이콘 등)는 화면이 정한다 - 코어는 받은 말을 그대로 넘긴다.
+    """
+    user_id: str
+    version: str

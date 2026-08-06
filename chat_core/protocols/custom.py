@@ -7,6 +7,7 @@
 import time
 
 from chat_core import commands, events
+from chat_core import constants
 from chat_core.protocols import wire_custom as wire
 from chat_core.protocols.common_commands import CommonCommands
 
@@ -20,6 +21,14 @@ class CustomProtocol(CommonCommands):
             session.transport(wire.format_register(user_id, password))
         else:
             session.transport(wire.format_login(user_id, password))
+
+    def request_client_version(self, session, user_id: str) -> None:
+        """우리 서버에는 우리 클라이언트만 붙으므로 물어보지 않고 바로 정한다.
+
+        (커스텀 프로토콜은 우리가 만든 서버와 우리가 만든 클라이언트 사이에서만 쓴다.
+        IRC처럼 남의 프로그램이 섞여 들어올 수 없다.)
+        """
+        session.apply_client_version(user_id, constants.our_client_version())
 
     def create_channel(self, session, channel: str, key: str) -> None:
         session.transport(wire.format_create_channel(channel, key))

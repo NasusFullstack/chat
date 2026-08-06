@@ -57,3 +57,13 @@ def find_cheat(text: str) -> CheatSpec | None:
     return _CHEATS_BY_PHRASE.get(text.strip().lower())
 
 
+# CTCP VERSION으로 "무슨 프로그램 쓰냐"고 물어왔을 때 돌려줄 이름.
+# 저장소 주소까지 붙이는 건 IRC의 오랜 관례다(상대가 처음 보는 클라이언트여도 찾아볼 수 있게)
+OUR_CLIENT_NAME = "ChupChat"
+OUR_CLIENT_URL = "https://github.com/NasusFullstack/chat"
+
+
+def our_client_version() -> str:
+    from version import APP_VERSION
+
+    return f"{OUR_CLIENT_NAME} {APP_VERSION} - {OUR_CLIENT_URL}"

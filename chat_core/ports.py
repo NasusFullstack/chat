@@ -59,6 +59,10 @@ class ProtocolPort(Protocol):
     def publish_avatar(self, session: Any, avatar_b64: str) -> None:
         ...
 
+    def request_client_version(self, session: Any, user_id: str) -> None:
+        """상대가 무슨 프로그램을 쓰는지 물어봄(프로토콜마다 방법이 다름)."""
+        ...
+
     def publish_nickname(self, session: Any, nickname: str) -> None:
         ...
 

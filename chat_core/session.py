@@ -64,6 +64,9 @@ class ChatSession:
         self.members: dict[str, set[str]] = {}
         self.nicknames: dict[str, str] = {}
         self.avatars: dict[str, str] = {}
+        # 그 사람이 무슨 프로그램으로 접속했는지(CTCP VERSION 응답 그대로).
+        # 답을 안 주는 사람도 있으므로 "모름"이 정상 상태다
+        self.client_versions: dict[str, str] = {}
         # (채널, 호출 대상 user_id) -> 마지막으로 그 사람을 @호출해서 실제로 전송한 시각
         self.mention_cooldowns: dict[tuple[str, str], float] = {}
         # (채널, 치트 id) -> 마지막으로 그 치트를 실제로 전송한 시각 (채널당 쿨타임, 사람 무관)
@@ -148,6 +151,28 @@ class ChatSession:
         else:
             self.avatars.pop(user_id, None)
         self._emit(events.AvatarUpdated(user_id, avatar_b64))
+
+    def apply_client_version(self, user_id: str, version: str):
+        """그 사람이 쓰는 프로그램을 알아냈을 때."""
+        if not version:
+            return
+        self.client_versions[user_id] = version
+        self._emit(events.ClientVersionUpdated(user_id, version))
+
+    def request_client_version(self, user_id: str):
+        """그 사람에게 무슨 프로그램을 쓰는지 물어본다.
+
+        **언제/몇 명에게 물을지는 여기서 정하지 않는다.** 한꺼번에 우르르 보내면 서버가
+        홍수로 보고 끊어버리므로, 간격을 두는 일은 어댑터(gui/version_prober.py)가 한다.
+        """
+        if not user_id or user_id == self.my_id:
+            return
+        self.protocol.request_client_version(self, user_id)
+
+    def unknown_client_users(self, channel: str) -> list[str]:
+        """그 채널에서 아직 무슨 프로그램인지 모르는 사람들(나 자신은 뺀다)."""
+        return [user for user in sorted(self.members.get(channel, ()))
+                if user != self.my_id and user not in self.client_versions]
 
     def apply_nickname(self, user_id: str, nickname):
         if nickname:

@@ -1,0 +1,171 @@
+"""참여자가 무슨 프로그램으로 접속했는지 알아내고 로고로 보여주는 기능.
+
+여기서 확인하는 것:
+1. CTCP VERSION 줄을 제대로 만들고 읽는가 (irc_protocol)
+2. 남이 물어오면 답하고, 답을 받으면 채팅으로 새지 않고 조용히 기록되는가 (코어)
+3. 응답 문자열에서 어느 프로그램인지 알아내는가 (표)
+4. 한꺼번에 묻지 않고 하나씩 묻는가 (프로브)
+5. 참여자 목록 오른쪽에 닉네임보다 작은 로고가 그려지는가 (화면)
+"""
+import os as _os
+import sys as _sys
+
+_HERE = _os.path.dirname(_os.path.abspath(__file__))
+_REPO = _os.path.dirname(_HERE)
+
+_os.environ["QT_QPA_PLATFORM"] = "offscreen"
+_sys.path.insert(0, _REPO)
+_sys.path.insert(0, _HERE)
+
+import irc_protocol
+from chat_core import constants, events
+from chat_core.session import build_session
+
+checks = []
+
+
+def check(name, ok, detail=""):
+    checks.append((name, ok, detail))
+
+
+# ---------- 1) 와이어 형식 ----------
+request = irc_protocol.format_ctcp_version_request("앨리스")
+check("물어보는 줄이 귓속말 + \\x01VERSION\\x01",
+      request == "PRIVMSG 앨리스 :\x01VERSION\x01", request)
+reply = irc_protocol.format_ctcp_version_reply("앨리스", "ChupChat 9.9")
+check("답은 NOTICE로 보냄(무한 되받기 방지)", reply.startswith("NOTICE 앨리스 :\x01VERSION "), reply)
+check("물음을 알아봄", irc_protocol.is_ctcp_version_request("\x01VERSION\x01"))
+check("아이콘 프레임을 물음으로 오인하지 않음",
+      not irc_protocol.is_ctcp_version_request("\x01FCAVATAR abc\x01"))
+check("답에서 프로그램 이름만 뽑음",
+      irc_protocol.parse_ctcp_version_reply("\x01VERSION WeeChat 4.4.2\x01") == "WeeChat 4.4.2")
+check("답이 아닌 것은 None",
+      irc_protocol.parse_ctcp_version_reply("\x01FCAVATAR abc\x01") is None)
+
+# ---------- 2) 코어 (Qt도 소켓도 없이) ----------
+sent = []
+seen = []
+session = build_session("irc", "irc.test", 6667, transport=sent.append, on_event=seen.append)
+session.my_id = "몽키"
+
+session.handle_incoming(irc_protocol.parse_line(":앨리스!u@h PRIVMSG 몽키 :\x01VERSION\x01"))
+answered = [line for line in sent if line.startswith("NOTICE 앨리스")]
+check("남이 물어오면 답한다", bool(answered), sent[-1] if sent else "보낸 것 없음")
+check("답에 우리 이름이 들어간다",
+      bool(answered) and constants.OUR_CLIENT_NAME in answered[0], answered[0] if answered else "")
+check("물음은 채팅으로 새지 않는다",
+      not any(isinstance(e, events.MessageReceived) for e in seen))
+
+seen.clear()
+session.handle_incoming(irc_protocol.parse_line(
+    ":앨리스!u@h NOTICE 몽키 :\x01VERSION WeeChat 4.4.2\x01"))
+updates = [e for e in seen if isinstance(e, events.ClientVersionUpdated)]
+check("답을 받으면 알림 이벤트가 나온다", len(updates) == 1, [type(e).__name__ for e in seen])
+check("누가 무엇을 쓰는지 기록된다",
+      session.client_versions.get("앨리스") == "WeeChat 4.4.2", session.client_versions)
+check("답이 채팅창에 안내문으로 뜨지 않는다",
+      not any(isinstance(e, events.SystemNotice) for e in seen),
+      [type(e).__name__ for e in seen])
+
+# 진짜 NOTICE(서버 안내)는 예전처럼 그대로 보여야 한다
+seen.clear()
+session.handle_incoming(irc_protocol.parse_line(":irc.test NOTICE 몽키 :서버 점검 예정"))
+check("보통 NOTICE는 예전처럼 안내문으로 뜬다",
+      any(isinstance(e, events.SystemNotice) for e in seen))
+
+# 아직 모르는 사람 골라내기
+session.members["#일반"] = {"몽키", "앨리스", "Bob"}
+unknown = session.unknown_client_users("#일반")
+check("모르는 사람만 골라낸다(나와 이미 아는 사람 제외)", unknown == ["Bob"], unknown)
+
+# 커스텀 서버는 우리 클라이언트만 붙으므로 묻지 않고 바로 정함
+custom_sent = []
+custom_seen = []
+custom = build_session("custom", "h", 1, transport=custom_sent.append, on_event=custom_seen.append)
+custom.my_id = "몽키"
+custom.request_client_version("앨리스")
+check("커스텀 서버에서는 물어보지 않는다(보낸 줄 없음)", not custom_sent, custom_sent)
+check("커스텀 서버 참여자는 바로 우리 프로그램으로 표시",
+      constants.OUR_CLIENT_NAME in custom.client_versions.get("앨리스", ""),
+      custom.client_versions)
+
+# ---------- 3) 프로그램 알아보기 ----------
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+app = QApplication.instance() or QApplication([])
+import gui_client as g  # noqa: E402
+
+app.setStyleSheet(g.STYLE_SHEET)
+from gui.client_badges import CLIENT_BADGE_PX, ClientBadges, short_label, spec_for  # noqa: E402
+
+for version, expected in [("WeeChat 4.4.2", "weechat"),
+                          ("HexChat 2.16.2 [x64] / Windows 11", "hexchat"),
+                          ("irssi v1.4.5", "irssi"),
+                          ("mIRC v7.75 Khaled Mardam-Bey", "mirc"),
+                          ("matterbridge (discord)", "discord"),
+                          ("ChupChat 2.0.2 - https://github.com/x", "chupchat")]:
+    spec = spec_for(version)
+    check(f"{version.split()[0]} 알아봄", spec is not None and spec.key == expected,
+          spec.key if spec else None)
+check("처음 보는 프로그램은 모른다고 함", spec_for("SomeNewClient 1.0") is None)
+check("모르는 프로그램도 이름은 보여준다", short_label("SomeNewClient 1.0") == "SomeNewClient")
+
+badges = ClientBadges(fetcher=None)          # 인터넷 없이도
+weechat_badge = badges.badge("WeeChat 4.4.2")
+check("로고를 못 받아도 글자 배지가 나온다",
+      weechat_badge is not None and not weechat_badge.isNull())
+check(f"배지가 작다({CLIENT_BADGE_PX}px)", weechat_badge.width() <= CLIENT_BADGE_PX)
+
+# ---------- 4) 한 번에 우르르 묻지 않기 ----------
+from gui.version_prober import VersionProber  # noqa: E402
+
+asked = []
+prober = VersionProber(asked.append)
+prober.enqueue(["a", "b", "c", "d"])
+check("줄을 세우고 첫 한 명만 바로 묻는다", asked == ["a"], asked)
+check("나머지는 기다린다", prober.pending() == 3, prober.pending())
+prober._ask_next()
+check("시간이 지나면 다음 사람", asked == ["a", "b"], asked)
+prober.enqueue(["a", "b"])
+check("이미 물어본 사람은 다시 안 묻는다", prober.pending() == 2, prober.pending())
+prober.reset()
+check("초기화하면 줄이 비워진다", prober.pending() == 0)
+
+# ---------- 5) 화면 표시 ----------
+page = g.ChatPage(on_send=lambda c, t: None, on_add_channel=lambda: None,
+                  on_leave_channel=lambda c: None, on_set_avatar=lambda: None)
+page.resize(900, 560)
+page.show()
+page.add_channel("#일반")
+panel = page.member_panel
+panel.set_members("#일반", ["몽키", "앨리스"])
+panel.show_channel("#일반")
+for _ in range(4):
+    app.processEvents()
+check("아직 모르는 사람에게는 로고가 없다", panel._badge_for("앨리스") is None)
+
+page.set_client_version("앨리스", "WeeChat 4.4.2")
+for _ in range(4):
+    app.processEvents()
+badge = panel._badge_for("앨리스")
+check("알아낸 사람에게는 로고가 생긴다", badge is not None and not badge.isNull())
+
+row = panel.list.item(1)
+check("줄에 실제 아이디가 달려 있다(로고를 그릴 때 필요)",
+      row.data(0x0100) in ("앨리스", "몽키"), row.data(0x0100))
+check("툴팁으로 어떤 프로그램인지 알 수 있다", "WeeChat" in (row.toolTip() or ""), row.toolTip())
+
+metrics = panel.list.fontMetrics().height()
+check(f"로고가 닉네임 글자({metrics}px)를 넘지 않는다", badge.height() <= metrics, badge.height())
+
+panel.reset()
+check("로그아웃하면 프로그램 정보도 지워진다", panel.client_version("앨리스") == "")
+
+print("=== 검증 결과 (접속 프로그램 표시) ===")
+all_ok = True
+for name, ok, *detail in checks:
+    extra = f"  <- {detail[0]}" if detail and detail[0] and not ok else ""
+    print(f"[{'OK' if ok else 'FAIL'}] {name}{extra}")
+    all_ok = all_ok and ok
+print("\n전체 통과:", all_ok)
+_sys.exit(0 if all_ok else 1)
