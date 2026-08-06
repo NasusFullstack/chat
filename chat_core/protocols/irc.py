@@ -339,6 +339,18 @@ class IrcProtocol(CommonCommands):
     def request_client_version(self, session, user_id: str) -> None:
         session.transport(irc_protocol.format_ctcp_version_request(user_id))
 
+    def request_client_versions_in_channel(self, session, channel: str) -> None:
+        """채널 전체에 **한 줄**로 물어본다.
+
+        개인 메시지를 여러 명에게 보내는 것을 막아둔 서버(실제 사례: UnrealIRCd의
+        "Multi-target messaging is not allowed")에서 쓰는 우회로다. 대상이 채널 하나뿐이라
+        그 규칙에 걸리지 않고, 답할 수 있는 클라이언트는 각자 NOTICE로 답한다.
+
+        대신 채널에 있는 모두의 클라이언트에 요청이 한 번 도달하므로 **꼭 필요할 때
+        한 번만** 쓴다(개인별로 묻는 길이 막혔을 때, 채널당 한 번).
+        """
+        session.transport(irc_protocol.format_ctcp_version_request(channel))
+
     def _on_privmsg(self, session, msg):
         sender = msg.source_nick
         target = msg.params[0] if msg.params else ""

@@ -30,6 +30,9 @@ class CustomProtocol(CommonCommands):
         """
         session.apply_client_version(user_id, constants.our_client_version())
 
+    def request_client_versions_in_channel(self, session, channel: str) -> None:
+        """커스텀 서버에는 우리 클라이언트만 있으므로 물어볼 일이 없다."""
+
     def create_channel(self, session, channel: str, key: str) -> None:
         session.transport(wire.format_create_channel(channel, key))
 

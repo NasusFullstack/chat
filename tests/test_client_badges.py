@@ -193,6 +193,29 @@ check(f"실제로 받은 거절 문구를 알아본다({real})",
 check("보통 서버 안내는 거절로 오해하지 않는다",
       not any(m in "환영합니다! 메인 채널은 #pdlab 입니다".lower() for m in markers))
 
+# 거절당하면 멈추고, 뒤늦게 오는 같은 경고는 화면에 안 보여준다
+client_version_store.STORE_FILE = _os.path.join(
+    _os.environ.get("TEMP", _HERE), "test_client_versions3.json")
+if _os.path.exists(client_version_store.STORE_FILE):
+    _os.remove(client_version_store.STORE_FILE)
+
+win = g.MainWindow()
+win._host = "irc.refuse"
+win._prober.enqueue(["앨리스", "Bob"])       # 물어보는 중인 상태를 만든다
+check("서버와 무관한 안내는 그대로 보여준다",
+      win.note_server_message("PDLab. IRC 에 오신 것을 환영합니다!") is False)
+first = win.note_server_message("Multi-target messaging is not allowed (PDLab)")
+check("거절당하면 그 경고를 화면에 안 보여준다(우리 안내문으로 갈음)", first is True)
+check("거절당하면 즉시 멈춘다", win._prober.pending() == 0, win._prober.pending())
+check("그 서버를 기억해 다시 안 묻는다",
+      not client_version_store.probe_allowed("irc.refuse"))
+later = win.note_server_message("Multi-target messaging is not allowed (Mong)")
+check("이미 보낸 요청의 답이 뒤늦게 와도 조용히 버린다(경고가 줄줄이 쌓이지 않게)",
+      later is True)
+win.deleteLater()
+if _os.path.exists(client_version_store.STORE_FILE):
+    _os.remove(client_version_store.STORE_FILE)
+
 # ---------- 4-3) 물어보지 않고도 우리 클라이언트를 알아본다 ----------
 import avatar_store  # noqa: E402
 
@@ -219,6 +242,27 @@ quiet.handle_incoming(irc_protocol.parse_line(
 check("모르는 CTCP 응답이 채팅창에 안 뜬다",
       not any(isinstance(e, events.SystemNotice) for e in quiet_seen),
       [type(e).__name__ for e in quiet_seen])
+
+# ---------- 4-4) 여럿이면 채널에 한 줄 (실측으로 정한 방식) ----------
+# home.pdlab.kr 실측: 개인에게 연달아 보내면 "Multi-target messaging is not allowed"로
+# 막혔지만, 채널에 한 줄 보내니 그 자리에 있던 전원이 답했다(WeeChat/ChupChat/다리 봇)
+ch_sent = []
+ch = build_session("irc", "irc.test", 6667, transport=ch_sent.append, on_event=lambda e: None)
+ch.my_id = "몽키"
+ch.request_client_versions_in_channel("#pdlab")
+check("채널로는 딱 한 줄만 나간다", len(ch_sent) == 1, ch_sent)
+check("그 한 줄이 채널 대상 CTCP VERSION이다",
+      ch_sent[0] == "PRIVMSG #pdlab :VERSION".replace("\x01", ""), repr(ch_sent[0]))
+
+# 다리 봇은 자기가 쓰는 라이브러리 이름을 답한다(실측: girc) - 이름 쪽을 믿어야 한다
+from gui.client_badges import resolve_spec  # noqa: E402
+
+real_bridge = "girc (github.com/lrstanley/girc) using go1.19.5 (linux, amd64)"
+check("다리 봇이 라이브러리 이름을 답해도 디스코드로 본다",
+      resolve_spec(real_bridge, "Discord").key == "discord",
+      resolve_spec(real_bridge, "Discord").key)
+check("사람이 쓰는 프로그램은 응답 그대로 판단한다",
+      resolve_spec("WeeChat 3.5 (Mar 31 2022 11:36:01)", "hjsong").key == "weechat")
 
 # ---------- 5) 화면 표시 ----------
 page = g.ChatPage(on_send=lambda c, t: None, on_add_channel=lambda: None,

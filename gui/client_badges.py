@@ -108,9 +108,20 @@ def spec_for_nick(nick: str) -> ClientSpec | None:
     return None
 
 
-def short_label(version: str) -> str:
+def resolve_spec(version: str, nick: str = "") -> ClientSpec | None:
+    """어느 프로그램인지 판단. **이름 힌트를 먼저 본다.**
+
+    다리(bridge) 계정은 CTCP에 자기가 쓰는 라이브러리 이름을 답한다 - 실측하니
+    디스코드 다리가 "girc (github.com/lrstanley/girc) using go1.19.5"라고 답했다.
+    그 답을 그대로 믿으면 "girc"라는 낯선 이름이 뜨므로, 이름이 Discord인 계정은
+    이름 쪽을 믿는다.
+    """
+    return spec_for_nick(nick) or spec_for(version)
+
+
+def short_label(version: str, nick: str = "") -> str:
     """툴팁에 쓸 짧은 이름. 아는 프로그램이면 그 이름, 모르면 응답의 첫 낱말."""
-    spec = spec_for(version)
+    spec = resolve_spec(version, nick)
     if spec is not None:
         return spec.label
     return version.split()[0] if version.split() else version
@@ -148,7 +159,7 @@ class ClientBadges:
     def badge(self, version: str, size: int = CLIENT_BADGE_PX,
               nick: str = "") -> QPixmap | None:
         """그 사람의 프로그램 로고. 모르면 글자 배지, 그것도 안 되면 None."""
-        spec = spec_for(version) or spec_for_nick(nick)
+        spec = resolve_spec(version, nick)
         # 모르는 프로그램이면 응답의 첫 글자를 쓴다. 예전엔 물음표를 그렸는데 12px에서
         # 곡선이 뭉개져 숫자 7처럼 보였다(실제로 그렇게 보인다는 신고를 받음).
         # 첫 글자를 쓰면 뭉개져도 최소한 무엇의 앞글자인지는 짐작할 수 있다

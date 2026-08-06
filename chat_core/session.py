@@ -13,7 +13,7 @@ Qt에도 asyncio에도 파일시스템에도 직접 의존하지 않음:
 """
 import time
 
-from chat_core import commands, events
+from chat_core import commands, constants, events
 from chat_core.constants import (
     AVATAR_MAX_B64_CHARS, MENTION_COOLDOWN_SEC, MENTION_TOKEN_RE, find_cheat,
 )
@@ -102,6 +102,9 @@ class ChatSession:
         """로그인/IRC 등록이 확정돼서 내 식별자가 정해졌을 때(닉네임 변경 포함)"""
         self.my_id = user_id
         self._emit(events.LoggedIn(user_id))
+        # 내가 무슨 프로그램을 쓰는지는 물어볼 필요가 없다 - 우리 자신이니까.
+        # 이걸 안 해두면 참여자 목록에서 나만 로고가 비어 보인다
+        self.apply_client_version(user_id, constants.our_client_version())
 
     def enter_channel(self, channel: str, text: str):
         self.joined_channels.add(channel)
@@ -168,6 +171,11 @@ class ChatSession:
         if not user_id or user_id == self.my_id:
             return
         self.protocol.request_client_version(self, user_id)
+
+    def request_client_versions_in_channel(self, channel: str):
+        """채널 전체에 한 줄로 물어본다(개인별로 묻는 길이 막힌 서버용)."""
+        if channel:
+            self.protocol.request_client_versions_in_channel(self, channel)
 
     def unknown_client_users(self, channel: str) -> list[str]:
         """그 채널에서 아직 무슨 프로그램인지 모르는 사람들(나 자신은 뺀다)."""
