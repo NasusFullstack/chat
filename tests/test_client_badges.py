@@ -346,14 +346,14 @@ check("여럿이면 채널에 한 줄로 묻는다", len(lines) == 1 and lines[0
       lines)
 
 # 곧바로 또 들어와도 채널에 연달아 보내지는 않는다(사람들 화면이 시끄러워짐)
-win2.session.members["#a"].add("다람쥐")
+win2.session.members["#a"] |= {"다람쥐", "고양이"}
 win2.probe_client_versions("#a")
 check("바로 뒤에 또 들어오면 연달아 보내지 않는다", len(lines) == 1, lines)
 
 # 시간이 지나면 다시 묻는다 - 그래야 나중에 들어온 사람도 결국 표시된다
 win2._channel_probed["#a"] = 0.0
 win2.probe_client_versions("#a")
-check("시간이 지난 뒤 들어온 사람은 다시 확인한다", len(lines) == 2, lines)
+check("시간이 지난 뒤 들어온 사람들은 다시 확인한다", len(lines) == 2, lines)
 
 # 한 명만 모를 때는 그 사람에게만 조용히 묻는다(채널 전체를 건드릴 이유가 없음)
 win2._prober.reset()
@@ -365,6 +365,36 @@ win2.probe_client_versions("#a")
 check("한 명만 모르면 그 사람에게만 묻는다(채널 전체 요청 없음)",
       not lines and win2._prober.pending() == 1,
       (lines, win2._prober.pending()))
+# 쿨타임 동안 여러 명이 들어오면? 지금은 참되, 풀리는 시점에 다시 보도록 예약해야 한다
+win2._prober.reset()
+lines.clear()
+win2.session.client_versions.clear()
+win2._channel_probed["#a"] = _time.time()      # 방금 물어본 상태로 만든다
+win2._retry_scheduled.clear()
+win2.session.members["#a"] = {"몽키", "손님1", "손님2"}
+win2.probe_client_versions("#a")
+check("쿨타임 중에는 채널에 또 보내지 않는다", not lines, lines)
+check("대신 나중에 다시 볼 예약을 건다", "#a" in win2._retry_scheduled,
+      win2._retry_scheduled)
+win2.session.members["#a"].add("손님3")
+win2.probe_client_versions("#a")
+check("여러 명이 몰려 들어와도 예약은 하나만", len(win2._retry_scheduled) == 1,
+      win2._retry_scheduled)
+win2._channel_probed["#a"] = 0.0               # 쿨타임이 풀린 상황
+win2._retry_scheduled.clear()
+win2.probe_client_versions("#a")
+check("쿨타임이 풀리면 그동안 들어온 사람들을 한 번에 확인한다", len(lines) == 1, lines)
+
+# 끝까지 답을 안 하는 사람이 있어도 계속 묻지는 않는다(응답을 꺼둔 사람일 수 있음)
+win2._channel_probed["#a"] = 0.0
+win2.probe_client_versions("#a")
+check("답이 없어도 같은 사람에게 다시 묻지 않는다", len(lines) == 1, lines)
+before_new = len(lines)
+win2._channel_probed["#a"] = 0.0
+win2.session.members["#a"] |= {"진짜새사람1", "진짜새사람2"}
+win2.probe_client_versions("#a")
+check("진짜 새로 들어온 사람이 있을 때만 다시 묻는다", len(lines) == before_new + 1, lines)
+
 # 같은 닉네임으로 다른 프로그램을 켜고 다시 들어오는 경우
 client_version_store.remember("irc.join", "변덕쟁이", "WeeChat 4.4.2")
 win2.session.members["#a"] = {"몽키", "앨리스", "Bob", "다람쥐", "새사람"}
