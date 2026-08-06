@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 import app_prefs
 import avatar_store
+import client_version_store
 import irc_protocol
 import login_prefs
 from chat_core import constants
@@ -176,10 +177,66 @@ class MainWindow(QMainWindow):
         self.session.request_client_version(user_id)
 
     def probe_client_versions(self, channel: str):
-        """그 채널에서 아직 모르는 사람들을 물어볼 줄에 세운다(설정에서 끌 수 있음)."""
+        """그 채널에서 아직 모르는 사람에게만, 그것도 아껴서 물어본다.
+
+        서버와 상대에게 부담을 주지 않으려고 세 겹으로 아낀다:
+        1. **예전에 알아낸 사람은 안 묻는다** - 저장해둔 것을 그대로 쓴다
+           (client_version_store, 기한이 지나면 그때 한 번 다시 물음)
+        2. **지금 보고 있는 채널만** 묻는다 - 여러 채널에 들어가 있어도 한꺼번에
+           수십 명에게 보내지 않는다. 다른 채널은 그 채널을 볼 때 알아본다
+        3. 나머지는 프로브가 몇 초에 한 명씩 천천히 묻는다
+        """
         if not app_prefs.get("show_client_badges"):
             return
-        self._prober.enqueue(self.session.unknown_client_users(channel))
+        if channel != self.session.active_channel:
+            return
+        if not client_version_store.probe_allowed(self._host):
+            return   # 예전에 이 서버가 거절했음 - 다시 보내지 않는다
+        unknown = self.session.unknown_client_users(channel)
+        if not unknown:
+            return
+        remembered = client_version_store.load(self._host)
+        ask = []
+        for user_id in unknown:
+            known = remembered.get(user_id)
+            if known:
+                self.session.apply_client_version(user_id, known)   # 묻지 않고 바로 표시
+            else:
+                ask.append(user_id)
+        self._prober.enqueue(ask)
+
+    # 서버가 "그런 요청은 못 받는다"고 알려주는 말들. 서버마다 문구가 달라서 표로 둔다.
+    # (실제로 UnrealIRCd가 "Multi-target messaging is not allowed"로 거절했고,
+    #  참여자 수만큼 경고가 채팅창에 쏟아졌다)
+    _PROBE_REFUSED_MARKERS = (
+        "multi-target messaging is not allowed",
+        "too many targets",
+        "target change too fast",
+        "no ctcp allowed",
+        "ctcp is not allowed",
+        "excess flood",
+    )
+
+    def note_server_message(self, text: str):
+        """서버가 보낸 말 중에 '우리 요청을 거절한다'는 뜻이 있으면 그 요청을 멈춘다."""
+        if not text:
+            return
+        lowered = text.lower()
+        if not any(marker in lowered for marker in self._PROBE_REFUSED_MARKERS):
+            return
+        if not self._prober.is_working():
+            return   # 우리 때문에 난 말이 아님(그냥 서버 안내였을 수 있음)
+        self._prober.reset()
+        client_version_store.mark_probe_refused(self._host)
+        # 왜 로고가 안 뜨는지 모르면 고장으로 보이므로 한 번은 알려준다
+        self.chat_page.append_system(
+            self.session.active_channel,
+            "이 서버는 접속 프로그램 확인을 허용하지 않아 껐습니다. "
+            "(참여자 로고는 우리 클라이언트끼리만 표시됩니다)")
+
+    def remember_client_version(self, user_id: str, version: str):
+        """알아낸 것을 서버별로 적어둔다 - 다음에 켤 때는 안 물어봐도 된다."""
+        client_version_store.remember(self._host, user_id, version)
 
     def _apply_size_policy_for_page(self, _index: int):
         """채팅 화면만 크기 조절을 허용하고, 폼 화면들은 내용이 다 보이는 크기로 고정.

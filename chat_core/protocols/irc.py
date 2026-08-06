@@ -376,6 +376,10 @@ class IrcProtocol(CommonCommands):
         parsed = irc_protocol.parse_ctcp_avatar(text)
         if parsed is None:
             return  # 잘렸거나 우리가 모르는 CTCP - 조용히 버림(채팅으로 새면 안 됨)
+        # 이 프레임은 우리 클라이언트만 보낸다. 즉 **한 줄도 안 물어보고** 상대가 춥채팅인
+        # 것을 알 수 있다 - 물어보기가 막힌 서버에서도 우리끼리는 서로 알아본다
+        if sender not in session.client_versions:
+            session.apply_client_version(sender, constants.our_client_version())
         transfer_id, index, total, chunk = parsed
         if total == 1:
             session.apply_avatar(sender, chunk)
@@ -398,6 +402,11 @@ class IrcProtocol(CommonCommands):
         if version is not None:
             # 우리가 물어본 것에 대한 답 - 채팅창에 띄우지 않고 조용히 기록만 한다
             session.apply_client_version(msg.source_nick, version)
+            return
+        if irc_protocol.is_ctcp_frame(msg.trailing):
+            # 우리가 모르는 CTCP 응답(예: "ERRMSG that is an unknown CTCP query").
+            # 기계끼리 주고받는 말이라 사람에게 보여줄 것이 아니다 - 실제로 이게 채팅창에
+            # 그대로 뜬 적이 있다
             return
         # 등록 전에는 채널이 없으므로 빈 채널로 보냄 - 어댑터가 로그인 화면 등에 표시
         channel = session.active_channel if session.my_id else ""

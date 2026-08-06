@@ -12,10 +12,11 @@
 """
 from PySide6.QtCore import QObject, QTimer
 
-# 한 명 물어보고 다음 사람까지 기다리는 시간. 서버의 홍수 판정에 안 걸릴 만큼 넉넉히 둔다
-PROBE_INTERVAL_MS = 2000
+# 한 명 물어보고 다음 사람까지 기다리는 시간. 서버의 홍수 판정에 안 걸릴 만큼 넉넉히 둔다.
+# 급할 이유가 전혀 없는 일(로고 하나 뜨는 것)이라 여유 있게 잡는다
+PROBE_INTERVAL_MS = 3500
 # 한 채널에서 물어볼 사람 수 상한. 수백 명짜리 채널에서 몇 분씩 요청을 보내지 않도록
-MAX_PROBES_PER_ROUND = 40
+MAX_PROBES_PER_ROUND = 25
 
 
 class VersionProber(QObject):
@@ -38,8 +39,8 @@ class VersionProber(QObject):
                 self._queue.append(user_id)
                 added = True
         if added and not self._timer.isActive():
-            # 첫 한 명은 바로 물어보고(들어가자마자 하나라도 보이게), 그 뒤부터 간격을 둔다
-            self._ask_next()
+            # 첫 한 명도 바로 묻지 않는다 - 채널에 들어가는 순간은 서버가 참여자 목록,
+            # 지난 대화 등으로 이미 바쁘다. 한 박자 쉬고 시작한다
             self._timer.start(PROBE_INTERVAL_MS)
 
     def _ask_next(self):
@@ -58,3 +59,7 @@ class VersionProber(QObject):
 
     def pending(self) -> int:
         return len(self._queue)
+
+    def is_working(self) -> bool:
+        """지금 물어보는 중인가(=서버가 낸 오류가 우리 때문일 수 있는가)."""
+        return bool(self._queue) or bool(self._asked)

@@ -117,6 +117,8 @@ def _message_received(view, event):
 
 
 def _system_notice(view, event):
+    # 서버가 우리 요청을 거절한 것이면 그 요청을 멈춰야 한다(계속 보내면 경고만 쌓임)
+    view.note_server_message(event.text)
     if not event.channel:
         # 등록 전 NOTICE 등 - 채널이 없으면 로그인 화면 상태줄에 표시.
         # 서버가 보내는 접속 안내는 오류가 아니므로 빨간색으로 보여주면 안 됨
@@ -134,6 +136,8 @@ def _userlist_updated(view, event):
 
 def _client_version_updated(view, event):
     view.chat_page.set_client_version(event.user_id, event.version)
+    # 다음에 켤 때는 다시 묻지 않도록 적어둔다(같은 값이면 적은 시각은 그대로 둔다)
+    view.remember_client_version(event.user_id, event.version)
 
 
 def _avatar_updated(view, event):
