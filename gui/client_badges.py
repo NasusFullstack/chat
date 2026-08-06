@@ -103,6 +103,12 @@ CLIENT_SPECS = [
     ClientSpec("igloo", "Igloo (iOS)", r"\bigloo\b", "I", "#4a90d9", shape="phone"),
     ClientSpec("mutter", "Mutter (iOS)", r"\bmutter\b", "M", "#4a90d9", shape="phone"),
     ClientSpec("colloquy", "Colloquy", r"colloquy", "C", "#4a90d9", shape="phone"),
+    ClientSpec("quasseldroid", "Quasseldroid (안드로이드)", r"quasseldroid", "Q", "#8a6fbf",
+               shape="phone"),
+    ClientSpec("androirc", "AndroIRC (안드로이드)", r"androirc", "A", "#3ddc84", shape="phone"),
+    ClientSpec("yaaic", "Yaaic (안드로이드)", r"yaaic", "Y", "#3ddc84", shape="phone"),
+    ClientSpec("limechat", "LimeChat", r"limechat", "L", "#4a90d9", shape="phone"),
+    ClientSpec("atomic", "Atomic (iOS)", r"atomic", "A", "#4a90d9", shape="phone"),
     ClientSpec("irccloud_mobile", "IRCCloud (모바일)", r"irccloud.*(android|ios|iphone|mobile)",
                "C", "#1a86e0", "https://www.irccloud.com/favicon.ico", shape="phone"),
 
@@ -117,6 +123,23 @@ CLIENT_SPECS = [
                "B", "#8a8f9e", shape="robot"),
 ]
 UNKNOWN_COLOR = "#6e7185"
+
+# 앱 이름이 목록에 없어도, 응답에 이런 말이 들어 있으면 휴대폰에서 접속한 것으로 본다.
+# 클라이언트들은 보통 자기 버전 뒤에 운영체제를 덧붙인다
+# (예: "WeeChat 4.4.2 (Android)", "Palaver 2.0 (iOS 17.2)", "Quasseldroid 1.1")
+MOBILE_TOKENS = re.compile(
+    r"android|androirc|quasseldroid|yaaic|termux|"
+    r"ios|iphone|ipad|ipod|ios ?\d|windows ?phone|mobile",
+    re.IGNORECASE)
+# 마찬가지로 '사람이 아님'을 알려주는 말들. 봇들은 대개 자기가 봇이라고 밝힌다
+BOT_TOKENS = re.compile(r"bot|bots|services|daemon|relay|bridge", re.IGNORECASE)
+# 이름이 이렇게 끝나면 사람이 아니다(관례)
+BOT_NICK_SUFFIXES = ("bot", "serv", "bridge")
+# 이름에 이런 말이 들어 있으면 휴대폰에서 접속한 것으로 본다.
+# 프로그램 응답만으로는 알 수 없는 경우가 실제로 있다 - IRCCloud는 웹에서 쓰든
+# 휴대폰에서 쓰든 "IRCCloud irccloud.com"이라고만 답한다. 그래서 사람들은 휴대폰용
+# 접속에 hjsong_mobile 처럼 이름을 따로 붙여 쓴다(실측에서 확인)
+MOBILE_NICK_TOKENS = ("mobile", "phone", "droid", "iphone", "ipad", "tablet")
 # 종류 표시(휴대폰/로봇)는 회색으로 - 브랜드 로고가 아니라 '어떤 종류인가' 표시라서,
 # 색이 있으면 로고와 경쟁해서 무엇이 진짜 프로그램인지 헷갈린다
 MARKER_COLOR = "#9a9cad"
@@ -171,6 +194,31 @@ def resolve_spec(version: str, nick: str = "") -> ClientSpec | None:
     return spec_for_nick(nick) or spec_for(version)
 
 
+def kind_for(version: str, nick: str = "") -> str:
+    """그 계정이 어떤 종류인지: "phone"(휴대폰) / "robot"(사람 아님) / ""(보통 PC).
+
+    **앱 목록에 없어도 판정된다.** 표에 없는 새 프로그램이라도 응답에 "Android"가 들어
+    있으면 휴대폰이고, "bot"이 들어 있으면 사람이 아니다. 앱을 하나하나 등록하는 것보다
+    이 방법이 훨씬 많이 잡는다.
+    """
+    spec = resolve_spec(version, nick)
+    if spec is not None and spec.shape:
+        return spec.shape
+    text = version or ""
+    if MOBILE_TOKENS.search(text):
+        return "phone"
+    lowered = (nick or "").lower()
+    if any(token in lowered for token in MOBILE_NICK_TOKENS):
+        return "phone"
+    # 프로그램 이름 자체가 ~Bot으로 끝나는 경우도 흔하다("MyCoolBot 1.0").
+    # 낱말 경계만 보면 이런 형태를 놓친다
+    first_word = text.split()[0].lower().rstrip("/,;") if text.split() else ""
+    if (BOT_TOKENS.search(text) or first_word.endswith("bot")
+            or lowered.endswith(BOT_NICK_SUFFIXES)):
+        return "robot"
+    return ""
+
+
 def short_label(version: str, nick: str = "") -> str:
     """툴팁에 쓸 짧은 이름. 아는 프로그램이면 그 이름, 모르면 응답의 첫 낱말."""
     spec = resolve_spec(version, nick)
@@ -209,28 +257,32 @@ class ClientBadges:
         self._stored = _load_stored()
 
     def badges(self, version: str, size: int = CLIENT_BADGE_PX,
-               nick: str = "") -> list:
-        """그 줄 오른쪽에 그릴 것들. [로고] 또는 [로고, 종류 표시].
+               nick: str = "") -> tuple:
+        """그 줄 오른쪽에 그릴 (로고, 종류 표시). 없는 자리는 None.
 
-        휴대폰이나 봇은 로고만으로는 티가 안 나므로 **옆에 회색 표시를 하나 더** 붙인다
+        **짝으로 돌려주는 이유**: 화면에서 두 칸이 세로로 줄을 맞춰야 하기 때문이다.
+        있는 것만 오른쪽부터 늘어놓으면 표시가 붙은 줄만 로고가 왼쪽으로 밀려서 로고들이
+        지그재그로 보인다(실제로 그렇게 보인다는 지적을 받음).
+
+        휴대폰이나 봇은 로고만으로는 티가 안 나므로 옆에 회색 표시를 하나 더 붙인다
         (예: WeeChat Android -> WeeChat 로고 + 회색 휴대폰).
         """
         main = self.badge(version, size, nick)
-        if main is None:
-            return []
-        spec = resolve_spec(version, nick)
-        if spec is None or not spec.shape:
-            return [main]
-        marker = self._pixmaps.get(("marker", spec.shape, size))
-        if marker is None:
-            marker = _shape_badge(spec.shape, MARKER_COLOR, size)
-            self._pixmaps[("marker", spec.shape, size)] = marker
-        return [main, marker]
+        kind = kind_for(version, nick)
+        marker = None
+        if kind:
+            marker = self._pixmaps.get(("marker", kind, size))
+            if marker is None:
+                marker = _shape_badge(kind, MARKER_COLOR, size)
+                self._pixmaps[("marker", kind, size)] = marker
+        return (main, marker)
 
     def badge(self, version: str, size: int = CLIENT_BADGE_PX,
               nick: str = "") -> QPixmap | None:
-        """그 사람의 프로그램 로고. 모르면 글자 배지, 그것도 안 되면 None."""
+        """그 사람의 프로그램 로고. 모르면 글자 배지, 아무것도 모르면 None."""
         spec = resolve_spec(version, nick)
+        if spec is None and not (version or "").strip():
+            return None   # 답도 없고 이름으로도 모름 - 로고 자리는 비워둔다
         # 모르는 프로그램이면 응답의 첫 글자를 쓴다. 예전엔 물음표를 그렸는데 12px에서
         # 곡선이 뭉개져 숫자 7처럼 보였다(실제로 그렇게 보인다는 신고를 받음).
         # 첫 글자를 쓰면 뭉개져도 최소한 무엇의 앞글자인지는 짐작할 수 있다
