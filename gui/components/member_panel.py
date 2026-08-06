@@ -149,7 +149,7 @@ class MemberPanel(QWidget):
         self.header.setText(_header_text(self.list.count()))
 
     def _badge_for(self, user_id):
-        """그 사람 줄 오른쪽에 그릴 작은 로고(모르면 None).
+        """그 사람 줄 오른쪽에 그릴 것들(로고, 그리고 휴대폰/봇이면 종류 표시까지).
 
         디스코드 다리(bridge) 계정처럼 **물어봐도 답할 수 없는** 경우가 있다. 그건 사람이
         쓰는 IRC 프로그램이 아니라 디스코드와 IRC를 이어주는 봇이라서, CTCP VERSION에
@@ -157,10 +157,10 @@ class MemberPanel(QWidget):
         """
         version = self._client_versions.get(user_id)
         if version:
-            return self._badges.badge(version, nick=user_id)
+            return self._badges.badges(version, nick=user_id)
         if spec_for_nick(user_id) is not None:
-            return self._badges.badge("", nick=user_id)   # 답이 없어도 이름으로 확실한 경우
-        return None
+            return self._badges.badges("", nick=user_id)  # 답이 없어도 이름으로 확실한 경우
+        return []
 
     def set_client_version(self, user_id: str, version: str):
         """그 사람이 쓰는 프로그램을 알아냈을 때 - 로고가 바뀌므로 다시 그린다."""

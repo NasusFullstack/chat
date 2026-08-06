@@ -16,32 +16,45 @@ from gui.client_badges import CLIENT_BADGE_PX
 BADGE_RIGHT_MARGIN = 6
 # 이름과 배지 사이 최소 간격
 BADGE_LEFT_GAP = 6
+# 배지가 둘일 때(로고 + 종류 표시) 그 사이 간격
+BADGE_GAP = 3
 
 
 class ClientBadgeDelegate(QStyledItemDelegate):
     """user_id -> 배지 그림을 받아와 오른쪽 끝에 그린다."""
 
     def __init__(self, badge_source, parent=None):
-        """badge_source(user_id) -> QPixmap | None. 무엇을 그릴지는 바깥이 정한다."""
+        """badge_source(user_id) -> [QPixmap, ...]. 무엇을 그릴지는 바깥이 정한다.
+
+        여러 개인 이유: 휴대폰이나 봇은 로고 옆에 회색 표시를 하나 더 붙인다
+        (로고 위에 겹쳐 그리면 12px에서는 보이지 않는다).
+        """
         super().__init__(parent)
         self._badge_source = badge_source
 
     def paint(self, painter, option, index):
-        badge = self._badge_source(index.data(Qt.ItemDataRole.UserRole))
-        if badge is None or badge.isNull():
+        badges = [b for b in self._badge_source(index.data(Qt.ItemDataRole.UserRole)) or []
+                  if b is not None and not b.isNull()]
+        if not badges:
             super().paint(painter, option, index)
             return
 
+        total = sum(b.width() for b in badges) + BADGE_GAP * (len(badges) - 1)
         # 이름이 배지 자리를 침범하지 않도록 그릴 폭을 미리 줄인다
-        reserved = badge.width() + BADGE_RIGHT_MARGIN + BADGE_LEFT_GAP
         narrowed = option
         narrowed.rect = QRect(option.rect.left(), option.rect.top(),
-                              max(0, option.rect.width() - reserved), option.rect.height())
+                              max(0, option.rect.width() - total - BADGE_RIGHT_MARGIN
+                                  - BADGE_LEFT_GAP),
+                              option.rect.height())
         super().paint(painter, narrowed, index)
 
-        x = option.rect.right() - badge.width() - BADGE_RIGHT_MARGIN + 1
-        y = option.rect.top() + (option.rect.height() - badge.height()) // 2
-        painter.drawPixmap(x, y, badge)
+        # 오른쪽 끝에서부터 거꾸로 놓는다(마지막 것이 가장 오른쪽)
+        x = option.rect.right() - BADGE_RIGHT_MARGIN + 1
+        for badge in reversed(badges):
+            x -= badge.width()
+            y = option.rect.top() + (option.rect.height() - badge.height()) // 2
+            painter.drawPixmap(x, y, badge)
+            x -= BADGE_GAP
 
 
 def badge_height() -> int:

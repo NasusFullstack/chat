@@ -44,8 +44,9 @@ class ClientSpec:
         self.letter = letter          # 로고도 도형도 없을 때 그릴 글자
         self.color = color            # 그 프로그램의 대표색
         self.logo_url = logo_url
-        # 로고 대신 직접 그릴 도형: "robot"(봇/서비스) / "phone"(휴대폰용 프로그램).
-        # 종류가 많고 저마다 로고를 구하기 어려운 것들을 한 눈에 묶어 보여주기 위함
+        # 종류 표시: "phone"(휴대폰에서 접속) / "robot"(사람이 아님 - 봇·서비스).
+        # **로고를 대신하는 게 아니라 로고 옆에 따로 붙는다.** 로고 위에 겹쳐 그려봐야
+        # 12px에서는 티가 안 나고, 로고 자리를 뺏으면 무슨 프로그램인지 알 수 없어진다
         self.shape = shape
 
     def matches(self, version: str) -> bool:
@@ -56,13 +57,14 @@ class ClientSpec:
 # (예: 디스코드 다리(matterbridge)는 WeeChat이라고 답하는 경우가 있어 위에 둔다)
 CLIENT_SPECS = [
     ClientSpec("chupchat", "춥채팅", r"chupchat|춥채팅", "춥", "#7c6cf0"),
-    ClientSpec("discord", "Discord", r"discord|matterbridge|bridge", "D", "#5865F2",
+    # 디스코드 다리도 사람이 아니라 봇이다 - 디스코드 로고 옆에 로봇 표시가 같이 붙는다
+    ClientSpec("discord", "Discord 연결(봇)", r"discord|matterbridge|bridge", "D", "#5865F2",
                "https://assets-global.website-files.com/6257adef93867e50d84d30e2/"
-               "636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png"),
+               "636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png", shape="robot"),
     # 안드로이드판을 일반 WeeChat보다 먼저 둔다 - 순서가 곧 우선순위라 반대로 두면
     # "WeeChat Android"가 그냥 WeeChat으로 잡힌다
     ClientSpec("weechat_android", "WeeChat Android", r"weechat.?android", "W", "#57a64a",
-               shape="phone"),
+               "https://weechat.org/favicon.ico", shape="phone"),
     ClientSpec("weechat", "WeeChat", r"weechat", "W", "#57a64a",
                "https://weechat.org/favicon.ico"),
     ClientSpec("hexchat", "HexChat", r"hexchat", "H", "#3a7bd5",
@@ -101,6 +103,8 @@ CLIENT_SPECS = [
     ClientSpec("igloo", "Igloo (iOS)", r"\bigloo\b", "I", "#4a90d9", shape="phone"),
     ClientSpec("mutter", "Mutter (iOS)", r"\bmutter\b", "M", "#4a90d9", shape="phone"),
     ClientSpec("colloquy", "Colloquy", r"colloquy", "C", "#4a90d9", shape="phone"),
+    ClientSpec("irccloud_mobile", "IRCCloud (모바일)", r"irccloud.*(android|ios|iphone|mobile)",
+               "C", "#1a86e0", "https://www.irccloud.com/favicon.ico", shape="phone"),
 
     # --- 사람이 아닌 것들: 서비스/봇은 로봇 모양으로 묶는다 ---
     # (종류가 많고 저마다 로고를 구하기 어렵다. 사람인지 아닌지가 먼저 보이는 게 중요)
@@ -113,6 +117,9 @@ CLIENT_SPECS = [
                "B", "#8a8f9e", shape="robot"),
 ]
 UNKNOWN_COLOR = "#6e7185"
+# 종류 표시(휴대폰/로봇)는 회색으로 - 브랜드 로고가 아니라 '어떤 종류인가' 표시라서,
+# 색이 있으면 로고와 경쟁해서 무엇이 진짜 프로그램인지 헷갈린다
+MARKER_COLOR = "#9a9cad"
 
 
 def spec_for(version: str) -> ClientSpec | None:
@@ -201,6 +208,25 @@ class ClientBadges:
         self._requested: set[str] = set()          # 이미 받아오기를 시도한 것
         self._stored = _load_stored()
 
+    def badges(self, version: str, size: int = CLIENT_BADGE_PX,
+               nick: str = "") -> list:
+        """그 줄 오른쪽에 그릴 것들. [로고] 또는 [로고, 종류 표시].
+
+        휴대폰이나 봇은 로고만으로는 티가 안 나므로 **옆에 회색 표시를 하나 더** 붙인다
+        (예: WeeChat Android -> WeeChat 로고 + 회색 휴대폰).
+        """
+        main = self.badge(version, size, nick)
+        if main is None:
+            return []
+        spec = resolve_spec(version, nick)
+        if spec is None or not spec.shape:
+            return [main]
+        marker = self._pixmaps.get(("marker", spec.shape, size))
+        if marker is None:
+            marker = _shape_badge(spec.shape, MARKER_COLOR, size)
+            self._pixmaps[("marker", spec.shape, size)] = marker
+        return [main, marker]
+
     def badge(self, version: str, size: int = CLIENT_BADGE_PX,
               nick: str = "") -> QPixmap | None:
         """그 사람의 프로그램 로고. 모르면 글자 배지, 그것도 안 되면 None."""
@@ -229,8 +255,6 @@ class ClientBadges:
             if pixmap is not None:
                 return pixmap
         if spec is not None:
-            if spec.shape:
-                return _shape_badge(spec.shape, spec.color, size)   # 로고를 안 쓰는 종류
             self._fetch_logo(spec)
             return _letter_badge(spec.letter, spec.color, size)
         return _letter_badge(_initial(version), UNKNOWN_COLOR, size)

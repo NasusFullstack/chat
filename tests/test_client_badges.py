@@ -308,13 +308,14 @@ panel.set_members("#일반", ["몽키", "앨리스"])
 panel.show_channel("#일반")
 for _ in range(4):
     app.processEvents()
-check("아직 모르는 사람에게는 로고가 없다", panel._badge_for("앨리스") is None)
+check("아직 모르는 사람에게는 로고가 없다", not panel._badge_for("앨리스"))
 
 page.set_client_version("앨리스", "WeeChat 4.4.2")
 for _ in range(4):
     app.processEvents()
-badge = panel._badge_for("앨리스")
-check("알아낸 사람에게는 로고가 생긴다", badge is not None and not badge.isNull())
+badges_shown = panel._badge_for("앨리스")
+check("알아낸 사람에게는 로고가 생긴다", bool(badges_shown) and not badges_shown[0].isNull())
+badge = badges_shown[0]
 
 row = panel.list.item(1)
 check("줄에 실제 아이디가 달려 있다(로고를 그릴 때 필요)",
@@ -327,6 +328,17 @@ check(f"로고가 닉네임 글자({metrics}px)를 넘지 않는다", badge.heig
 panel.reset()
 check("로그아웃하면 프로그램 정보도 지워진다", panel.client_version("앨리스") == "")
 
+# 로고 옆에 종류 표시가 따로 붙는다(겹쳐 그리면 12px에서 안 보인다)
+two = ClientBadges(fetcher=None)
+check("PC 프로그램은 로고 하나만", len(two.badges("WeeChat 4.4.2")) == 1)
+check("휴대폰이면 로고 + 휴대폰 표시 둘",
+      len(two.badges("WeeChat Android 0.19")) == 2)
+check("봇/서비스도 로고 + 로봇 표시 둘", len(two.badges("Anope-2.0.21")) == 2)
+check("디스코드 연결도 봇이므로 표시가 붙는다",
+      len(two.badges("girc (github.com/x/girc)", nick="Discord")) == 2)
+check("표시도 닉네임 글자를 안 넘는다",
+      all(b.width() <= CLIENT_BADGE_PX for b in two.badges("Goguma 0.7")))
+
 # ---------- 6) 디스코드 다리처럼 '물어봐도 소용없는' 계정 ----------
 # 채널이 통째로 디스코드와 이어져 있는 경우, 그 계정은 사람이 쓰는 IRC 프로그램이 아니라
 # 이어주는 봇이다. CTCP로 물어도 봇 이름이 나오거나 아예 답이 없다 - 이름으로 알아본다
@@ -334,10 +346,10 @@ panel.set_members("#일반", ["Discord", "PDLab", "몽키"])
 panel.show_channel("#일반")
 for _ in range(4):
     app.processEvents()
-check("이름이 Discord면 답이 없어도 로고가 뜬다", panel._badge_for("Discord") is not None)
+check("이름이 Discord면 답이 없어도 로고가 뜬다", bool(panel._badge_for("Discord")))
 check("이름으로 짐작한 것임을 툴팁에 밝힌다",
       "짐작" in (panel.list.item(0).toolTip() or ""), panel.list.item(0).toolTip())
-check("아무 단서도 없는 사람은 그대로 비워둔다", panel._badge_for("몽키") is None)
+check("아무 단서도 없는 사람은 그대로 비워둔다", not panel._badge_for("몽키"))
 check("봇 이름으로 답해도 다리로 알아본다",
       spec_for_nick("discord-bridge") is not None)
 
@@ -347,7 +359,7 @@ page.set_client_version("PDLab", "PircBotX 2.3.1")
 for _ in range(4):
     app.processEvents()
 unknown_badge = panel._badge_for("PDLab")
-check("모르는 프로그램도 배지가 나온다", unknown_badge is not None)
+check("모르는 프로그램도 배지가 나온다", bool(unknown_badge))
 check("툴팁에 응답 원문이 그대로 보인다(표에 추가할 수 있게)",
       "PircBotX 2.3.1" in (panel.list.item(1).toolTip() or ""), panel.list.item(1).toolTip())
 
