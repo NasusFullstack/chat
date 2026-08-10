@@ -14,6 +14,33 @@ from gui.preview.image_preview import ImagePreview, is_image_url
 from gui.preview.link_card import CARD_MAX_WIDTH, LinkCard
 
 
+class _PreviewLayout(QVBoxLayout):
+    """미리보기들을 담는 세로 레이아웃 - 폭을 물으면 실제 필요한 높이를 답한다.
+
+    **여기가 없으면 그림이 늦게 도착한 메시지 자리가 통째로 빈칸이 된다.**
+
+    Qt는 부모 레이아웃이 자식 위젯의 높이를 물을 때, 그 위젯에 자체 레이아웃이 있으면
+    위젯의 heightForWidth()가 아니라 **안쪽 레이아웃**에 묻는다(QWidgetItem 규칙).
+    그런데 보통의 QVBoxLayout은 담긴 것들(고정 크기 그림 라벨)이 heightForWidth를
+    갖고 있지 않으면 -1을 돌려주고, 부모는 그걸 0으로 받아들여 높이를 0으로 잡는다.
+
+    실측(2026-08-06): 그림은 320x320으로 멀쩡히 들어와 있는데 메시지 줄 높이는 34.
+    안쪽 레이아웃이 답한 값이 0이었기 때문이다. 그림이 레이아웃 계산보다 먼저 도착하면
+    sizeHint 경로를 타서 정상으로 보였고, 늦게 도착하면 이 경로를 타서 빈칸이 됐다 -
+    "어떤 이미지는 되고 어떤 이미지는 안 되는" 증상의 정체.
+    """
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt 규약
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        height = super().heightForWidth(width)
+        if height > 0:
+            return height
+        # 담긴 것들이 폭과 무관한 고정 크기(그림)라면 그것들의 높이 합이 곧 답이다
+        return self.sizeHint().height()
+
+
 class LinkPreviewArea(QWidget):
     """메시지 하나에 딸린 미리보기들을 담는 칸. 받아오는 일까지 전부 여기서 한다.
 
@@ -38,7 +65,7 @@ class LinkPreviewArea(QWidget):
         # 채팅창에서 쓸 수 있는 폭. 나중에 도착하는 미리보기에도 그대로 적용해야
         # 좁은 창에서 이미지가 삐져나가지 않음
         self._max_width = 0
-        self._layout = QVBoxLayout(self)
+        self._layout = _PreviewLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(4)
         # 세로를 Fixed로 두면 안 된다 - 안에 들어가는 카드는 폭에 따라 높이가 달라지는데
@@ -58,8 +85,12 @@ class LinkPreviewArea(QWidget):
         return True
 
     def heightForWidth(self, width: int) -> int:  # noqa: N802
-        height = self._layout.heightForWidth(width)
-        return height if height > 0 else self._layout.sizeHint().height()
+        """**이 함수만 고쳐서는 소용이 없다.** 아래 _PreviewLayout 설명을 반드시 볼 것.
+
+        위젯에 자체 레이아웃이 있으면 부모 레이아웃은 위젯의 이 함수가 아니라 그 안쪽
+        레이아웃에 높이를 묻는다. 그래서 진짜 답은 _PreviewLayout이 해야 한다.
+        """
+        return self._layout.heightForWidth(width)
 
     def set_max_width(self, width: int):
         """채팅창 폭이 바뀌었을 때 - 이미 그려진 미리보기와 앞으로 올 것 모두에 적용."""
