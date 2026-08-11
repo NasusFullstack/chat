@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 title Build EXE
 cd /d "%~dp0"
@@ -33,7 +33,7 @@ set EXTRA_DATA=
 if exist battlecruiser.png set EXTRA_DATA=%EXTRA_DATA% --add-data "battlecruiser.png;."
 if exist mineral.png set EXTRA_DATA=%EXTRA_DATA% --add-data "mineral.png;."
 if exist gas.png set EXTRA_DATA=%EXTRA_DATA% --add-data "gas.png;."
-pyinstaller --noconfirm --clean --onedir --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;."%EXTRA_DATA% --name FriendChat_GUI gui_client.py
+pyinstaller --noconfirm --clean --onedir --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." --add-data "CHANGELOG.md;."%EXTRA_DATA% --name FriendChat_GUI gui_client.py
 
 echo [3/6] Building CLI client (lightweight, for friends)...
 pyinstaller --noconfirm --clean --onefile --console --name FriendChat_CLI cli_client.py

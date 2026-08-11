@@ -375,9 +375,18 @@ class MainWindow(QMainWindow):
 
     def _go_to_login(self):
         self.stack.setCurrentWidget(self.login_page)
+        # 업데이트로 새 버전이 된 뒤 처음 켠 것이면 "뭐가 바뀌었는지"를 한 번 보여준다.
+        # 로그인 화면이 뜬 뒤에 띄우는 이유: 시작화면 위에 겹치면 업데이트가 아직 진행
+        # 중인 것처럼 보인다. 저절로 닫히지 않으며, 한 버전당 한 번만 뜬다
+        QTimer.singleShot(300, self._show_changelog_once)
         # 자동로그인은 로그인 화면이 실제로 보이는 상태에서 시작해야 "연결 중..." 표시와
         # '연결 취소' 버튼이 정상적으로 보임
         QTimer.singleShot(100, self._maybe_auto_login)
+
+    def _show_changelog_once(self):
+        from gui import changelog_dialog
+
+        changelog_dialog.show_if_updated(self)
 
     # ---------------- 끊김 감지와 자동 재접속 ----------------
 

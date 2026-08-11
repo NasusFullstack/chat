@@ -31,7 +31,8 @@ jobs:
       - name: Build GUI
         shell: pwsh
         run: |
-          $data = @("icon.ico", "icon.png")
+          # CHANGELOG.md도 넣는다 - 업데이트 뒤 "뭐가 바뀌었는지" 창이 이 파일을 읽는다
+          $data = @("icon.ico", "icon.png", "CHANGELOG.md")
           foreach ($name in @("battlecruiser.png", "mineral.png", "gas.png")) {
             if (Test-Path $name) { $data += $name } else { Write-Host "skip (없음): $name" }
           }

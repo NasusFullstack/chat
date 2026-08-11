@@ -43,4 +43,17 @@ QLabel#infoCopyright {
     font-size: 11px;
     padding-top: 6px;
 }
+
+/* --- 업데이트 변경 내역 창 --- */
+QScrollArea#changelogArea {
+    background: __BG_SUNKEN__;
+    border: 1px solid __LINE_SOFT__;
+    border-radius: 8px;
+}
+QLabel#changelogBody {
+    background: transparent;
+    color: __TEXT_SOFT__;
+    font-size: 12px;
+    padding: 8px 10px;
+}
 """

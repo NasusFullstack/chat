@@ -27,6 +27,9 @@ DEFAULTS = {
     "channel_sidebar_collapsed": False,
     # 화면 테마(gui/styles/palette.py의 THEMES 키). 지금은 기본 테마 하나뿐이고 추가 예정
     "theme": "dark",
+    # 변경 내역 창을 이미 보여준 버전. 패치 뒤 한 번만 띄우기 위한 기록
+    # (gui/changelog_dialog.py)
+    "changelog_shown_version": "",
 }
 
 
@@ -50,10 +53,14 @@ def load() -> dict:
     except (json.JSONDecodeError, OSError):
         return prefs
     if isinstance(saved, dict):
-        # 모르는 항목은 무시하고, 아는 항목만 덮어씀(옛 파일/새 파일 모두 안전)
-        for key in DEFAULTS:
+        # 모르는 항목은 무시하고, 아는 항목만 덮어씀(옛 파일/새 파일 모두 안전).
+        # **기본값의 자료형을 지킬 것.** 예전엔 여기서 전부 bool()로 바꿔버려서, 글자를
+        # 담는 설정(테마, 알림 상세, 변경 내역 버전)이 재시작할 때마다 True/False로
+        # 뭉개졌다 - "사람만 표시"를 골라도 다음 실행에는 무시되는 버그였다.
+        # save()만 고치고 여기를 빠뜨려서 한동안 안 보였다
+        for key, default in DEFAULTS.items():
             if key in saved:
-                prefs[key] = bool(saved[key])
+                prefs[key] = bool(saved[key]) if isinstance(default, bool) else str(saved[key])
     return prefs
 
 
