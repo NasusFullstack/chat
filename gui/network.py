@@ -84,6 +84,17 @@ class ChatClient(QSslSocket):
             return
         self.write(irc_protocol.encode_line(line))
 
+    def flush_pending(self, timeout_ms: int = 700):
+        """쓴 내용이 실제로 나갈 때까지 잠깐 기다린다.
+
+        write()는 바로 보내는 게 아니라 예약만 한다. 종료 직전에 QUIT을 쓰고 곧바로
+        소켓을 닫으면 그 줄이 나가지 못하고 사라진다 - 그러면 QUIT을 보낸 의미가 없다.
+        """
+        if self.state() != QSslSocket.SocketState.ConnectedState:
+            return
+        self.flush()
+        self.waitForBytesWritten(timeout_ms)
+
     def _on_ready_read(self):
         self._buffer += bytes(self.readAll())
         if self._mode == "irc":

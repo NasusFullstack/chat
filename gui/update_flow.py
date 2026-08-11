@@ -6,6 +6,8 @@ updater.py는 "무엇을 어떻게 받고 적용하는가"만 알고, 여기서�
 """
 import sys
 
+from version import IS_BETA
+
 from PySide6.QtWidgets import QApplication
 
 
@@ -17,6 +19,12 @@ def check_and_apply(startup_page) -> bool:
     """
     if not getattr(sys, "frozen", False):
         return False  # 소스로 실행 중이면 git pull로 갱신하면 되므로 자동 업데이트 안 함
+
+    if IS_BETA:
+        # 테스트 버전은 스스로 갱신하지 않는다. 자동 업데이트가 받아오는 것은 '정식 최신
+        # 버전'이라, 그대로 두면 테스트 버전이 실행되자마자 정식 버전으로 덮여 사라진다.
+        # 테스트 버전은 받은 사람이 직접 받아서 쓰는 물건이다
+        return False
 
     import updater
 

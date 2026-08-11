@@ -339,6 +339,15 @@ class IrcProtocol(CommonCommands):
     def request_client_version(self, session, user_id: str) -> None:
         session.transport(irc_protocol.format_ctcp_version_request(user_id))
 
+    def disconnect_gracefully(self, session, reason: str) -> None:
+        """나가기 전에 QUIT을 보낸다.
+
+        안 보내고 그냥 소켓을 끊으면 서버는 한참 뒤에야(핑 응답이 없어서) 나간 걸 알아챈다.
+        그동안 채널 사람들 목록에는 유령처럼 남아 있고, 나중에 "Ping timeout"으로 나갔다고
+        뜬다. QUIT을 보내면 그 자리에서 깔끔하게 빠지고 남긴 말도 함께 보인다.
+        """
+        session.transport(irc_protocol.format_quit(reason or None))
+
     def request_client_versions_in_channel(self, session, channel: str) -> None:
         """채널 전체에 **한 줄**로 물어본다.
 

@@ -17,9 +17,13 @@ import time
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
+from version import IS_BETA
+
 # 자리 이름. 사용자마다 다른 이름을 쓸 필요는 없다 - 로컬 소켓은 원래 사용자 세션 안에서만
 # 보이고, 한 컴퓨터에서 한 사람이 하나만 켜면 된다는 것이 이 기능의 목적이다
-INSTANCE_KEY = "ChupChat-single-instance"
+# 테스트 버전은 자리 이름이 달라야 한다 - 안 그러면 정식 버전을 켜둔 채로 테스트 버전을
+# 켰을 때 "이미 실행 중"으로 보고 그냥 꺼진다(둘을 나란히 놓고 비교할 수가 없다)
+INSTANCE_KEY = "ChupChat-single-instance" + ("-beta" if IS_BETA else "")
 
 CONNECT_TIMEOUT_MS = 400
 # 업데이트 직후 예전 프로세스가 사라지길 기다리는 최대 시간

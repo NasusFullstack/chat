@@ -32,6 +32,7 @@ from gui.version_prober import VersionProber
 from updater import POST_UPDATE_FLAG
 from gui.helpers import _friendly_connection_error
 from gui.network import ChatClient
+from gui.network_probe import WebReachableProbe, blocked_port_message
 from gui.pages import ChannelPage, ChatPage, LoginPage
 from gui.profile_dialog import ProfileDialog
 from gui.startup_page import StartupPage
@@ -148,6 +149,9 @@ class MainWindow(QMainWindow):
         # 이게 없으면 끝까지 답 안 하는 사람이 한 명만 있어도, 누가 들락거릴 때마다
         # 채널에 계속 요청이 나간다(응답을 꺼둔 사람에게 영원히 묻는 셈)
         self._asked_in_channel: dict[str, set] = {}
+        # 접속 실패 원인 진단용. 서버마다 한 번만 확인하고 결과를 기억한다
+        self._probe = None
+        self._web_reachable: dict[str, bool] = {}
 
         self._connect_timer = QTimer(self)
         self._connect_timer.setSingleShot(True)
@@ -463,6 +467,7 @@ class MainWindow(QMainWindow):
         self._cancel_reconnect()
         self._intentional_close = True  # 일부러 끊는 것이므로 자동 재접속 대상이 아님
         self._stop_connecting()
+        self._say_goodbye("로그아웃")
         self.client.abort()
         self.session = build_session(
             "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
@@ -531,8 +536,24 @@ class MainWindow(QMainWindow):
         # 앱이 닫히는 중에 재접속 타이머가 걸림
         self._intentional_close = True
         self._cancel_reconnect()
+        self._say_goodbye("종료")
         self._tray.hide()
         super().closeEvent(event)
+
+    def _say_goodbye(self, reason: str):
+        """끊기 전에 서버에 "나갑니다"라고 알린다(IRC는 QUIT).
+
+        안 보내고 그냥 소켓을 닫으면 서버는 한참 뒤 핑 응답이 없어서야 알아챈다. 그동안
+        채널 사람들 목록에는 유령처럼 남아 있고 나중에 "Ping timeout"으로 나갔다고 뜬다.
+
+        쓴 줄이 실제로 나갈 때까지 잠깐 기다린다 - write()는 예약만 하므로, 곧바로
+        소켓을 닫으면 그 줄이 사라져서 보낸 의미가 없다.
+        """
+        try:
+            self.session.disconnect_gracefully(reason)
+            self.client.flush_pending()
+        except Exception:  # noqa: BLE001 - 끝내는 중이라 무슨 일이 있어도 종료는 돼야 한다
+            pass
 
     def quit_app(self):
         """트레이 메뉴의 '종료' - 이제 진짜로 끝낸다."""
@@ -725,7 +746,11 @@ class MainWindow(QMainWindow):
                     "이 친구 채팅 서버(server.py)가 맞는지, 주소/포트가 맞는지 확인하세요."
                 )
         else:
-            self.login_page.show_status(f"연결 시간이 초과되었습니다. ({CONNECT_TIMEOUT_MS // 1000}초)")
+            # 포트가 막힌 네트워크에서는 거절도 안 오고 그냥 조용히 시간만 흐른다.
+            # 그래서 이 경로가 '학교 와이파이에서 안 된다'의 실제 모습이다
+            timeout_message = f"연결 시간이 초과되었습니다. ({CONNECT_TIMEOUT_MS // 1000}초)"
+            self.login_page.show_status(timeout_message)
+            self._diagnose_network(timeout_message)
 
     def _on_tcp_connected(self):
         # SSL 모드는 TLS 핸드셰이크가 끝나는 encrypted() 신호를 기다려야 함.
@@ -762,6 +787,44 @@ class MainWindow(QMainWindow):
         if self._is_pre_login():
             friendly = _friendly_connection_error(err, self._pending_ssl, self.client._pinned_cert)
             self.login_page.show_status(friendly)
+            self._diagnose_network(friendly)
+
+    def _diagnose_network(self, fallback_message: str):
+        """접속 실패가 '네트워크가 막은 것'인지 확인해서 안내를 더 정확하게 바꾼다.
+
+        학교/회사 와이파이는 웹(80/443)만 열어두는 경우가 많다. 그런 곳에서는 홈페이지는
+        열리는데 채팅만 안 되므로 사용자는 원인을 알 길이 없다(실제 신고 사례).
+        같은 서버의 웹 포트가 열려 있으면 서버는 살아 있다는 뜻이므로 그렇게 알려준다.
+        """
+        if not self._host:
+            return
+        known = self._web_reachable.get(self._host)
+        if known is not None:
+            # 이미 확인해 본 서버 - 다시 두드리지 않는다. 접속 실패는 여러 번 날 수 있는데
+            # 그때마다 검사를 새로 돌리면 기다리는 시간만 쌓인다(실측: 테스트가 7초에서
+            # 66초로 늘어났다)
+            if known and self._is_pre_login():
+                self.login_page.show_status(blocked_port_message(self._host, self._port))
+            return
+        if self._probe is not None:
+            self._probe.cancel()      # 앞서 돌던 검사는 버린다(결과가 늦게 와서 덮지 않게)
+        self._probe = WebReachableProbe(self)
+
+        host = self._host
+
+        def done(web_reachable: bool):
+            self._web_reachable[host] = web_reachable
+            if self._connecting:
+                return   # 사용자가 다시 접속을 시도하는 중 - 지금 화면 문구를 건드리면 안 된다
+            if not self._is_pre_login():
+                return   # 그 사이에 사용자가 다른 화면으로 갔으면 건드리지 않는다
+            if web_reachable:
+                self.login_page.show_status(blocked_port_message(self._host, self._port))
+            else:
+                self.login_page.show_status(fallback_message)
+
+        self._probe.finished.connect(done)
+        self._probe.start(self._host)
 
     # ---------------- 채널 ----------------
     def _handle_channel_submit(self, action: str):

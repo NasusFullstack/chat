@@ -67,6 +67,10 @@ class ProtocolPort(Protocol):
         """채널 전체에 한 번에 물어봄(개인별로 묻는 길이 막힌 서버에서 쓰는 우회로)."""
         ...
 
+    def disconnect_gracefully(self, session: Any, reason: str) -> None:
+        """끊기 전에 서버에 '나갑니다'라고 알림(프로토콜마다 방법이 다름)."""
+        ...
+
     def publish_nickname(self, session: Any, nickname: str) -> None:
         ...
 

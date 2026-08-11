@@ -176,6 +176,11 @@ class ChatSession:
             return
         self.protocol.request_client_version(self, user_id)
 
+    def disconnect_gracefully(self, reason: str = ""):
+        """앱을 끄거나 로그아웃할 때, 끊기 전에 서버에 알린다."""
+        if self.my_id:
+            self.protocol.disconnect_gracefully(self, reason)
+
     def request_client_versions_in_channel(self, channel: str):
         """채널 전체에 한 줄로 물어본다(개인별로 묻는 길이 막힌 서버용)."""
         if channel:
