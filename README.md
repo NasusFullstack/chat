@@ -4,7 +4,7 @@
 ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/PySide6-Qt%206-41CD52?logo=qt&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-51%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-52%20passing-brightgreen)
 
 **IRC 채팅 GUI 클라이언트 — Python + PySide6로 만든 윈도우 데스크톱 앱.**
 
@@ -56,7 +56,7 @@ server.py        asyncio 서버 (TLS)
 **프로토콜 분기를 코드에서 없앴습니다.** `if protocol == "irc"` 같은 분기 대신 전략 객체와
 표(registry)를 씁니다. 새 프로토콜은 클래스 하나 만들고 표에 한 줄 등록하면 됩니다.
 
-**회귀 테스트 51개**가 실제 서버를 띄워서 돕니다(`python tests/run_all.py`).
+**회귀 테스트 52개**가 실제 서버를 띄워서 돕니다(`python tests/run_all.py`).
 화면을 건드리는 작업은 [픽셀 단위 비교 도구](tests/ui_snapshot.py)로 리팩토링 전후가
 같은지 확인합니다 — 기능 테스트는 배치가 몇 px 틀어진 것을 못 잡기 때문입니다.
 
@@ -192,6 +192,8 @@ python cli_client.py <서버주소> <포트> [cert.pem 경로] [ssl여부: on/of
 
 **창 밖에서도**
 - 창을 닫아도 종료되지 않고 트레이에 상주 (종료는 트레이 메뉴에서)
+- 한 컴퓨터에서 하나만 실행됨 - 두 번 켜면 이미 떠 있는 창이 나옴
+- 업데이트 뒤 바뀐 내용을 창으로 한 번 보여줌(버전당 1회, 저절로 안 닫힘)
 - 새 메시지 알림을 앱이 직접 그림 — 윈도우 기본 알림을 쓰지 않아 모양과 위치가 일정하고,
   연달아 오면 하나로 묶여 최신 것만 뜸
 - 알림에 무엇까지 보여줄지 선택: 보낸 사람과 내용 / 사람만 / 메시지만 / 모두 숨김

@@ -99,6 +99,14 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE_SHEET)
+
+    # 이 컴퓨터에서 하나만 뜨게 한다. 두 번 켜면 트레이 아이콘이 두 개 생기고 알림도
+    # 두 번 온다. 두 번째로 켠 사람은 대개 "창이 안 보여서" 누른 것이므로, 새로 띄우는
+    # 대신 이미 떠 있는 창을 꺼내주는 게 맞다.
+    # 업데이트 직후에는 예전 프로세스가 아직 안 죽었을 수 있어 잠깐 기다렸다 다시 본다
+    instance = SingleInstance()
+    if not instance.try_acquire(wait_for_previous=POST_UPDATE_FLAG in sys.argv):
+        return   # 이미 실행 중 - 그쪽 창을 띄워달라고 알렸으니 우리는 조용히 끝낸다
     # 창을 닫아도 프로그램이 끝나지 않게 함(트레이에 남아 계속 메시지를 받는다).
     # 이걸 안 끄면 창을 숨기는 순간 Qt가 "마지막 창이 닫혔다"고 보고 종료해버린다.
     # 실제 종료는 트레이 메뉴의 '종료'(MainWindow.quit_app)가 담당한다
@@ -109,6 +117,8 @@ def main():
         app.setWindowIcon(QIcon(icon_path))
 
     window = MainWindow()
+    # 두 번째 실행이 "창 좀 띄워줘"라고 알려오면 트레이에서 꺼내듯 보여준다
+    instance.activated.connect(window.show_from_tray)
     if icon_path:
         window.set_window_icon(QIcon(icon_path))
     window.show()
