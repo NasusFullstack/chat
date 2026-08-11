@@ -1,0 +1,70 @@
+# 테스트(베타) 배포 - 정식 배포와 완전히 갈라져 있다.
+#
+# 왜 따로 두는가: 정식 버전에 바로 패치하면, 한 번 잘못 나갔을 때 모든 사용자의 앱이
+# 그대로 망가진다(실제로 v2.1.0이 실행 즉시 죽는 상태로 나갔다). 테스트 버전을 먼저
+# 돌려보고 괜찮으면 정식으로 올리는 흐름을 만든다.
+#
+# 정식과 다른 점 세 가지:
+# 1. GitHub 릴리즈를 **prerelease**로 만든다 -> /releases/latest에 안 잡히므로
+#    정식 사용자의 자동 업데이트는 이 버전을 절대 보지 못한다
+# 2. 인스톨러를 만들지 않는다. **압축 파일 하나만** 낸다 - 설치된 정식 버전을
+#    건드릴 일이 아예 없다(풀어서 실행하고, 지우면 끝)
+# 3. 앱이 스스로 베타인 걸 알고 자동 업데이트를 하지 않는다(version.IS_BETA)
+name: Release beta (test build)
+
+on:
+  push:
+    tags:
+      - 'v*-beta*'
+
+permissions:
+  contents: write
+
+jobs:
+  beta:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build GUI (beta)
+        shell: pwsh
+        run: |
+          $data = @("icon.ico", "icon.png", "CHANGELOG.md")
+          foreach ($name in @("battlecruiser.png", "mineral.png", "gas.png")) {
+            if (Test-Path $name) { $data += $name } else { Write-Host "skip (없음): $name" }
+          }
+          $dataArgs = @()
+          foreach ($name in $data) { $dataArgs += @("--add-data", "$name;.") }
+          # 이름을 다르게 둔다 - 정식 exe와 한 폴더에 섞여도 헷갈리지 않게
+          pyinstaller --noconfirm --clean --onedir --windowed --icon=icon.ico @dataArgs --name FriendChat_GUI_Beta gui_client.py
+
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path "dist/FriendChat_GUI_Beta/*" -DestinationPath "dist/FriendChat_GUI_Beta.zip" -Force
+
+      - name: Create prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $notes = @"
+          **테스트 버전입니다.** 정식 버전과 따로 돌아가며, 자동 업데이트로는 내려가지 않습니다.
+
+          사용법
+          1. 아래 ``FriendChat_GUI_Beta.zip``을 받아 아무 폴더에나 풉니다(설치 아님)
+          2. ``FriendChat_GUI_Beta.exe`` 실행 - 제목에 **(베타)**가 붙어 있습니다
+          3. 정식 버전과 **동시에 켜둘 수 있습니다.** 설정/기록도 서로 섞이지 않습니다
+          4. 그만 쓰려면 폴더째 지우면 됩니다
+
+          문제가 있으면 폴더 안 ``friendchat_error.log``와 함께 알려주세요.
+          "@
+          gh release create "${{ github.ref_name }}" "dist/FriendChat_GUI_Beta.zip" `
+            --title "${{ github.ref_name }} (테스트 버전)" --prerelease --notes "$notes"

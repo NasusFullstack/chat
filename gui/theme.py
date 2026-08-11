@@ -5,6 +5,8 @@
 """
 import sys
 
+from version import IS_BETA
+
 IS_WINDOWS = sys.platform == "win32"
 
 # 사이드바 아래에 두는 만든이 표시
@@ -83,7 +85,9 @@ AVATAR_MAX_B64_CHARS = 2000
 # store.py의 NICKNAME_MAX_LEN과 값을 맞춰야 함
 NICKNAME_MAX_LEN = 20
 
-APP_TITLE = "춥채팅"
+_BASE_TITLE = "춥채팅"
+# 테스트 버전은 제목부터 다르게 - 두 개를 같이 켜두면 어느 창이 어느 것인지 알아야 한다
+APP_TITLE = f"{_BASE_TITLE} (베타)" if IS_BETA else _BASE_TITLE
 
 # 스타일시트 본문은 영역별로 gui/styles/ 아래에 나눠져 있다(합친 결과는 예전과 동일).
 # 여기서는 크기/색 상수와 "합치는 일"만 담당한다

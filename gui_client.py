@@ -53,6 +53,8 @@ import error_log
 import history_store
 import avatar_store
 import login_prefs
+from single_instance import SingleInstance
+from updater import POST_UPDATE_FLAG
 from version import APP_VERSION
 
 from gui.theme import (

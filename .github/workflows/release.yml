@@ -3,7 +3,10 @@ name: Release GUI exe
 on:
   push:
     tags:
+      # 정식 배포. 베타 태그(v2.2.0-beta.1 등)는 여기서 걸리면 안 된다 - 그러면 테스트
+      # 버전이 정식 릴리즈로 나가서 모든 사용자에게 자동 업데이트로 내려간다
       - 'v*'
+      - '!v*-beta*'
 
 permissions:
   contents: write
