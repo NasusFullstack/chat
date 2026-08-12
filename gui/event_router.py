@@ -79,6 +79,11 @@ def _channel_joined(view, event):
         return
     view.chat_page.append_system(event.channel, event.text)
     view.chat_page.load_history(event.channel, event.history)
+    # 업데이트 직후라면 무엇이 바뀌었는지 한 줄 남긴다(창을 닫아도 여기 남아 있게).
+    # 나에게만 보이는 안내라 채널 사람들에게는 안 간다
+    update_note = view.take_update_note()
+    if update_note:
+        view.chat_page.append_system(event.channel, update_note)
 
 
 def _channel_join_failed(view, event):

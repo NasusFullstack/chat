@@ -193,6 +193,14 @@ class SettingsDialog(QDialog):
         column.addWidget(_info_row("GitHub", _link(GITHUB_URL, f"@{DEVELOPER_GITHUB}",
                                                    link_color), link=True))
 
+        # 변경 내역은 업데이트 직후 한 번 자동으로 뜨지만, 그때 닫았거나 나중에 다시
+        # 보고 싶을 수 있다. 여기서 언제든 다시 열 수 있게 한다
+        notes_button = QPushButton("이 버전 변경 내역 보기")
+        notes_button.setObjectName("secondary")
+        notes_button.clicked.connect(self._open_changelog)
+        column.addSpacing(8)
+        column.addWidget(notes_button)
+
         column.addStretch(1)
         copyright_label = QLabel(
             f"Copyright © {COPYRIGHT_YEAR} {DEVELOPER_NAME}. All rights reserved.")
@@ -200,6 +208,11 @@ class SettingsDialog(QDialog):
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         column.addWidget(copyright_label)
         return tab
+
+    def _open_changelog(self):
+        from gui import changelog_dialog
+
+        changelog_dialog.open_now(self)
 
     # ---------------- 계층 흐리기 ----------------
 

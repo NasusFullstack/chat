@@ -149,6 +149,8 @@ class MainWindow(QMainWindow):
         # 이게 없으면 끝까지 답 안 하는 사람이 한 명만 있어도, 누가 들락거릴 때마다
         # 채널에 계속 요청이 나간다(응답을 꺼둔 사람에게 영원히 묻는 셈)
         self._asked_in_channel: dict[str, set] = {}
+        # 업데이트 직후 채팅창에 한 줄 남길 안내(채널에 들어갈 때 소비된다)
+        self._pending_update_note = ""
         # 접속 실패 원인 진단용. 서버마다 한 번만 확인하고 결과를 기억한다
         self._probe = None
         self._web_reachable: dict[str, bool] = {}
@@ -388,9 +390,21 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(100, self._maybe_auto_login)
 
     def _show_changelog_once(self):
+        """업데이트 뒤 처음 켰으면 변경 내역 창을 띄우고, 채팅에도 한 줄 남길 준비를 한다.
+
+        창만 띄우면 닫는 순간 사라져서 "뭐가 바뀐 거였지?" 할 때 볼 곳이 없다.
+        그래서 채널에 들어갈 때 대화창에도 한 줄 남긴다(나에게만 보이는 안내다).
+        """
         from gui import changelog_dialog
 
-        changelog_dialog.show_if_updated(self)
+        notes = changelog_dialog.load_notes()
+        if changelog_dialog.show_if_updated(self) and notes:
+            self._pending_update_note = changelog_dialog.summary_line(notes)
+
+    def take_update_note(self) -> str:
+        """채널에 들어갈 때 한 번만 쓰고 비운다."""
+        note, self._pending_update_note = self._pending_update_note, ""
+        return note
 
     # ---------------- 끊김 감지와 자동 재접속 ----------------
 
