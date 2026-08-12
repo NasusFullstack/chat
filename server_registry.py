@@ -6,11 +6,11 @@ import json
 import os
 import sys
 
+import app_paths
+
 
 def _app_dir() -> str:
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return app_paths.data_dir()
 
 
 SERVERS_FILE = os.path.join(_app_dir(), "servers.json")

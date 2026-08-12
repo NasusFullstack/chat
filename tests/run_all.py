@@ -7,6 +7,8 @@
     python tests/run_all.py wrap link  이름에 그 단어가 든 것만 실행
 """
 import os
+import shutil
+import tempfile
 import subprocess
 import sys
 import time
@@ -21,6 +23,10 @@ DAEMONS = {"test_irc_daemon.py", "test_irc_ssl_daemon.py"}
 PLAIN_PORT, SSL_PORT, IRC_PORT = "17667", "17697", "16700"
 # 실행하면서 쌓이는 로컬 상태 - 테스트 사이에 지워야 "이미 존재하는 아이디"로 어긋나지 않음
 STALE = ("server_data.json", "history.json")
+# 앱 설정/기록은 테스트 전용 폴더에 쓰게 한다(app_paths.CHUPCHAT_DATA_DIR).
+# 예전에는 저장소 폴더의 진짜 설정 파일을 함께 써서, 앞 테스트가 남긴 로그인 정보를
+# 뒤 테스트가 물려받아 "기본 서버 주소가 다르다"로 엉뚱하게 실패했다
+DATA_DIR = os.path.join(tempfile.gettempdir(), "chupchat_test_data")
 TIMEOUT_SEC = 200
 
 
@@ -32,6 +38,8 @@ def clean_state():
                 os.remove(path)
             except OSError:
                 pass
+    shutil.rmtree(DATA_DIR, ignore_errors=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
 
 
 def start_servers():
@@ -60,7 +68,8 @@ def main():
         return 0
 
     servers = start_servers()
-    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8")
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8",
+               CHUPCHAT_DATA_DIR=DATA_DIR)
     failures = []
     try:
         for name in names:
@@ -75,8 +84,13 @@ def main():
                 proc = subprocess.run([PY, os.path.join(HERE, name)], cwd=REPO,
                                       env=env, capture_output=True, timeout=TIMEOUT_SEC)
                 code = proc.returncode
-                tail = (proc.stdout + proc.stderr).decode("utf-8", "replace")
-                tail = tail.strip().splitlines()[-5:]
+                output = (proc.stdout + proc.stderr).decode("utf-8", "replace")
+                # 끝에 sys.exit을 안 붙인 테스트가 절반이나 된다. 그런 테스트는 검사가
+                # 깨져도 종료 코드가 0이라 러너가 '통과'로 세어버린다(실제로 그렇게
+                # 세고 있었다). 출력에 찍힌 실패 표시도 실패로 친다
+                if code == 0 and ("[FAIL]" in output or "통과: False" in output):
+                    code = "FAIL"
+                tail = output.strip().splitlines()[-5:]
             except subprocess.TimeoutExpired:
                 code, tail = "TIMEOUT", []
             print(f"{name:38s} {code}  ({round(time.time() - started, 1)}s)", flush=True)

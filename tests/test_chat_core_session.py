@@ -50,7 +50,11 @@ s, sent, evs = make()
 s.login("alice", "pw")
 checks.append(("login()이 올바른 cmd 전송", sent[-1] == {"cmd": "login", "id": "alice", "pw": "pw"}))
 s.handle_incoming({"type": "auth_result", "ok": True})
-checks.append(("로그인 성공 -> LoggedIn", isinstance(evs[-1], events.LoggedIn) and evs[-1].user_id == "alice"))
+# 로그인 직후에는 "내가 춥채팅을 쓴다"는 표시(ClientVersionUpdated)가 뒤따라 나온다.
+# 그래서 마지막 이벤트만 보면 안 되고, LoggedIn이 났는지를 봐야 한다
+logged_in = [e for e in evs if isinstance(e, events.LoggedIn)]
+checks.append(("로그인 성공 -> LoggedIn",
+               len(logged_in) == 1 and logged_in[0].user_id == "alice"))
 
 s2, _, evs2 = make()
 s2.register("bob", "pw")

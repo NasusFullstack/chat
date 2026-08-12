@@ -15,6 +15,8 @@ import os
 import sys
 import time
 
+import app_paths
+
 REMEMBER_DAYS = 7
 REMEMBER_SEC = REMEMBER_DAYS * 24 * 60 * 60
 # 서버 하나에서 기억할 사람 수 상한(파일이 끝없이 불어나지 않게)
@@ -22,9 +24,7 @@ MAX_PER_HOST = 500
 
 
 def _app_dir() -> str:
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return app_paths.data_dir()
 
 
 STORE_FILE = os.path.join(_app_dir(), "client_versions.json")

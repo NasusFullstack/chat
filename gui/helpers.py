@@ -8,6 +8,8 @@ import os
 import re
 import sys
 
+import app_paths
+
 from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
@@ -17,12 +19,11 @@ _MENTION_TOKEN_RE = re.compile(r"@([^\s@]+)")
 
 
 def _app_dir() -> str:
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    # 이 파일은 gui/helpers.py라 저장소 루트(gui_client.py가 있는 곳)보다 한 단계 아래에
-    # 있음 - 원래 gui_client.py에 있을 때는 os.path.dirname(os.path.abspath(__file__))
-    # 한 번이면 됐지만, 여기서는 한 번 더 올라가야 저장소 루트가 나옴
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    """아이콘·인증서를 찾는 자리(설치 폴더 / 소스 실행 시 저장소 루트).
+
+    설정과 기록을 두는 데이터 폴더와는 다르다 - app_paths.asset_dir() 설명 참고
+    """
+    return app_paths.asset_dir()
 
 
 def _find_default_cert() -> str:

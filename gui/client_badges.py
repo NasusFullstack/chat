@@ -18,6 +18,8 @@ import os
 import re
 import sys
 
+import app_paths
+
 from PySide6.QtCore import QBuffer, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
 
@@ -234,9 +236,7 @@ def _initial(version: str) -> str:
 
 
 def _app_dir() -> str:
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return app_paths.data_dir()
 
 
 LOGO_STORE_FILE = os.path.join(_app_dir(), "client_logos.json")

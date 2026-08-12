@@ -25,20 +25,33 @@ view.append_message("bob", "매우 긴 텍스트를 넣어서 줄바꿈이 필�
 w = view._layout.itemAt(0).widget()
 checks.append(("processEvents 없이도(레이아웃이 아직 안 도는 상황) maximumWidth가 즉시 설정됨",
                w._text_label.maximumWidth() < 10000))
-expected = max(40, view.viewport().width() - g.AVATAR_MSG_PX - 24)
-checks.append(("maximumWidth가 뷰포트 폭 기준으로 정확히 계산됨", w._text_label.maximumWidth() == expected))
+# 빼야 할 폭을 상수로 어림잡던 검사였는데(-24), 그 어림값이 실제 여백과 안 맞아
+# 좁은 창에서 그림이 삐져나가는 문제가 있었다. 지금 코드는 실제 레이아웃 값에서
+# 계산한다. 그래서 여기서도 공식을 베끼지 않고 **결과**를 본다:
+# 아이콘+여백까지 합쳐 뷰포트 안에 들어오면 된다(가로 스크롤이 안 생기는 조건)
+row = w.layout()
+margins = row.contentsMargins()
+overhead = g.AVATAR_MSG_PX + margins.left() + margins.right() + row.spacing()
+used = w._text_label.maximumWidth() + overhead
+checks.append((f"글자 폭 + 아이콘 + 여백이 뷰포트 안에 들어옴({used} <= {view.viewport().width()})",
+               used <= view.viewport().width()))
+checks.append(("쓸 수 있는 폭을 지나치게 버리지 않음(뷰포트의 90% 이상 사용)",
+               used >= view.viewport().width() * 0.9))
 
 app.processEvents()
 app.processEvents()
 checks.append(("실제 렌더링 후에도 뷰포트 폭을 넘지 않음", w.width() <= view.viewport().width() + 2))
 
 # ---- 창 크기를 바꾸면 기존 메시지들의 wrap 너비도 갱신되는지 ----
+before_width = w._text_label.maximumWidth()
 view.resize(600, 400)
 app.processEvents()
 app.processEvents()
-new_expected = max(40, view.viewport().width() - g.AVATAR_MSG_PX - 24)
-checks.append(("리사이즈하면 기존 메시지의 maximumWidth도 새 뷰포트에 맞게 갱신됨",
-               w._text_label.maximumWidth() == new_expected))
+# 창을 넓힌 만큼 글자 폭도 같이 넓어져야 한다(예전 폭에 굳으면 오른쪽이 텅 빈다)
+grown = w._text_label.maximumWidth() - before_width
+checks.append((f"창을 넓힌 만큼 글자 폭도 넓어짐(+{grown}px)", grown > 250))
+checks.append(("넓힌 뒤에도 뷰포트를 넘지 않음",
+               w._text_label.maximumWidth() + overhead <= view.viewport().width()))
 
 # ---- '내가 보낸' 메시지와 '남이 보낸' 메시지 둘 다 동일하게 wrap 너비가 설정되는지 ----
 view2 = g.ChannelLogView("#test2")

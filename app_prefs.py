@@ -8,6 +8,8 @@ import json
 import os
 import sys
 
+import app_paths
+
 DEFAULTS = {
     # 창이 안 보이거나 다른 창을 쓰는 중일 때 새 메시지를 오른쪽 아래에 띄울지
     "notifications": True,
@@ -34,9 +36,7 @@ DEFAULTS = {
 
 
 def _app_dir() -> str:
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return app_paths.data_dir()
 
 
 PREFS_FILE = os.path.join(_app_dir(), "app_prefs.json")
