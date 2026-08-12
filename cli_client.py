@@ -18,6 +18,8 @@ import os
 import ssl
 import sys
 
+import app_paths
+
 import irc_protocol
 import server_registry
 from chat_core import commands, events
@@ -27,9 +29,11 @@ CONNECT_TIMEOUT_SEC = 10
 
 
 def _app_dir() -> str:
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    """아이콘·인증서를 찾는 자리(설치 폴더 / 소스 실행 시 저장소 루트).
+
+    설정과 기록을 두는 데이터 폴더와는 다르다 - app_paths.asset_dir() 설명 참고
+    """
+    return app_paths.asset_dir()
 
 
 def _auto_cert() -> str:

@@ -36,13 +36,14 @@ chat_page = g.ChatPage(
 chat_page.show()
 chat_page.add_channel("#a")
 chat_page.add_channel("#b", activate=False)
-idx_b = chat_page.tabs.indexOf(chat_page._log_views["#b"])
-
+# 안읽음 표시는 탭 글자색이 아니라 **채널 줄 전체를 옅은 노랑으로 덧칠**하는 방식이다
+# (QSS가 색을 정한 자리는 코드로 못 바꾼다 - CLAUDE.md 4번). 그래서 진하기를 본다
+sidebar = chat_page.channel_sidebar
 samples = []
 
 
 def sample():
-    samples.append(chat_page.tabs.tabBar().tabTextColor(idx_b).name() == g.UNREAD_BLINK_COLOR)
+    samples.append(sidebar.unread_alpha("#b"))
 
 
 chat_page.append_message("#b", "other", "ping", False, 0)
@@ -51,21 +52,28 @@ loop = QEventLoop()
 timer = QTimer()
 timer.timeout.connect(sample)
 timer.start(20)
-# 4번 깜빡이는데 필요한 시간(350ms * (2*4-1) = 2450ms)보다 넉넉하게 대기
+# 4번 깜빡이는 데 필요한 시간(350ms * (2*4-1) = 2450ms)보다 넉넉하게 대기
 QTimer.singleShot(3200, loop.quit)
 loop.exec()
 timer.stop()
 
-on_count = sum(1 for s in samples if s)
-transitions_on_to_off = sum(1 for i in range(1, len(samples)) if samples[i - 1] and not samples[i])
-checks.append(("정확히 4번 깜빡인 뒤(off로 안 바뀌고) 멈춤 - on->off 전환이 3번만 있음", transitions_on_to_off == g.UNREAD_BLINK_COUNT - 1))
-checks.append(("타이머가 멈추고 밝은 색 상태로 유지됨(탭 사전에 없음)", "#b" not in chat_page._unread_timers))
-checks.append(("깜빡임이 끝난 뒤에도 탭 글자색은 계속 밝은 색", samples[-1] is True))
+from gui.theme import (UNREAD_TINT_ALPHA_IDLE, UNREAD_TINT_ALPHA_OFF,
+                       UNREAD_TINT_ALPHA_ON)
 
-# 탭을 실제로 보면 그제서야 기본 색으로 돌아옴
+bright = UNREAD_TINT_ALPHA_ON
+dim = UNREAD_TINT_ALPHA_OFF
+on_to_off = sum(1 for i in range(1, len(samples))
+                if samples[i - 1] == bright and samples[i] == dim)
+checks.append((f"정해진 횟수만큼 깜빡임(밝음->흐림 {on_to_off}번)",
+               on_to_off == g.UNREAD_BLINK_COUNT - 1))
+checks.append(("깜빡임이 끝나면 타이머가 정리됨", not sidebar.is_blinking("#b")))
+checks.append((f"멈춘 뒤에도 노란색이 남아 있음(진하기 {samples[-1]})",
+               samples[-1] == UNREAD_TINT_ALPHA_IDLE))
+
+# 그 채널을 실제로 봐야 노란색이 사라진다
 chat_page.set_active_channel("#b")
 app.processEvents()
-checks.append(("탭을 보면 그제서야 기본 색으로 돌아옴", chat_page.tabs.tabBar().tabTextColor(idx_b).name() != g.UNREAD_BLINK_COLOR))
+checks.append(("채널을 보면 노란색이 사라짐", sidebar.unread_alpha("#b") == 0))
 
 print("\n=== 검증 결과 (로그인 기본값 + 안읽음 4번 깜빡임 후 유지) ===")
 all_ok = True

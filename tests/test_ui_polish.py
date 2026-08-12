@@ -42,22 +42,24 @@ checks.append(("우클릭으로 나갈 수 있다고 안내함",
 checks.append(("채널 목록에 가로 스크롤이 없음",
                chat_page.channel_sidebar.list.horizontalScrollBar().maximum() == 0))
 
-# ---- 안읽음: 탭 아이콘이 빠르게(반복적으로) 깜빡임 (글자색은 QTabBar::tab { color: ... }
-# 스타일시트가 항상 이겨서 setTabTextColor()로는 절대 안 바뀌길래 아이콘 방식으로 바꿈) ----
+# ---- 안읽음: 채널 줄을 옅은 노랑으로 깜빡임 ----
+# 글자색은 QSS(QTabBar::tab { color: ... })가 항상 이겨서 setTabTextColor()로 못 바꾼다.
+# 노란 점 아이콘도 쓰다가 없앴다(요청). 지금은 채널 줄 전체를 덧칠하는 방식이다
 chat_page.add_channel("#a")
 chat_page.add_channel("#b", activate=False)  # #a가 활성 상태 유지
-idx_b = chat_page.tabs.indexOf(chat_page._log_views["#b"])
 
-color_states = []
+from gui.theme import UNREAD_TINT_ALPHA_OFF, UNREAD_TINT_ALPHA_ON  # noqa: E402
+
+alphas = []
 
 
 def sample():
-    color_states.append(not chat_page.tabs.tabBar().tabIcon(idx_b).isNull())
+    alphas.append(chat_page.channel_sidebar.unread_alpha("#b"))
 
 
 chat_page.append_message("#b", "other", "ping", False, 0)  # #a가 활성이므로 #b는 비활성 채널
 
-# 0~1400ms 동안 40ms 간격으로 샘플링해서 계속 반복되는 on/off 패턴을 관찰
+# 0~1400ms 동안 40ms 간격으로 재서 켜짐/꺼짐이 실제로 반복되는지 관찰
 loop = QEventLoop()
 samples_timer = QTimer()
 samples_timer.timeout.connect(sample)
@@ -66,20 +68,22 @@ QTimer.singleShot(1400, loop.quit)
 loop.exec()
 samples_timer.stop()
 
-# on->off 전환 횟수를 세서 "두 번만 깜빡이고 멈추는 게 아니라 계속 반복"되는지 확인
 transitions_on_to_off = sum(
-    1 for i in range(1, len(color_states)) if color_states[i - 1] and not color_states[i]
+    1 for i in range(1, len(alphas))
+    if alphas[i - 1] == UNREAD_TINT_ALPHA_ON and alphas[i] == UNREAD_TINT_ALPHA_OFF
 )
-checks.append(("탭을 안 보는 동안 계속 반복해서 깜빡임(멈추지 않음)", transitions_on_to_off >= 2))
+checks.append((f"안 보는 동안 실제로 깜빡임(밝음->흐림 {transitions_on_to_off}번)",
+               transitions_on_to_off >= 2))
 
-# 탭으로 전환하면 즉시 깜빡임이 멈추고 원래 색으로 돌아옴
+# 채널을 실제로 보면 즉시 멈추고 노란색도 사라짐
 chat_page.set_active_channel("#b")
 app.processEvents()
-checks.append(("탭으로 전환하면 깜빡임이 멈추고 아이콘이 사라짐",
-               chat_page.tabs.tabBar().tabIcon(idx_b).isNull()))
-checks.append(("전환 후 깜빡임 타이머도 완전히 정리됨", "#b" not in chat_page._unread_timers))
+checks.append(("채널로 전환하면 노란색이 사라짐",
+               chat_page.channel_sidebar.unread_alpha("#b") == 0))
+checks.append(("전환 후 깜빡임 타이머도 완전히 정리됨",
+               not chat_page.channel_sidebar.is_blinking("#b")))
 
-print("color_states 샘플:", color_states)
+print("덧칠 진하기 샘플:", alphas)
 
 print("\n=== 검증 결과 ===")
 all_ok = True

@@ -15,6 +15,8 @@ import json
 import os
 import sys
 
+import app_paths
+
 import link_meta
 
 MAX_EMOJIS = 300          # 이 이상은 받지 않음(고르는 창이 감당 못 할 정도로 늘지 않게)
@@ -23,9 +25,7 @@ MAX_NAME_LEN = 20
 
 
 def _app_dir() -> str:
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return app_paths.data_dir()
 
 
 EMOJI_STORE_FILE = os.path.join(_app_dir(), "emojis.json")

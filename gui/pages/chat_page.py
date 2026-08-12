@@ -61,7 +61,6 @@ class ChatPage(QWidget):
         self._log_views: dict[str, ChannelLogView] = {}
         self._active_channel = ""
         self._protocol_mode = "custom"
-        self._unread_timers: dict[str, QTimer] = {}
         self._unread_blink_on: dict[str, bool] = {}
         self._unread_blink_step: dict[str, int] = {}
         self._mention_notice_timer: QTimer | None = None

@@ -11,7 +11,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, _REPO)
 
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtNetwork import QSslSocket
 import gui_client as g
 
@@ -19,17 +19,15 @@ PORT = "16700"
 checks = []
 
 
+# 중첩 이벤트 루프는 QEventLoop으로 돌린다. app.quit()을 쓰면 Qt가 **열려 있는 창을
+# 전부 닫아버린다**(closeEvent 발생). 그러면 앱은 그것을 종료로 보고 서버에 QUIT을 보낸
+# 뒤 접속을 끊기 때문에, 이후 검사가 전부 "이미 끊긴 연결"에서 돌아간다.
+# 실측으로 확인했다 - 서버 기록에 `QUIT :종료`가 찍혀 있었고, 닉네임 변경 검사가
+# 통째로 실패하고 있었다
 def pump(seconds):
-    app = QApplication.instance()
-    state = {"start": time.monotonic()}
-    def poll():
-        if time.monotonic() - state["start"] > seconds:
-            app.quit()
-    timer = QTimer()
-    timer.timeout.connect(poll)
-    timer.start(100)
-    app.exec()
-    timer.stop()
+    loop = QEventLoop()
+    QTimer.singleShot(int(seconds * 1000), loop.quit)
+    loop.exec()
 
 
 def run_irc_client(nick, channel):
@@ -48,6 +46,8 @@ def run_irc_client(nick, channel):
 
     state = {"phase": "login", "start": time.monotonic()}
 
+    loop = QEventLoop()
+
     def poll():
         elapsed = time.monotonic() - state["start"]
         if state["phase"] == "login" and window.stack.currentWidget() is window.channel_page:
@@ -58,16 +58,17 @@ def run_irc_client(nick, channel):
             return
         if state["phase"] == "join" and window.stack.currentWidget() is window.chat_page:
             state["phase"] = "done"
-            app.quit()
+            loop.quit()
             return
         if elapsed > 12:
             state["phase"] = "timeout"
-            app.quit()
+            loop.quit()
 
     timer = QTimer()
     timer.timeout.connect(poll)
     timer.start(150)
-    app.exec()
+    loop.exec()
+    timer.stop()
     return window, state["phase"]
 
 

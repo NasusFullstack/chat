@@ -32,7 +32,10 @@ checks = []
 # ---- 탭 생성/개수/활성 채널 ----
 chat_page.add_channel("#a")
 chat_page.add_channel("#b")
-checks.append(("탭 2개 + '+' 탭 1개 = 3개 생성됨", chat_page.tabs.count() == 3))
+# 채널 추가는 왼쪽 채널 목록의 '+'로 옮겼고 탭바 자체는 숨겼다. 그래서 탭은
+# 채널 수만큼만 있고 '+' 탭은 없다(예전에는 탭 하나를 '+'로 썼다)
+checks.append(("채널 수만큼 대화 화면이 생김", chat_page.tabs.count() == 2))
+checks.append(("채널 목록에도 두 줄이 생김", chat_page.channel_sidebar.list.count() == 2))
 checks.append(("활성 채널이 마지막에 추가한 #b", chat_page.active_channel() == "#b"))
 checks.append(("탭 라벨이 채널명과 일치", chat_page.tabs.tabText(0) == "#a" and chat_page.tabs.tabText(1) == "#b"))
 
@@ -42,10 +45,11 @@ g.themed_question = lambda *a, **k: True
 chat_page._request_close_channel("#a")
 g.themed_question = orig_question
 checks.append(("탭 닫기 확인 시 on_leave_channel 콜백만 호출됨", events["leave"] == ["#a"]))
-checks.append(("콜백만 오고 탭은 아직 안 지워짐(서버 ack 대기)", chat_page.tabs.count() == 3))
+checks.append(("콜백만 오고 아직 안 지워짐(서버 응답 대기)", chat_page.tabs.count() == 2))
 
 chat_page.remove_channel("#a")
-checks.append(("remove_channel 직접 호출 시 실제로 탭 제거됨", chat_page.tabs.count() == 2))
+checks.append(("remove_channel 직접 호출 시 실제로 제거됨",
+               chat_page.tabs.count() == 1 and chat_page.channel_sidebar.list.count() == 1))
 checks.append(("남은 활성 채널은 #b", chat_page.active_channel() == "#b"))
 
 # ---- 안읽음 표시 ----
@@ -53,22 +57,20 @@ chat_page.add_channel("#c", activate=False)  # #b가 계속 활성 상태
 checks.append(("새 채널 추가해도 activate=False면 활성 채널 안 바뀜", chat_page.active_channel() == "#b"))
 
 chat_page.append_message("#c", "other", "hello", False, 0)
-idx_c = chat_page.tabs.indexOf(chat_page._log_views["#c"])
-checks.append(("비활성 채널에 메시지 오면 안읽음 깜빡임 타이머가 등록됨", "#c" in chat_page._unread_timers))
+# 안읽음은 탭의 점 아이콘이 아니라 **왼쪽 채널 줄을 옅은 노랑으로 덧칠**하는 방식이다
+# (노란 점은 요청으로 없앴고, 글자색은 QSS가 항상 이겨서 코드로 못 바꾼다)
+sidebar = chat_page.channel_sidebar
+checks.append(("비활성 채널에 메시지 오면 안읽음 깜빡임이 시작됨", sidebar.is_blinking("#c")))
+checks.append(("그 채널 줄이 실제로 노랗게 칠해짐", sidebar.unread_alpha("#c") > 0))
 
-idx_b = chat_page.tabs.indexOf(chat_page._log_views["#b"])
 chat_page.append_message("#b", "other", "hi active", False, 0)
-checks.append(("활성 채널(#b)에 메시지 와도 깜빡임 타이머 안 생김", "#b" not in chat_page._unread_timers))
-
-checks.append(("비활성 채널 메시지 도착 시 탭에 점 아이콘이 붙음(글자색은 QSS가 항상 이겨서 씀 안 됨)",
-               not chat_page.tabs.tabBar().tabIcon(idx_c).isNull()))
+checks.append(("보고 있는 채널(#b)에는 안읽음 표시가 안 생김",
+               not sidebar.is_blinking("#b") and sidebar.unread_alpha("#b") == 0))
 
 chat_page.set_active_channel("#c")
 app.processEvents()
-checks.append(("#c로 전환하면 안읽음 깜빡임이 정리됨", "#c" not in chat_page._unread_timers))
-checks.append(("정리 후 탭 점 아이콘이 사라짐", chat_page.tabs.tabBar().tabIcon(idx_c).isNull()))
-
-# ---- 말풍선 시간 배지: 고정 7px, 높이 14px ----
+checks.append(("#c로 전환하면 깜빡임이 정리됨", not sidebar.is_blinking("#c")))
+checks.append(("전환 후 노란색도 사라짐", sidebar.unread_alpha("#c") == 0))
 chat_page.append_message("#c", "alice", "badge test message", False, 1700000000.0)
 app.processEvents()
 view = chat_page._log_views["#c"]

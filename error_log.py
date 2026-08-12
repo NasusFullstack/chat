@@ -19,6 +19,8 @@
 import datetime
 import os
 import sys
+
+import app_paths
 import tempfile
 import threading
 import traceback
@@ -30,9 +32,7 @@ _lock = threading.Lock()
 
 def _app_dir() -> str:
     """앱 데이터가 모여 있는 폴더(설치 폴더 / 소스 실행 시 저장소 루트)."""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+    return app_paths.data_dir()
 
 
 def error_log_path() -> str:
