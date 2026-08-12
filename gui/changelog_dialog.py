@@ -177,6 +177,21 @@ class ChangelogDialog(QDialog):
         self.setMaximumHeight(DIALOG_MAX_HEIGHT)
 
 
+def summary_line(notes: str, version: str = APP_VERSION) -> str:
+    """채팅창에 한 줄로 남길 요약.
+
+    창은 닫으면 사라지므로, 대화 기록에도 한 줄 남겨둔다. 창을 못 보고 지나쳤거나
+    나중에 "뭐가 바뀐 거였지?" 할 때 그 자리에 남아 있는 게 낫다.
+    """
+    items = [line.strip("- ").strip() for line in notes.splitlines()
+             if line.strip().startswith("- ")]
+    if not items:
+        return f"v{version}(으)로 업데이트되었습니다."
+    shown = " / ".join(item.replace("**", "") for item in items[:3])
+    more = f" 외 {len(items) - 3}가지" if len(items) > 3 else ""
+    return f"v{version} 업데이트: {shown}{more}"
+
+
 def show_if_updated(parent=None) -> bool:
     """업데이트 뒤 처음 켠 것이면 내역을 보여준다. 보여줬으면 True.
 
@@ -190,3 +205,9 @@ def show_if_updated(parent=None) -> bool:
         return False
     ChangelogDialog(notes, parent).exec()
     return True
+
+
+def open_now(parent=None):
+    """지금 버전의 변경 내역을 언제든 다시 열어본다(환경설정 > 정보)."""
+    notes = load_notes() or "이 버전의 변경 내역을 찾지 못했습니다."
+    ChangelogDialog(notes, parent).exec()

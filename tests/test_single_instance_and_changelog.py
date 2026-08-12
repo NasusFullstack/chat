@@ -107,6 +107,43 @@ for _ in range(20):          # 시간이 지나도 그대로 떠 있어야 한�
 check("시간이 지나도 그대로 떠 있다", dialog.isVisible())
 dialog.close()
 
+# ---------- 5) 언제든 다시 열 수 있는가 ----------
+# 창은 업데이트 직후 한 번만 뜬다. 그때 무심코 닫았거나 나중에 다시 보고 싶을 때
+# 열 방법이 없으면 "만들었지만 볼 수 없는 기능"이 된다
+check("환경설정 정보 탭에서 다시 열 수 있다", hasattr(changelog_dialog, "open_now"))
+
+from gui.settings_dialog import SettingsDialog  # noqa: E402
+from PySide6.QtWidgets import QPushButton  # noqa: E402
+
+settings = SettingsDialog()
+buttons = [b.text() for b in settings.findChildren(QPushButton)]
+check(f"정보 탭에 변경 내역 버튼이 있다({buttons})",
+      any("변경 내역" in text for text in buttons), buttons)
+check("그 버튼이 창을 여는 함수에 연결돼 있다", hasattr(settings, "_open_changelog"))
+settings.close()
+
+# ---------- 6) 채팅창에도 남는가 ----------
+# 창을 닫으면 사라지므로, 대화 기록에도 한 줄 남겨 나중에 찾아볼 수 있게 한다
+notes_sample = """- 첫째 고침
+- 둘째 고침
+- 셋째 고침
+- 넷째 고침"""
+line = changelog_dialog.summary_line(notes_sample, "9.9.9")
+check(f"바뀐 내용을 한 줄로 요약한다({line})",
+      "9.9.9" in line and "첫째 고침" in line, line)
+check("너무 길어지지 않게 나머지는 개수로 줄인다", "외 1가지" in line, line)
+check("내역이 없어도 최소한 버전은 알려준다",
+      "9.9.9" in changelog_dialog.summary_line("", "9.9.9"))
+
+# 실제 경로(채널 입장)에서 그 한 줄이 나가는지 - 함수만 있고 안 불리면 소용없다
+import io as _io  # noqa: E402
+
+router_src = _io.open(_os.path.join(_REPO, "gui/event_router.py"), encoding="utf-8").read()
+check("채널에 들어갈 때 그 한 줄을 남긴다", "take_update_note" in router_src)
+main_src = _io.open(_os.path.join(_REPO, "gui/main_window.py"), encoding="utf-8").read()
+check("한 번 쓰고 비운다(채널마다 반복되면 안 됨)",
+      "self._pending_update_note = \"\"" in main_src)
+
 print("=== 검증 결과 (중복 실행 방지 / 변경 내역 창) ===")
 all_ok = True
 for name, ok, *detail in checks:
