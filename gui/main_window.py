@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 import app_prefs
+import error_log
 import avatar_store
 import client_version_store
 import irc_protocol
@@ -149,6 +150,13 @@ class MainWindow(QMainWindow):
         # 이게 없으면 끝까지 답 안 하는 사람이 한 명만 있어도, 누가 들락거릴 때마다
         # 채널에 계속 요청이 나간다(응답을 꺼둔 사람에게 영원히 묻는 셈)
         self._asked_in_channel: dict[str, set] = {}
+        # 화면이 멈추면 어디서 멈췄는지 기록에 남기는 감시 장치. 살아 있는 동안은
+        # 이 타이머가 계속 갱신해줘서 아무 것도 안 찍힌다
+        self._alive_timer = QTimer(self)
+        self._alive_timer.timeout.connect(error_log.arm_freeze_watchdog)
+        self._alive_timer.start(5000)
+        error_log.arm_freeze_watchdog()
+
         # 업데이트 직후 채팅창에 한 줄 남길 안내(채널에 들어갈 때 소비된다)
         self._pending_update_note = ""
         # 접속 실패 원인 진단용. 서버마다 한 번만 확인하고 결과를 기억한다
