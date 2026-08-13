@@ -13,6 +13,7 @@ sys.path.insert(0, _REPO)
 from PySide6.QtWidgets import QApplication, QLabel
 from PySide6.QtCore import QTimer
 import gui_client as g
+from gui.components.message_text import MessageText
 
 
 def pump(seconds):
@@ -29,10 +30,21 @@ def pump(seconds):
 
 
 def channel_texts(window, channel):
-    """새 위젯 기반 렌더링에서 해당 채널에 보이는 모든 메시지/시스템 텍스트를 합쳐서 반환"""
+    """그 채널에 보이는 모든 글자(메시지 + 시스템 안내)를 합쳐서 반환.
+
+    메시지 본문은 텍스트 엔진 위젯(MessageText)이 그리고, 시스템 안내만 라벨이다.
+    """
     view = window.chat_page._log_views.get(channel)
     if view is None:
         return ""
+    texts = []
+    for label in view.findChildren(QLabel):
+        if label.objectName() == "timestampBadge":
+            continue
+        texts.append(label.text())
+    for body in view.findChildren(MessageText):
+        texts.append(body.text())
+    return "\n".join(texts)
     texts = []
     for label in view.findChildren(QLabel):
         if label.objectName() == "timestampBadge":

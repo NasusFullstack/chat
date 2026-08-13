@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWi
 
 from chat_core.commands import KIND_ACTION, KIND_CHAT, KIND_NOTICE, split_emoji_parts
 from gui import irc_format
-from gui.soft_break import add_break_hints
+from gui.components.message_text import MessageText
 from gui.helpers import _format_ts, _linkify, extract_urls, text_is_only_urls
 from gui.theme import AVATAR_MSG_PX, TIMESTAMP_BADGE_HEIGHT_PX
 
@@ -77,25 +77,9 @@ class MessageWidget(QWidget):
         # 글자로 튀어나온다 - 실제로 서버 환영 인사가 그렇게 보였다
         safe_text = irc_format.to_html(safe_text)
         safe_text = _linkify(safe_text)
-        # 공백 없이 이어진 긴 글은 Qt가 아예 안 접는다(실측). 접을 자리를 만들어 준다 -
-        # 안 그러면 장문이 한 줄로 굳어 화면 밖으로 나가 통째로 안 보인다
-        safe_text = add_break_hints(safe_text)
-        text_label = QLabel(_message_html(sender, safe_text, mine, kind))
-        text_label.setObjectName("messageText")
-        text_label.setStyleSheet("QLabel#messageText { background: transparent; }")
-        text_label.setTextFormat(Qt.TextFormat.RichText)
-        text_label.setWordWrap(True)
-        # **heightForWidth를 켜둬야 한다.** setSizePolicy(...)로 정책을 새로 만들면 이
-        # 표시가 꺼진 채로 들어가서, 레이아웃이 "이 폭이면 높이가 얼마냐"를 라벨에게
-        # 아예 묻지 않는다. 그러면 긴 글의 높이가 sizeHint(한 줄 기준에 가까운 값)로
-        # 굳어 글 대부분이 잘려 안 보인다(실측: 답은 1280인데 실제로 준 높이는 223)
-        text_policy = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        text_policy.setHeightForWidth(True)
-        text_label.setSizePolicy(text_policy)
-        text_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
-        )
-        text_label.setOpenExternalLinks(True)
+        # 글자 배치와 높이는 텍스트 엔진이 정한다(gui/components/message_text.py).
+        # 우리가 추측하지 않으므로 "안 접힘 / 잘림 / 빈 공간"이 구조적으로 안 생긴다
+        text_label = MessageText(_message_html(sender, safe_text, mine, kind))
         text_label.setCursor(Qt.CursorShape.IBeamCursor)
         body.addWidget(text_label)
         self._text_label = text_label
@@ -150,12 +134,11 @@ class MessageWidget(QWidget):
         self.updateGeometry()
 
     def set_wrap_width(self, view_width: int):
-        """네트워크로 비동기로 도착한 메시지는 QScrollArea 레이아웃이 아직 완전히
-        안정되기 전에 위젯이 추가될 때가 있어, word-wrap 라벨의 자동 heightForWidth
-        계산이 화면 폭을 반영 못 하고 줄바꿈이 안 풀린 채로 굳어버리는 경우가 있었음
-        (내가 직접 보낸 메시지는 항상 창이 안정된 상태에서 추가돼서 이 문제가 안 드러남).
-        Qt의 자동 계산에 기대는 대신 뷰포트 폭을 직접 계산해서 넘겨주면 타이밍과
-        무관하게 항상 정확히 줄바꿈됨."""
+        """이 줄이 쓸 수 있는 폭을 알려준다. 글자는 이 폭에서 배치되고 높이가 정해진다.
+
+        폭을 직접 알려주는 이유: 네트워크로 뒤늦게 도착한 메시지는 화면 배치가 끝나기
+        전에 추가될 때가 있어서, 그때의 위젯 폭을 그대로 믿으면 줄바꿈이 안 풀린 채로
+        굳는다. 언제 도착하든 같은 결과가 나오게 항상 지금 화면 폭을 기준으로 정한다."""
         # 빼야 할 폭을 상수로 어림잡지 말고 실제 레이아웃 값에서 계산할 것.
         # 예전엔 24로 어림했는데 실제 여백/간격 합과 안 맞아서, 좁은 창에서 그림이
         # 10px쯤 삐져나가 가로 스크롤이 생기고 오른쪽이 잘려 보였음
@@ -164,7 +147,8 @@ class MessageWidget(QWidget):
         overhead = (AVATAR_MSG_PX + margins.left() + margins.right() + row.spacing()
                     + _WRAP_SAFETY_PX)
         inner_width = max(40, view_width - overhead)
-        self._text_label.setMaximumWidth(inner_width)
+        # 글자 폭이 정해지면 텍스트 엔진이 그 폭으로 배치하고 필요한 높이를 알려준다
+        self._text_label.set_wrap_width(inner_width)
         # 미리보기 그림/카드도 같은 폭 안에 들어와야 함. 안 그러면 채팅창이 좁을 때
         # 그림이 밖으로 삐져나가 가로 스크롤이 생기고 시간 배지까지 화면 밖으로 밀림
         if self.preview_area is not None:
@@ -173,7 +157,7 @@ class MessageWidget(QWidget):
 
 def _build_system_label(text: str) -> QLabel:
     safe = (text or "").replace("<", "&lt;").replace(">", "&gt;")
-    decorated = add_break_hints(irc_format.to_html(safe))
+    decorated = irc_format.to_html(safe)
     # 서버가 색을 입혀 보낸 안내(환영 인사 등)는 그 색을 살린다. 우리가 만든 안내는
     # 예전처럼 흐린 회색 기울임으로 둔다 - 대화와 구분하기 위한 표시이므로
     if irc_format.has_formatting(safe):

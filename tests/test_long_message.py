@@ -1,17 +1,15 @@
 """장문이 접히고, 끝까지 보이는가.
 
-실제 신고(2026-08-13): "장문 쓰면 줄바꿈 안 되고 팅기고 안 보이고 종합적 오류".
-재보니 두 가지가 겹쳐 있었다.
+실제 신고(2026-08-13): "장문 쓰면 줄바꿈 안 되고 팅기고 안 보이고".
 
-1. **Qt는 공백 없는 덩어리를 아예 안 접는다.** 접을 자리가 없다고 보기 때문이다.
-   한글/중국어는 띄어쓰기 없이 길게 쓰는 일이 흔해서 그런 메시지가 한 줄로 굳었다.
-   실측(폭 400에 1400자): PlainText 12px / RichText 14px / CSS word-wrap도 14px /
-   **폭 0인 공백(U+200B)을 끼우면 392px**. 그래서 화면에 그릴 때만 그 공백을 넣는다.
+**근본 원인**은 글자 배치를 우리가 추측한 것이었다. 예전에는 `QLabel`에 글을 넣고
+"이 폭이면 높이가 얼마냐"를 Qt에게 물어 짜맞췄는데, 그 구조에서 같은 뿌리의 사고가
+반복해서 났다: 공백 없는 글이 아예 안 접힘 / 라벨이 답하는 높이가 상황마다 다름 /
+크기 정책을 새로 만들면 높이를 아예 안 물어봄 / 눌린 상태에서 잰 값을 필요한 높이로 답함.
 
-2. **높이를 재는 쪽이 '눌린 상태'를 재고 있었다.** 안쪽 위젯이 필요한 높이(1313px)보다
-   작은 상태(498px = 뷰포트 높이)에서 배치를 확정하면 줄들이 눌려 놓이고, 그 눌린
-   결과를 "필요한 높이"라고 답한다. 스크롤 영역이 그 값을 그대로 쓰므로 다음에도 같은
-   답이 나와 영영 안 늘어난다. 세로 스크롤도 안 생겨서 글 대부분이 영영 안 보였다.
+지금은 배치와 높이를 **텍스트 엔진**이 정한다(gui/components/message_text.py).
+줄바꿈 규칙을 "아무 데서나 접기"로 지정할 수 있고, 높이는 문서가 알려주는 값을 그대로
+쓴다. 그래서 이 검사들은 "추측이 맞았는가"가 아니라 **결과가 보이는가**를 본다.
 """
 import os as _os
 import sys as _sys
@@ -27,7 +25,6 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 app = QApplication.instance() or QApplication([])
 
 import gui_client as g  # noqa: E402
-from gui.soft_break import ZERO_WIDTH_SPACE, add_break_hints  # noqa: E402
 
 app.setStyleSheet(g.STYLE_SHEET)
 
@@ -38,68 +35,68 @@ def check(name, ok, detail=""):
     checks.append((name, ok, detail))
 
 
-# ---------- 1) 접을 자리를 만드는 규칙 ----------
-check("평범한 문장은 손대지 않는다",
-      add_break_hints("안녕하세요 오늘 날씨가 좋네요") == "안녕하세요 오늘 날씨가 좋네요")
-long_run = add_break_hints("가" * 100)
-check(f"공백 없이 길면 접을 자리를 넣는다({long_run.count(ZERO_WIDTH_SPACE)}군데)",
-      long_run.count(ZERO_WIDTH_SPACE) >= 3)
-check("넣어도 글자 자체는 그대로다",
-      long_run.replace(ZERO_WIDTH_SPACE, "") == "가" * 100)
+def show(text, width=700, height=400):
+    view = g.ChannelLogView("#t")
+    view.resize(width, height)
+    view.show()
+    view.append_message("bob", text, False, 0, g._hashed_avatar_pixmap("t"))
+    for _ in range(15):
+        app.processEvents()
+    message = None
+    for i in range(view._layout.count()):
+        item = view._layout.itemAt(i)
+        if item is not None and item.widget() is not None \
+                and hasattr(item.widget(), "_text_label"):
+            message = item.widget()
+    return view, message
 
-linked = add_break_hints(
-    '<a href="https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">'
-    'https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</a>')
-check("주소(href)는 절대 건드리지 않는다",
-      'href="https://example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' in linked, linked[:120])
-check("화면에 보이는 주소에는 접을 자리가 들어간다",
-      ZERO_WIDTH_SPACE in linked.split("</a>")[0].split(">", 1)[1], linked[:160])
-entity = add_break_hints("&lt;" * 40)
-check("&lt; 같은 표기를 쪼개지 않는다", "&lt;" * 2 in entity.replace(ZERO_WIDTH_SPACE, ""),
-      entity[:80])
 
-# ---------- 2) 실제 화면에서 끝까지 보이는가 ----------
-view = g.ChannelLogView("#t")
-view.resize(700, 500)
-view.show()
-avatar = g._hashed_avatar_pixmap("t")
-view.append_message("bob", "가나다라마바사아자차카타파하" * 143, False, 0, avatar)
-for _ in range(20):
-    app.processEvents()
+NO_SPACE = "가나다라마바사아자차카타파하" * 143      # 띄어쓰기 없는 2000자
+WITH_SPACE = "긴 문장을 여러 번 반복해서 넣는다 " * 60
 
-message = None
-for i in range(view._layout.count()):
-    item = view._layout.itemAt(i)
-    if item is not None and item.widget() is not None and hasattr(item.widget(), "_text_label"):
-        message = item.widget()
+# ---------- 1) 띄어쓰기가 없어도 접히는가(예전에는 한 줄로 굳었다) ----------
+view, message = show(NO_SPACE)
 label = message._text_label
-needed = label.heightForWidth(label.maximumWidth())
-
-check(f"긴 글이 여러 줄로 접힌다(높이 {needed}px)", needed > 200, needed)
-check(f"라벨이 접힌 높이를 실제로 받는다({label.height()} >= {needed})",
-      label.height() >= needed, (label.height(), needed))
-
-content = view.widget()
-check(f"목록도 그만큼 커진다({content.height()} >= {needed})",
-      content.height() >= needed, (content.height(), needed))
-check(f"세로 스크롤이 생겨 끝까지 볼 수 있다(스크롤 {view.verticalScrollBar().maximum()})",
-      view.verticalScrollBar().maximum() > 0, view.verticalScrollBar().maximum())
-check("가로로는 삐져나가지 않는다", view.horizontalScrollBar().maximum() == 0,
+check(f"띄어쓰기 없는 장문이 접힌다(높이 {label.height()}px)", label.height() > 300,
+      label.height())
+check("가로로 삐져나가지 않는다", view.horizontalScrollBar().maximum() == 0,
       view.horizontalScrollBar().maximum())
+check(f"세로 스크롤이 생겨 끝까지 볼 수 있다({view.verticalScrollBar().maximum()})",
+      view.verticalScrollBar().maximum() > 0, view.verticalScrollBar().maximum())
 
-# 짧은 메시지는 예전처럼 한 줄이어야 한다(과하게 늘어나면 그것도 버그다)
-view2 = g.ChannelLogView("#s")
-view2.resize(700, 500)
-view2.show()
-view2.append_message("bob", "안녕", False, 0, avatar)
-for _ in range(10):
-    app.processEvents()
-short = None
-for i in range(view2._layout.count()):
-    item = view2._layout.itemAt(i)
-    if item is not None and item.widget() is not None and hasattr(item.widget(), "_text_label"):
-        short = item.widget()
-check(f"짧은 메시지는 여전히 한 줄({short.height()}px)", short.height() < 80, short.height())
+# ---------- 2) 띄어쓰기가 있는 장문도 그대로 ----------
+view2, message2 = show(WITH_SPACE)
+check(f"띄어쓰기 있는 장문도 접힌다(높이 {message2._text_label.height()}px)",
+      message2._text_label.height() > 300, message2._text_label.height())
+
+# ---------- 3) 짧은 메시지가 과하게 커지지 않는가 ----------
+view3, message3 = show("안녕")
+check(f"짧은 메시지는 한 줄({message3._text_label.height()}px)",
+      message3._text_label.height() < 60, message3._text_label.height())
+
+# ---------- 4) 창이 좁아도 넓어도 그 폭에 맞춘다 ----------
+heights = {}
+for width in (900, 600, 380):
+    narrow_view, narrow_message = show(NO_SPACE, width=width)
+    heights[width] = narrow_message._text_label.height()
+    check(f"창 폭 {width}에서도 가로로 안 삐져나감",
+          narrow_view.horizontalScrollBar().maximum() == 0,
+          narrow_view.horizontalScrollBar().maximum())
+check(f"좁을수록 더 여러 줄이 된다({heights})",
+      heights[380] > heights[600] > heights[900], heights)
+
+# ---------- 5) 글자가 잘리지 않는가(문서가 요구하는 높이를 그대로 받았는가) ----------
+document = label.document()
+document.setTextWidth(label.width())
+needed = document.size().height()
+check(f"문서가 요구하는 높이({needed:.0f})를 그대로 받았다({label.height()})",
+      label.height() >= needed - 1, (label.height(), needed))
+
+# ---------- 6) 링크는 여전히 눌리는가 ----------
+view4, message4 = show("여기 봐 https://example.com/abc 링크")
+html = message4._text_label.toHtml()
+check("링크가 살아 있다", 'href="https://example.com/abc"' in html.replace("&amp;", "&"),
+      html[-200:])
 
 print("=== 검증 결과 (장문 줄바꿈/표시) ===")
 all_ok = True
