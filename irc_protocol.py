@@ -112,6 +112,44 @@ def format_join(channel: str, key: str | None = None) -> str:
     return f"JOIN {channel}"
 
 
+# IRC 한 줄은 CR-LF 포함 512바이트를 넘을 수 없다(RFC 1459). 받는 쪽에는 서버가
+# ":닉!사용자@호스트 " 를 앞에 붙여서 오므로 그 몫(넉넉히 100바이트)도 빼둬야 한다.
+# 실측: 한글 150자 = 468바이트, 받는 쪽 기준 509바이트로 아슬아슬하게 걸린다
+MAX_MESSAGE_BYTES = 380
+# 한 번에 이 줄 수를 넘기면 서버가 홍수로 보고 끊을 수 있다. 그보다 긴 글은 보내지 않고
+# 사용자에게 알린다(잘려 나가거나 접속이 끊기는 것보다 낫다)
+MAX_MESSAGE_LINES = 8
+
+
+def split_message(text: str, limit: int = MAX_MESSAGE_BYTES) -> list:
+    """긴 글을 IRC 한 줄에 들어갈 크기로 나눈다.
+
+    - **글자 중간을 자르지 않는다**(한글은 한 글자가 3바이트라 바이트로 자르면 깨진다)
+    - 가능하면 띄어쓰기에서 자른다(단어가 두 줄로 쪼개지면 읽기 나쁘다)
+    - 띄어쓰기가 없으면(한글은 흔하다) 들어가는 만큼 자른다
+    """
+    if not text:
+        return []
+    pieces = []
+    rest = text
+    while rest:
+        if len(rest.encode("utf-8")) <= limit:
+            pieces.append(rest)
+            break
+        # 들어갈 수 있는 글자 수를 찾는다(바이트가 아니라 글자 단위로)
+        cut = len(rest)
+        while len(rest[:cut].encode("utf-8")) > limit:
+            cut = int(cut * limit / len(rest[:cut].encode("utf-8"))) or 1
+            while cut < len(rest) and len(rest[:cut + 1].encode("utf-8")) <= limit:
+                cut += 1
+        space = rest.rfind(" ", 1, cut + 1)
+        if space > cut // 2:          # 너무 앞에서 끊기지 않을 때만 띄어쓰기를 쓴다
+            cut = space
+        pieces.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip()
+    return [piece for piece in pieces if piece]
+
+
 def format_privmsg(target: str, text: str) -> str:
     return f"PRIVMSG {target} :{text}"
 

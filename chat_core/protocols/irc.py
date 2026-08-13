@@ -57,10 +57,24 @@ class IrcProtocol(CommonCommands):
         session.transport(irc_protocol.format_part(channel))
 
     def send_chat(self, session, channel: str, text: str) -> None:
-        session.transport(irc_protocol.format_privmsg(channel, text))
-        # IRC 서버는 내가 보낸 메시지를 나에게 다시 돌려주지 않으므로 직접 로컬 에코를 해야 함
-        # (커스텀 프로토콜과 달라지는 지점 - 이 차이를 세션이 아니라 프로토콜이 알고 있음)
-        session.deliver_message(channel, session.my_id, text, mine=True, ts=time.time())
+        """IRC 한 줄 한계(512바이트)에 맞춰 나눠 보낸다.
+
+        나누지 않으면 **서버가 넘는 부분을 그냥 잘라버린다** - 보낸 사람 화면에는 전체가
+        보이는데 남들에게는 뒷부분이 없는, 알아채기 어려운 상태가 된다(한글은 150자쯤에서
+        걸린다). 그래서 보낸 사람 화면에도 나눈 그대로 보여준다 - 남들이 보는 것과 같아야
+        "왜 잘렸지?"를 서로 확인할 수 있다.
+        """
+        pieces = irc_protocol.split_message(text)
+        if len(pieces) > irc_protocol.MAX_MESSAGE_LINES:
+            session.emit(events.CommandError(
+                f"메시지가 너무 깁니다. {irc_protocol.MAX_MESSAGE_LINES}줄 이내로 나눠 보내주세요"
+                f"(지금 {len(pieces)}줄 분량)."))
+            return
+        for piece in pieces:
+            session.transport(irc_protocol.format_privmsg(channel, piece))
+            # IRC 서버는 내가 보낸 메시지를 나에게 다시 돌려주지 않으므로 직접 로컬 에코를
+            # 해야 함(커스텀 프로토콜과 달라지는 지점 - 세션이 아니라 프로토콜이 안다)
+            session.deliver_message(channel, session.my_id, piece, mine=True, ts=time.time())
 
     def publish_avatar(self, session, avatar_b64: str) -> None:
         # 실제 IRC 서버는 아이콘 개념이 없으므로 PRIVMSG 안에 CTCP처럼 숨겨서
