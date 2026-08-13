@@ -25,9 +25,6 @@ def data_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def data_file(name: str) -> str:
-    return os.path.join(data_dir(), name)
-
 
 def asset_dir() -> str:
     """같이 배포되는 파일(아이콘, 인증서)이 있는 폴더.

@@ -185,9 +185,10 @@ check("다른 서버는 그대로 물어봐도 된다", client_version_store.pro
 _os.remove(client_version_store.STORE_FILE)
 
 # 거절 문구를 알아보는가(실제로 받은 문구 그대로)
-from gui.main_window import MainWindow  # noqa: E402
+# 거절 문구 표는 '알아보는 일'을 맡은 컨트롤러가 갖는다(창에서 떼어냄)
+from gui.client_probe import ClientProbeController  # noqa: E402
 
-markers = MainWindow._PROBE_REFUSED_MARKERS
+markers = ClientProbeController._PROBE_REFUSED_MARKERS
 real = "Multi-target messaging is not allowed (MangMang2)"
 check(f"실제로 받은 거절 문구를 알아본다({real})",
       any(m in real.lower() for m in markers))
@@ -351,7 +352,7 @@ win2.probe_client_versions("#a")
 check("바로 뒤에 또 들어오면 연달아 보내지 않는다", len(lines) == 1, lines)
 
 # 시간이 지나면 다시 묻는다 - 그래야 나중에 들어온 사람도 결국 표시된다
-win2._channel_probed["#a"] = 0.0
+win2._probe_ctl._channel_probed["#a"] = 0.0
 win2.probe_client_versions("#a")
 check("시간이 지난 뒤 들어온 사람들은 다시 확인한다", len(lines) == 2, lines)
 
@@ -369,28 +370,28 @@ check("한 명만 모르면 그 사람에게만 묻는다(채널 전체 요청 �
 win2._prober.reset()
 lines.clear()
 win2.session.client_versions.clear()
-win2._channel_probed["#a"] = _time.time()      # 방금 물어본 상태로 만든다
-win2._retry_scheduled.clear()
+win2._probe_ctl._channel_probed["#a"] = _time.time()      # 방금 물어본 상태로 만든다
+win2._probe_ctl._retry_scheduled.clear()
 win2.session.members["#a"] = {"몽키", "손님1", "손님2"}
 win2.probe_client_versions("#a")
 check("쿨타임 중에는 채널에 또 보내지 않는다", not lines, lines)
-check("대신 나중에 다시 볼 예약을 건다", "#a" in win2._retry_scheduled,
-      win2._retry_scheduled)
+check("대신 나중에 다시 볼 예약을 건다", "#a" in win2._probe_ctl._retry_scheduled,
+      win2._probe_ctl._retry_scheduled)
 win2.session.members["#a"].add("손님3")
 win2.probe_client_versions("#a")
-check("여러 명이 몰려 들어와도 예약은 하나만", len(win2._retry_scheduled) == 1,
-      win2._retry_scheduled)
-win2._channel_probed["#a"] = 0.0               # 쿨타임이 풀린 상황
-win2._retry_scheduled.clear()
+check("여러 명이 몰려 들어와도 예약은 하나만", len(win2._probe_ctl._retry_scheduled) == 1,
+      win2._probe_ctl._retry_scheduled)
+win2._probe_ctl._channel_probed["#a"] = 0.0               # 쿨타임이 풀린 상황
+win2._probe_ctl._retry_scheduled.clear()
 win2.probe_client_versions("#a")
 check("쿨타임이 풀리면 그동안 들어온 사람들을 한 번에 확인한다", len(lines) == 1, lines)
 
 # 끝까지 답을 안 하는 사람이 있어도 계속 묻지는 않는다(응답을 꺼둔 사람일 수 있음)
-win2._channel_probed["#a"] = 0.0
+win2._probe_ctl._channel_probed["#a"] = 0.0
 win2.probe_client_versions("#a")
 check("답이 없어도 같은 사람에게 다시 묻지 않는다", len(lines) == 1, lines)
 before_new = len(lines)
-win2._channel_probed["#a"] = 0.0
+win2._probe_ctl._channel_probed["#a"] = 0.0
 win2.session.members["#a"] |= {"진짜새사람1", "진짜새사람2"}
 win2.probe_client_versions("#a")
 check("진짜 새로 들어온 사람이 있을 때만 다시 묻는다", len(lines) == before_new + 1, lines)

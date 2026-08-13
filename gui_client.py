@@ -65,7 +65,7 @@ from gui.theme import (
     UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS,
 )
 from gui.helpers import (
-    _MENTION_TOKEN_RE, _app_dir, _decode_avatar_pixmap,
+    _MENTION_TOKEN_RE, _decode_avatar_pixmap,
     _find_app_icon, _find_default_cert, _format_ts, _friendly_connection_error,
     _hashed_avatar_pixmap, _linkify, _titlebar_icon,
 )

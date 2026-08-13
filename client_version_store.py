@@ -23,11 +23,9 @@ REMEMBER_SEC = REMEMBER_DAYS * 24 * 60 * 60
 MAX_PER_HOST = 500
 
 
-def _app_dir() -> str:
-    return app_paths.data_dir()
 
 
-STORE_FILE = os.path.join(_app_dir(), "client_versions.json")
+STORE_FILE = os.path.join(app_paths.data_dir(), "client_versions.json")
 
 
 def _read() -> dict:
@@ -119,8 +117,3 @@ def forget(host: str, nick: str) -> None:
     if data.get(host, {}).pop(nick, None) is not None:
         _write(data)
 
-
-def forget_host(host: str) -> None:
-    data = _read()
-    if data.pop(host, None) is not None:
-        _write(data)

@@ -12,11 +12,9 @@ import app_paths
 MAX_MESSAGES_PER_CHANNEL = 200
 
 
-def _app_dir() -> str:
-    return app_paths.data_dir()
 
 
-HISTORY_FILE = os.path.join(_app_dir(), "history.json")
+HISTORY_FILE = os.path.join(app_paths.data_dir(), "history.json")
 
 
 def _server_key(protocol: str, host: str, port: int) -> str:
