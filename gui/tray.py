@@ -17,6 +17,8 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 import app_prefs
+
+from gui import irc_format
 from chat_core.commands import split_emoji_parts
 from gui.theme import APP_TITLE
 from gui.toast import ToastPopup
@@ -163,7 +165,9 @@ class TrayIcon(QObject):
         # 바로 띄우지 않고 잠깐 모은다. 연달아 오면 앞의 것을 대체해서, 우리 알림이
         # 세로로 여러 개 쌓이지 않고 항상 최신 하나만 보이게 한다(카톡/라인과 같은 방식).
         # 다른 앱 알림과의 배치는 운영체제가 정하는 것이라 우리가 관여하지 않는다
-        self._pending.append((sender, text, channel))
+        # 알림 팝업은 서식을 못 쓰므로 IRC 꾸밈(색/굵게)은 걷어낸다.
+        # 안 걷어내면 색 번호가 글자로 섞여 나온다
+        self._pending.append((sender, irc_format.strip(text), channel))
         self._coalesce.start(NOTIFY_COALESCE_MS)
 
     def _flush_pending(self):

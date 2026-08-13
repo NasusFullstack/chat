@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxL
 
 import login_prefs
 import server_registry
+from gui import irc_format
 from gui.helpers import _find_default_cert
 from gui.theme import APP_TITLE, DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT
 from version import APP_VERSION
@@ -274,7 +275,8 @@ class LoginPage(QWidget):
         기본값을 True로 둔 이유: 새로 추가되는 호출부가 표시를 빠뜨렸을 때 진짜 오류를
         조용히 감추는 쪽보다, 안내가 좀 눈에 띄는 쪽이 안전하기 때문.
         """
-        self.status_label.setText(text)
+        # 서버가 색을 입혀 보낸 안내도 여기서는 서식을 못 쓴다 - 글자만 남긴다
+        self.status_label.setText(irc_format.strip(text))
         name = "status_err" if error else "status_info"
         if self.status_label.objectName() != name:
             self.status_label.setObjectName(name)

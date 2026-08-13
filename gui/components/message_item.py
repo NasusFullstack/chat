@@ -12,6 +12,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from chat_core.commands import KIND_ACTION, KIND_CHAT, KIND_NOTICE, split_emoji_parts
+from gui import irc_format
 from gui.helpers import _format_ts, _linkify, extract_urls, text_is_only_urls
 from gui.theme import AVATAR_MSG_PX, TIMESTAMP_BADGE_HEIGHT_PX
 
@@ -71,6 +72,9 @@ class MessageWidget(QWidget):
         plain_text = "".join(value for kind_, value in parts if kind_ == "text")
 
         safe_text = plain_text.replace("<", "&lt;").replace(">", "&gt;")
+        # IRC의 색/굵게는 보이지 않는 제어문자다. 그냥 두면 색 번호(11, 10 ...)가
+        # 글자로 튀어나온다 - 실제로 서버 환영 인사가 그렇게 보였다
+        safe_text = irc_format.to_html(safe_text)
         safe_text = _linkify(safe_text)
         text_label = QLabel(_message_html(sender, safe_text, mine, kind))
         text_label.setObjectName("messageText")
@@ -158,7 +162,14 @@ class MessageWidget(QWidget):
 
 
 def _build_system_label(text: str) -> QLabel:
-    label = QLabel(f'<span style="color:#9a9cad"><i>* {text}</i></span>')
+    safe = (text or "").replace("<", "&lt;").replace(">", "&gt;")
+    decorated = irc_format.to_html(safe)
+    # 서버가 색을 입혀 보낸 안내(환영 인사 등)는 그 색을 살린다. 우리가 만든 안내는
+    # 예전처럼 흐린 회색 기울임으로 둔다 - 대화와 구분하기 위한 표시이므로
+    if irc_format.has_formatting(safe):
+        label = QLabel(f'<span style="color:#c8ccd8">{decorated}</span>')
+    else:
+        label = QLabel(f'<span style="color:#9a9cad"><i>* {decorated}</i></span>')
     label.setObjectName("systemNotice")
     label.setStyleSheet("QLabel#systemNotice { background: transparent; }")
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
