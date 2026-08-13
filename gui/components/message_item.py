@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWi
 
 from chat_core.commands import KIND_ACTION, KIND_CHAT, KIND_NOTICE, split_emoji_parts
 from gui import irc_format
+from gui.soft_break import add_break_hints
 from gui.helpers import _format_ts, _linkify, extract_urls, text_is_only_urls
 from gui.theme import AVATAR_MSG_PX, TIMESTAMP_BADGE_HEIGHT_PX
 
@@ -76,12 +77,21 @@ class MessageWidget(QWidget):
         # 글자로 튀어나온다 - 실제로 서버 환영 인사가 그렇게 보였다
         safe_text = irc_format.to_html(safe_text)
         safe_text = _linkify(safe_text)
+        # 공백 없이 이어진 긴 글은 Qt가 아예 안 접는다(실측). 접을 자리를 만들어 준다 -
+        # 안 그러면 장문이 한 줄로 굳어 화면 밖으로 나가 통째로 안 보인다
+        safe_text = add_break_hints(safe_text)
         text_label = QLabel(_message_html(sender, safe_text, mine, kind))
         text_label.setObjectName("messageText")
         text_label.setStyleSheet("QLabel#messageText { background: transparent; }")
         text_label.setTextFormat(Qt.TextFormat.RichText)
         text_label.setWordWrap(True)
-        text_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        # **heightForWidth를 켜둬야 한다.** setSizePolicy(...)로 정책을 새로 만들면 이
+        # 표시가 꺼진 채로 들어가서, 레이아웃이 "이 폭이면 높이가 얼마냐"를 라벨에게
+        # 아예 묻지 않는다. 그러면 긴 글의 높이가 sizeHint(한 줄 기준에 가까운 값)로
+        # 굳어 글 대부분이 잘려 안 보인다(실측: 답은 1280인데 실제로 준 높이는 223)
+        text_policy = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        text_policy.setHeightForWidth(True)
+        text_label.setSizePolicy(text_policy)
         text_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse
         )
@@ -163,7 +173,7 @@ class MessageWidget(QWidget):
 
 def _build_system_label(text: str) -> QLabel:
     safe = (text or "").replace("<", "&lt;").replace(">", "&gt;")
-    decorated = irc_format.to_html(safe)
+    decorated = add_break_hints(irc_format.to_html(safe))
     # 서버가 색을 입혀 보낸 안내(환영 인사 등)는 그 색을 살린다. 우리가 만든 안내는
     # 예전처럼 흐린 회색 기울임으로 둔다 - 대화와 구분하기 위한 표시이므로
     if irc_format.has_formatting(safe):

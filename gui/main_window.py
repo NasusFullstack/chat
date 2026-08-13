@@ -93,6 +93,7 @@ class MainWindow(QMainWindow):
         if IS_WINDOWS:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
             self.setMouseTracking(True)
+            self._in_event_filter = False
             QApplication.instance().installEventFilter(self)
 
         self.client = ChatClient()
@@ -766,18 +767,37 @@ class MainWindow(QMainWindow):
         # 디스패치보다 먼저 통과함) 창 가장자리 근처인지 직접 확인해서
         # QWindow.startSystemResize()로 OS의 네이티브 크기조절 루프를 그대로 넘김
         et = event.type()
-        if et in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress) and isinstance(obj, QWidget):
-            if obj.window() is self:
-                local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
-                edges = self._resize_edges_at(local_pos)
-                if et == QEvent.Type.MouseMove:
-                    key = frozenset(e for e in (Qt.Edge.TopEdge, Qt.Edge.BottomEdge, Qt.Edge.LeftEdge, Qt.Edge.RightEdge) if edges & e)
-                    self.setCursor(_RESIZE_EDGE_CURSORS.get(key, Qt.CursorShape.ArrowCursor))
-                elif edges and event.button() == Qt.MouseButton.LeftButton:
-                    handle = self.windowHandle()
-                    if handle is not None:
-                        handle.startSystemResize(edges)
-                        return True
+        if et not in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress):
+            return super().eventFilter(obj, event)   # 앱 전체를 지나가는 필터라 빨리 빠진다
+        if self._in_event_filter:
+            # **여기로 다시 들어오면 안 된다.** 아래에서 커서 모양을 바꾸면 Qt가 그 자리에
+            # 마우스 이벤트를 다시 흘리는데, 이 필터는 앱 전체(QApplication)에 걸려 있어서
+            # 그 이벤트가 또 여기로 들어온다. 그러면 끝없이 파고들다 스택이 넘쳐 앱이
+            # 그냥 사라진다(파이썬 오류가 아니라 프로세스가 죽는 것이라 기록도 안 남았다).
+            # 실제 사고 2026-08-13: friendchat_error.log에
+            #   "Windows fatal exception: stack overflow ... in eventFilter"
+            return False
+        if not isinstance(obj, QWidget) or obj.window() is not self:
+            return super().eventFilter(obj, event)
+        self._in_event_filter = True
+        try:
+            local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
+            edges = self._resize_edges_at(local_pos)
+            if et == QEvent.Type.MouseMove:
+                key = frozenset(e for e in (Qt.Edge.TopEdge, Qt.Edge.BottomEdge,
+                                            Qt.Edge.LeftEdge, Qt.Edge.RightEdge) if edges & e)
+                shape = _RESIZE_EDGE_CURSORS.get(key, Qt.CursorShape.ArrowCursor)
+                # **바뀔 때만 바꾼다.** 마우스가 움직일 때마다 setCursor를 부르면 위에서
+                # 말한 되돌이의 출발점이 되고, 어차피 같은 모양이라 화면에도 변화가 없다
+                if self.cursor().shape() != shape:
+                    self.setCursor(shape)
+            elif edges and event.button() == Qt.MouseButton.LeftButton:
+                handle = self.windowHandle()
+                if handle is not None:
+                    handle.startSystemResize(edges)
+                    return True
+        finally:
+            self._in_event_filter = False
         return super().eventFilter(obj, event)
     def show_from_tray(self):
         """트레이에서 다시 창을 꺼냄. 최소화돼 있었으면 원래 크기로 되돌린다."""

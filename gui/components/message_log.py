@@ -69,6 +69,20 @@ class _ChatLogContent(QWidget):
         if not self._measuring:
             self._measuring = True
             try:
+                # **먼저 자리를 넉넉히 준 뒤에 재야 한다.** activate()는 지금 위젯 높이
+                # 안에서 배치하므로, 높이가 모자라면 줄들이 눌린 채로 놓이고 우리는 그
+                # 눌린 값을 "필요한 높이"라고 답하게 된다. 그러면 스크롤 영역이 그 값을
+                # 그대로 쓰고, 다음 번에도 같은 답이 나와 영영 안 늘어난다(자기 오답을
+                # 다시 재는 셈). 실제 사고 2026-08-13: 공백 없는 장문 한 줄이 1313px를
+                # 요구하는데 498px(뷰포트 높이)에서 굳어 글 대부분이 안 보이고 스크롤도
+                # 안 생겼다.
+                # 넉넉히 준 다음 재는 것이므로, 계산식이 크게 부르는 경우(대화 200건에서
+                # +1152px)에도 결과는 여전히 '실제로 놓인 자리'다
+                needed = layout.heightForWidth(self.width())
+                if needed <= 0:
+                    needed = layout.sizeHint().height()
+                if needed > self.height():
+                    self.resize(self.width(), needed)
                 layout.activate()
             finally:
                 self._measuring = False
