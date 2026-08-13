@@ -95,6 +95,11 @@ def notification_body(text: str) -> str:
     return body
 
 
+# 트레이 아이콘이 아직 살아 있는지 확인하는 주기. 사람이 눈치채기 전에
+# 돌아오게 하면서도, 자주 볼 일은 아니라 넉넉히 잡는다
+TRAY_RECHECK_MS = 10000
+
+
 class TrayIcon(QObject):
     open_requested = Signal()
     quit_requested = Signal()
@@ -113,13 +118,27 @@ class TrayIcon(QObject):
         self._coalesce.setSingleShot(True)
         self._coalesce.timeout.connect(self._flush_pending)
 
+        # 트레이 아이콘은 **사라질 수 있다.** 윈도우 탐색기가 다시 시작되거나, 로그인
+        # 직후처럼 트레이가 아직 준비되기 전에 앱이 켜지면 아이콘이 없어지고, 예전에는
+        # 그 실행 내내 다시는 안 나타났다(만들 수 있는지를 켤 때 딱 한 번만 봤다).
+        # 사용자에게는 "설정을 껐다 켜도 트레이에 다시 안 보인다"로 나타났다.
+        # 그래서 아이콘 주인을 계속 들고 있으면서, 보여야 하는데 안 보이면 다시 보여준다
+        self._icon = icon
+        self._parent = parent
+        self._tray = None
+        self._quitting = False
         self.available = QSystemTrayIcon.isSystemTrayAvailable()
-        if not self.available:
-            # 트레이가 없는 환경(일부 리눅스 데스크톱 등) - 아무 것도 안 하고 조용히 넘어간다.
-            # 이 경우 창을 닫으면 그냥 종료되도록 창 쪽에서 available을 보고 판단한다
-            self._tray = None
-            return
+        self._build_tray()
 
+        self._watchdog = QTimer(self)
+        self._watchdog.timeout.connect(self._ensure_visible)
+        self._watchdog.start(TRAY_RECHECK_MS)
+
+    def _build_tray(self):
+        if self._tray is not None or not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        icon, parent = self._icon, self._parent
+        self.available = True
         self._tray = QSystemTrayIcon(icon, parent)
         self._tray.setToolTip(APP_TITLE)
         self._tray.activated.connect(self._on_activated)
@@ -136,6 +155,16 @@ class TrayIcon(QObject):
         self._menu = menu   # 참조를 들고 있어야 메뉴가 사라지지 않음
         self._tray.setContextMenu(menu)
         self._tray.show()
+
+    def _ensure_visible(self):
+        """보여야 하는데 안 보이면 다시 보여준다(탐색기 재시작 / 늦게 준비된 트레이)."""
+        if self._quitting:
+            return
+        if self._tray is None:
+            self._build_tray()      # 켤 때는 없었는데 이제 생긴 경우
+            return
+        if not self._tray.isVisible():
+            self._tray.show()
 
 
     # ---------------- 사용자 조작 ----------------
@@ -184,6 +213,9 @@ class TrayIcon(QObject):
             self._tray.setIcon(icon)
 
     def hide(self):
+        """앱을 끝내는 중 - 이제는 다시 보여주지 않는다(감시도 멈춘다)."""
+        self._quitting = True
+        self._watchdog.stop()
         self._toast.hide()
         if self._tray is not None:
             self._tray.hide()

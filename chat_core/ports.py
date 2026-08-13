@@ -67,6 +67,9 @@ class ProtocolPort(Protocol):
         """채널 전체에 한 번에 물어봄(개인별로 묻는 길이 막힌 서버에서 쓰는 우회로)."""
         ...
 
+    def reclaim_nickname(self, session: Any) -> None:
+        """원래 쓰려던 이름을 되찾아 본다(IRC에서 유령 세션 때문에 밀렸을 때)."""
+
     def keepalive(self, session: Any) -> None:
         """조용할 때 "살아 있냐"를 한 줄 보낸다(프로토콜마다 방식이 다르다)."""
 
