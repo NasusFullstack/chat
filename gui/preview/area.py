@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 import link_meta
 from gui.preview.fetcher import HTML_LIMIT_BYTES
+from gui.preview import youtube
 from gui.preview.image_preview import ImagePreview, is_image_url
 from gui.preview.link_card import CARD_MAX_WIDTH, LinkCard
 
@@ -75,7 +76,12 @@ class LinkPreviewArea(QWidget):
         if fetcher is None:
             return
         for url in urls:
-            if is_image_url(url):
+            if youtube.is_youtube(url):
+                # 유튜브는 페이지에서 못 뽑는다(og 태그가 문서 한참 뒤에 있다).
+                # 공식으로 열어둔 oEmbed를 쓰면 제목/채널/그림을 작은 JSON 하나로 준다
+                fetcher.fetch(youtube.oembed_url(url),
+                              lambda data, u=url: self._on_youtube(u, data))
+            elif is_image_url(url):
                 fetcher.fetch(url, lambda data, u=url: self._on_direct_image(u, data))
             else:
                 fetcher.fetch(url, lambda data, u=url: self._on_html(u, data),
@@ -138,6 +144,15 @@ class LinkPreviewArea(QWidget):
         if self._on_preview_shown is not None:
             self._on_preview_shown()
 
+    def _on_youtube(self, url: str, data):
+        """유튜브 oEmbed 응답으로 카드를 만든다(그림은 영상 대표 이미지)."""
+        if url in self._filled or not data:
+            return
+        info = youtube.parse_oembed(bytes(data), url)
+        if not info.get("title"):
+            return
+        self._add_card(url, info)
+
     def _on_html(self, url: str, data):
         """받아온 HTML에서 메타태그를 뽑아 카드를 만듦. 제목이 없으면 아무 것도 안 함."""
         if url in self._filled or not data:
@@ -146,6 +161,10 @@ class LinkPreviewArea(QWidget):
             link_meta.decode_html(link_meta.head_only(data)), base_url=url)
         if not info.get("title"):
             return  # 보여줄 게 없으면 하이퍼링크만 남김
+        self._add_card(url, info)
+
+    def _add_card(self, url: str, info: dict):
+        """제목/설명/그림으로 미리보기 카드를 붙인다(HTML에서 뽑았든 유튜브든 같다)."""
         self._filled.add(url)
         card = LinkCard(url, info["title"], info.get("description", ""), self)
         if self._max_width > 0:
