@@ -235,11 +235,9 @@ def _initial(version: str) -> str:
     return stripped[0].upper() if stripped else "~"
 
 
-def _app_dir() -> str:
-    return app_paths.data_dir()
 
 
-LOGO_STORE_FILE = os.path.join(_app_dir(), "client_logos.json")
+LOGO_STORE_FILE = os.path.join(app_paths.data_dir(), "client_logos.json")
 
 
 class ClientBadges:

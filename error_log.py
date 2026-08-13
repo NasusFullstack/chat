@@ -26,7 +26,6 @@ import tempfile
 import threading
 import traceback
 
-NL = chr(10)
 MAX_BYTES = 512 * 1024  # 이만큼 넘으면 새로 시작 - 무한정 커지지 않게
 _installed = False
 # 죽는 순간에는 파일을 새로 못 여니 미리 열어둔 손잡이를 붙잡고 있는다
@@ -34,14 +33,11 @@ _crash_file = None
 _lock = threading.Lock()
 
 
-def _app_dir() -> str:
-    """앱 데이터가 모여 있는 폴더(설치 폴더 / 소스 실행 시 저장소 루트)."""
-    return app_paths.data_dir()
 
 
 def error_log_path() -> str:
     try:
-        path = os.path.join(_app_dir(), "friendchat_error.log")
+        path = os.path.join(app_paths.data_dir(), "friendchat_error.log")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         return path
     except OSError:
@@ -94,7 +90,7 @@ def _install_crash_dump():
     try:
         _crash_file = open(error_log_path(), "a", encoding="utf-8")
         stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        _crash_file.write(f"{NL}===== {stamp} [실행 시작] v{_version()} ====={NL}")
+        _crash_file.write(f"\n===== {stamp} [실행 시작] v{_version()} =====\n")
         _crash_file.flush()
         faulthandler.enable(file=_crash_file, all_threads=True)
     except Exception:  # noqa: BLE001 - 기록 장치 때문에 앱이 안 켜지면 본말전도

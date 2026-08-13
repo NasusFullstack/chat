@@ -35,11 +35,9 @@ DEFAULTS = {
 }
 
 
-def _app_dir() -> str:
-    return app_paths.data_dir()
 
 
-PREFS_FILE = os.path.join(_app_dir(), "app_prefs.json")
+PREFS_FILE = os.path.join(app_paths.data_dir(), "app_prefs.json")
 
 
 def load() -> dict:

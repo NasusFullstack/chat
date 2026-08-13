@@ -12,11 +12,9 @@ import sys
 import app_paths
 
 
-def _app_dir() -> str:
-    return app_paths.data_dir()
 
 
-LOGIN_PREFS_FILE = os.path.join(_app_dir(), "login_prefs.json")
+LOGIN_PREFS_FILE = os.path.join(app_paths.data_dir(), "login_prefs.json")
 
 
 def load() -> dict:

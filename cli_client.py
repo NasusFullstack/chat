@@ -28,16 +28,10 @@ from chat_core.session import build_session
 CONNECT_TIMEOUT_SEC = 10
 
 
-def _app_dir() -> str:
-    """아이콘·인증서를 찾는 자리(설치 폴더 / 소스 실행 시 저장소 루트).
-
-    설정과 기록을 두는 데이터 폴더와는 다르다 - app_paths.asset_dir() 설명 참고
-    """
-    return app_paths.asset_dir()
 
 
 def _auto_cert() -> str:
-    candidate = os.path.join(_app_dir(), "cert.pem")
+    candidate = os.path.join(app_paths.asset_dir(), "cert.pem")
     return candidate if os.path.exists(candidate) else ""
 
 

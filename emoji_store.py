@@ -24,11 +24,9 @@ MAX_URL_LEN = 400         # IRC 한 줄(512바이트)에 여유 있게 들어가
 MAX_NAME_LEN = 20
 
 
-def _app_dir() -> str:
-    return app_paths.data_dir()
 
 
-EMOJI_STORE_FILE = os.path.join(_app_dir(), "emojis.json")
+EMOJI_STORE_FILE = os.path.join(app_paths.data_dir(), "emojis.json")
 
 
 def is_valid_emoji_url(url: str) -> bool:

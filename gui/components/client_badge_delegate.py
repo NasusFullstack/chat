@@ -58,6 +58,3 @@ class ClientBadgeDelegate(QStyledItemDelegate):
             y = full.top() + (full.height() - pixmap.height()) // 2
             painter.drawPixmap(x, y, pixmap)
 
-
-def badge_height() -> int:
-    return CLIENT_BADGE_PX

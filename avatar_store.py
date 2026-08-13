@@ -13,11 +13,9 @@ import sys
 import app_paths
 
 
-def _app_dir() -> str:
-    return app_paths.data_dir()
 
 
-AVATAR_STORE_FILE = os.path.join(_app_dir(), "avatars.json")
+AVATAR_STORE_FILE = os.path.join(app_paths.data_dir(), "avatars.json")
 
 
 def load_avatars() -> dict[str, str]:

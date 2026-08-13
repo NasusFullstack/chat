@@ -29,6 +29,7 @@ from gui import event_router, liveness
 from gui.login_request import parse_login_values
 from gui.reconnect import ReconnectPolicy
 from gui.tray import TrayIcon
+from gui.client_probe import ClientProbeController
 from gui.version_prober import VersionProber
 from updater import POST_UPDATE_FLAG
 from gui.helpers import _friendly_connection_error
@@ -77,6 +78,8 @@ class MainWindow(QMainWindow):
         constants.CHEAT_BATTLECRUISER_SUMMON: lambda page: page.summon_battlecruiser(),
         constants.CHEAT_BATTLECRUISER_DISMISS: lambda page: page.dismiss_battlecruiser(),
     }
+
+    # ---------------- 창 조립 ----------------
 
     def __init__(self):
         super().__init__()
@@ -132,24 +135,15 @@ class MainWindow(QMainWindow):
         self._tray.open_requested.connect(self.show_from_tray)
         self._tray.quit_requested.connect(self.quit_app)
 
-        # 참여자들이 무슨 프로그램을 쓰는지 알아보는 담당자. 한꺼번에 물으면 서버가
-        # 홍수로 보고 끊으므로 간격을 두고 한 명씩 묻는다(gui/version_prober.py)
+        # 참여자들이 무슨 프로그램을 쓰는지 알아보는 일 전체(누구에게, 언제, 얼마나
+        # 아껴 물을지)는 gui/client_probe.py가 맡는다. 창은 그 담당자만 들고 있는다
         self._prober = VersionProber(self._ask_client_version, self)
-        self._probe_refused_at = 0.0   # 서버가 거절한 시각(뒤늦게 오는 답들을 삼키는 데 씀)
-        # 채널별로 '마지막으로 채널에 한 줄 물어본 시각'. 한 번만 묻고 끝내면 그 뒤에
-        # 들어온 사람은 영영 표시가 안 된다. 그렇다고 들어올 때마다 보내면 채널 사람들
-        # 화면에 요청이 자꾸 찍히므로, 사이에 시간 간격을 둔다
-        self._channel_probed: dict[str, float] = {}
-        # 채널별로 '직전에 보고 있던 참여자'. 이 목록에 없던 사람이 나타나면 방금 들어온
-        # 것이므로, 예전에 알아둔 프로그램을 그대로 믿지 않고 다시 물어본다
-        # (같은 닉네임으로 다른 프로그램을 켜고 들어올 수 있다)
-        self._seen_members: dict[str, set] = {}
-        # 쿨타임 때문에 미룬 채널들(예약이 겹쳐 쌓이지 않게)
-        self._retry_scheduled: set[str] = set()
-        # 채널에 한 줄 물어볼 때 그 자리에 있던 사람들. **답을 안 해도 다시 묻지 않는다.**
-        # 이게 없으면 끝까지 답 안 하는 사람이 한 명만 있어도, 누가 들락거릴 때마다
-        # 채널에 계속 요청이 나간다(응답을 꺼둔 사람에게 영원히 묻는 셈)
-        self._asked_in_channel: dict[str, set] = {}
+        # 알릴 일이 생겼을 때 그 자리에서 채팅 화면을 찾는다. 여기서 chat_page를 바로
+        # 넘기면 화면이 아직 만들어지기 전이라 없다(창 조립 순서에 묶이지 않게 함수로 준다)
+        self._probe_ctl = ClientProbeController(
+            self._prober,
+            lambda channel, text: self.chat_page.append_system(channel, text),
+            self)
         # 화면이 멈추면 어디서 멈췄는지 기록에 남기는 감시 장치. 살아 있는 동안은
         # 이 타이머가 계속 갱신해줘서 아무 것도 안 찍힌다
         self._alive_timer = QTimer(self)
@@ -207,146 +201,104 @@ class MainWindow(QMainWindow):
         # 화면이 바뀔 때마다 그 화면에 맞는 크기 정책을 적용
         self.stack.currentChanged.connect(self._apply_size_policy_for_page)
         self._apply_size_policy_for_page(self.stack.currentIndex())
+    def set_window_icon(self, icon: QIcon):
+        self.setWindowIcon(icon)
+        self._tray.set_icon(icon)
+        if self._title_bar is not None:
+            self._title_bar.set_icon(icon)
+    # ---------------- 세션에서 파생되는 값들 (같은 사실을 두 곳이 기억하지 않게) ----------------
 
-    def _ask_client_version(self, user_id: str):
-        self.session.request_client_version(user_id)
+    @property
+    def my_id(self) -> str:
+        return self.session.my_id
+    # 예전에는 MainWindow에도 my_id/_irc_current_nick/_my_avatar_b64/_protocol_mode를 따로
+    # 들고 있어서 세션과 어긋날 여지가 있었음(같은 사실을 두 곳이 기억하는 구조). 전부
+    # 세션에서 파생시키면 그런 불일치가 구조적으로 불가능해짐.
 
-    def probe_client_versions(self, channel: str):
-        """그 채널에서 아직 모르는 사람에게만, 그것도 아껴서 물어본다.
+    @property
+    def _protocol_mode(self) -> str:
+        return self.session.protocol_mode
+    @property
+    def _my_avatar_b64(self) -> str | None:
+        return self.session.avatars.get(self.session.my_id)
+    @property
+    def pending_mode(self) -> str:
+        return self.session.pending_auth_mode
+    # ---------------- 화면 흐름 (시작 -> 로그인 -> 채널 -> 채팅) ----------------
 
-        서버와 상대에게 부담을 주지 않으려고 이렇게 아낀다:
-        0. 새로 들어온 사람은 **예전 기억을 버리고 다시 확인한다.** 같은 닉네임으로
-           다른 프로그램을 켜고 들어올 수 있어서, 기억을 그대로 믿으면 엉뚱한 로고가
-           며칠씩 붙어 있게 된다. 처음 채널에 들어가 참여자 목록을 받을 때는 해당 없음
-           (그때는 저장해둔 것을 그대로 써서 조용히 시작한다)
-           다만 사람이 들락거릴 때마다 요청이 나가면 채널 사람들 화면이 시끄러우므로,
-           채널에 묻는 것은 일정 시간에 한 번으로 제한하고, 그 사이에 들어온 사람들은
-           쿨타임이 풀리는 시점에 한 번에 확인한다(예약을 걸어둔다)
-        1. **예전에 알아낸 사람은 안 묻는다** - 저장해둔 것을 그대로 쓴다
-           (client_version_store, 기한이 지나면 그때 한 번 다시 물음)
-        2. **지금 보고 있는 채널만** 묻는다 - 여러 채널에 들어가 있어도 한꺼번에
-           수십 명에게 보내지 않는다. 다른 채널은 그 채널을 볼 때 알아본다
-        3. 모르는 사람이 여럿이면 **채널에 한 줄**만 보낸다. 실측(home.pdlab.kr)에서
-           개인에게 연달아 보내면 서버가 막지만("Multi-target messaging is not
-           allowed"), 채널로 한 줄 보내면 전원이 답했다. 줄 수도 N개 -> 1개다
-        4. 한 명뿐이면(누가 나중에 혼자 들어온 경우) 그 사람에게만 조용히 물어본다.
-           한 명에게 보내는 건 실측에서도 막히지 않았고, 채널 전체를 건드릴 이유가 없다
+    def start_boot_sequence(self):
+        """창이 화면에 뜬 뒤 호출 - 시작화면에서 업데이트를 확인/적용하고 로그인으로 넘어감.
+
+        창을 먼저 띄우고 그 다음에 업데이트를 확인하는 순서는 반드시 지켜야 함: 반대로 하면
+        업데이트가 계속 실패하는 환경에서 앱 화면을 한 번도 못 보여줌(실제 사고 이력).
         """
-        if not app_prefs.get("show_client_badges"):
+        self.stack.setCurrentWidget(self.startup_page)
+        if POST_UPDATE_FLAG in sys.argv:
+            # 방금 업데이트를 마치고 다시 실행된 참 - 업데이트를 또 확인할 필요가 없고,
+            # 사용자는 이미 한참 기다렸으므로 로고도 짧게만 보여주고 바로 로그인으로 감
+            self.startup_page.set_status("업데이트 완료! 시작하는 중...")
+            QTimer.singleShot(_SPLASH_POST_UPDATE_MS, self._go_to_login)
             return
-        if channel != self.session.active_channel:
+        QTimer.singleShot(_SPLASH_MIN_MS, self._boot_check_update)
+    def _boot_check_update(self):
+        from gui import update_flow
+
+        self.startup_page.set_status("업데이트 확인 중...")
+        QApplication.processEvents()
+        if update_flow.check_and_apply(self.startup_page):
+            # 업데이트 적용 중 - 곧 이 프로세스가 끝나고 새 버전이 뜸. 그동안 창이 그냥
+            # 멈춰 보이지 않도록 안내 문구를 남겨둠(설치가 끝날 때까지 이 화면이 유지됨)
+            self.startup_page.set_status("업데이트를 설치하고 있습니다. 곧 자동으로 다시 시작됩니다...")
+            QApplication.processEvents()
             return
-        # 방금 들어온 사람은 예전 기억을 버리고 다시 확인한다
-        current = set(self.session.members.get(channel, ()))
-        previous = self._seen_members.get(channel)
-        self._seen_members[channel] = current
-        if previous is not None:
-            for user_id in current - previous:
-                if user_id == self.session.my_id:
-                    continue
-                self.session.forget_client_version(user_id)
-                client_version_store.forget(self._host, user_id)
-                # 새로 들어온 사람은 '이미 물어본 사람'에서도 빼야 다시 물어본다
-                self._asked_in_channel.get(channel, set()).discard(user_id)
+        self.startup_page.hide_progress()
+        self._go_to_login()
+    def _go_to_login(self):
+        self.stack.setCurrentWidget(self.login_page)
+        # 업데이트로 새 버전이 된 뒤 처음 켠 것이면 "뭐가 바뀌었는지"를 한 번 보여준다.
+        # 로그인 화면이 뜬 뒤에 띄우는 이유: 시작화면 위에 겹치면 업데이트가 아직 진행
+        # 중인 것처럼 보인다. 저절로 닫히지 않으며, 한 버전당 한 번만 뜬다
+        QTimer.singleShot(300, self._show_changelog_once)
+        # 자동로그인은 로그인 화면이 실제로 보이는 상태에서 시작해야 "연결 중..." 표시와
+        # '연결 취소' 버튼이 정상적으로 보임
+        QTimer.singleShot(100, self._maybe_auto_login)
+    def _show_changelog_once(self):
+        """업데이트 뒤 처음 켰으면 변경 내역 창을 띄우고, 채팅에도 한 줄 남길 준비를 한다.
 
-        unknown = self.session.unknown_client_users(channel)
-        if not unknown:
-            return
-        remembered = client_version_store.load(self._host)
-        ask = []
-        for user_id in unknown:
-            known = remembered.get(user_id)
-            if known:
-                self.session.apply_client_version(user_id, known)   # 묻지 않고 바로 표시
-            else:
-                ask.append(user_id)
-        # 이미 한 번 물어본 사람은 답이 없어도 다시 묻지 않는다(응답을 꺼둔 사람일 수 있고,
-        # 그런 사람에게 계속 묻는 건 실례이자 채널 전체에 소음이다)
-        already = self._asked_in_channel.setdefault(channel, set())
-        ask = [user_id for user_id in ask if user_id not in already]
-        if not ask:
-            return
-        # 한 명뿐이고 개인에게 물어도 되는 서버면 그 사람에게만(가장 조용한 방법)
-        if len(ask) == 1 and client_version_store.probe_allowed(self._host):
-            already.update(ask)
-            self._prober.enqueue(ask)
-            return
-        # 여럿이거나 개인 요청이 막힌 서버 - 채널에 한 줄. 다만 너무 자주 보내지 않는다
-        last = self._channel_probed.get(channel, 0.0)
-        remaining = self._CHANNEL_PROBE_COOLDOWN_SEC - (time.time() - last)
-        if remaining > 0:
-            # 지금은 참고 나중에 한 번 더 본다. 이 예약이 없으면, 쿨타임 동안 들어온
-            # 사람들은 그 뒤로 아무도 들락거리지 않는 한 영영 확인되지 않는다
-            # (물어보는 계기가 '참여자 목록이 바뀔 때'뿐이므로)
-            self._schedule_channel_retry(channel, remaining)
-            return
-        self._channel_probed[channel] = time.time()
-        already.update(ask)          # 이번 한 줄로 이 사람들에게는 물어본 셈이다
-        self.session.request_client_versions_in_channel(channel)
-
-    def _schedule_channel_retry(self, channel: str, after_sec: float):
-        """쿨타임이 풀리는 시점에 한 번만 다시 살피도록 예약한다."""
-        if channel in self._retry_scheduled:
-            return   # 이미 예약돼 있음 - 여러 명이 몰려 들어와도 예약은 하나면 된다
-        self._retry_scheduled.add(channel)
-
-        def run():
-            self._retry_scheduled.discard(channel)
-            self.probe_client_versions(channel)
-
-        QTimer.singleShot(int(after_sec * 1000) + 250, run)
-
-    # 서버가 "그런 요청은 못 받는다"고 알려주는 말들. 서버마다 문구가 달라서 표로 둔다.
-    # (실제로 UnrealIRCd가 "Multi-target messaging is not allowed"로 거절했고,
-    #  참여자 수만큼 경고가 채팅창에 쏟아졌다)
-    _PROBE_REFUSED_MARKERS = (
-        "multi-target messaging is not allowed",
-        "too many targets",
-        "target change too fast",
-        "no ctcp allowed",
-        "ctcp is not allowed",
-        "excess flood",
-    )
-
-    # 채널에 한 줄 물어보는 것 사이의 최소 간격. 새로 들어온 사람도 결국 표시되지만,
-    # 사람이 들락거릴 때마다 채널 전체에 요청이 나가지는 않는다
-    _CHANNEL_PROBE_COOLDOWN_SEC = 90
-
-    # 거절이 한 번 나온 뒤 이만큼은 같은 경고를 우리 탓으로 보고 삼킨다.
-    # 이미 보내놓은 요청들의 답이 뒤늦게 도착하기 때문(실제로 멈춘 뒤에도 한 줄 더 떴다)
-    _PROBE_REFUSAL_QUIET_SEC = 60
-
-    def note_server_message(self, text: str) -> bool:
-        """서버가 우리 요청을 거절하는 말이면 요청을 멈춘다.
-
-        돌려주는 값이 True면 **그 말을 화면에 보여주지 말라**는 뜻이다. 우리가 보낸 것
-        때문에 난 오류라서, 사용자에게는 우리 안내문 한 줄이면 충분하다. 서버가 참여자
-        수만큼 돌려주므로 그대로 두면 경고가 줄줄이 쌓인다(실제 화면에서 확인).
+        창만 띄우면 닫는 순간 사라져서 "뭐가 바뀐 거였지?" 할 때 볼 곳이 없다.
+        그래서 채널에 들어갈 때 대화창에도 한 줄 남긴다(나에게만 보이는 안내다).
         """
-        if not text:
-            return False
-        lowered = text.lower()
-        if not any(marker in lowered for marker in self._PROBE_REFUSED_MARKERS):
-            return False
-        recently_refused = (time.time() - self._probe_refused_at) < self._PROBE_REFUSAL_QUIET_SEC
-        if not (self._prober.is_working() or recently_refused):
-            return False   # 우리 때문에 난 말이 아님(그냥 서버 안내였을 수 있음)
-        if recently_refused:
-            return True    # 이미 알렸다 - 뒤늦게 온 답들은 조용히 버린다
-        self._probe_refused_at = time.time()
-        self._prober.reset()
-        client_version_store.mark_probe_refused(self._host)
-        # 왜 로고가 안 뜨는지 모르면 고장으로 보이므로 한 번은 알려준다
-        self.chat_page.append_system(
-            self.session.active_channel,
-            "이 서버는 접속 프로그램 확인을 허용하지 않아 껐습니다. "
-            "(참여자 로고는 우리 클라이언트끼리만 표시됩니다)")
-        return True
+        from gui import changelog_dialog
 
-    def remember_client_version(self, user_id: str, version: str):
-        """알아낸 것을 서버별로 적어둔다 - 다음에 켤 때는 안 물어봐도 된다."""
-        client_version_store.remember(self._host, user_id, version)
+        notes = changelog_dialog.load_notes()
+        if changelog_dialog.show_if_updated(self) and notes:
+            self._pending_update_note = changelog_dialog.summary_line(notes)
+    def take_update_note(self) -> str:
+        """채널에 들어갈 때 한 번만 쓰고 비운다."""
+        note, self._pending_update_note = self._pending_update_note, ""
+        return note
+    def _maybe_auto_login(self):
+        """저장된 자동로그인 정보가 있으면 앱을 켜자마자 자동으로 로그인 시도.
+        로그인 화면의 입력값은 LoginPage._load_saved_prefs()에서 이미 채워둔 상태라
+        여기서는 그걸 그대로 제출하기만 하면 됨"""
+        if self._auto_login_suppressed:
+            return  # 사용자가 직접 로그아웃해서 돌아온 경우 - 다시 자동으로 들어가면 계정을 못 바꿈
+        prefs = login_prefs.load()
+        # password는 필수로 안 봄 - IRC는 비밀번호 없이 접속하는 게 보통이라(NickServ
+        # 비번은 선택), 빈 비밀번호를 요구하면 IRC 자동로그인이 항상 조용히 안 걸림
+        if prefs.get("auto_login") and prefs.get("user_id"):
+            self._handle_login_submit("login")
+    def _is_pre_login(self) -> bool:
+        """아직 로그인 전 화면(시작화면/로그인화면)에 있는지.
 
+        자동로그인은 시작화면 직후에 걸리기 때문에 login_page만 보면 안 됨 - 시작화면을
+        도입했을 때 로그인 성공 후 화면 전환이 안 되는 버그가 실제로 이걸로 생겼었음.
+        """
+        return self.stack.currentWidget() in (self.startup_page, self.login_page)
+    def show_page(self, page):
+        self.stack.setCurrentWidget(page)
+    def current_page(self):
+        return self.stack.currentWidget()
     def _apply_size_policy_for_page(self, _index: int):
         """채팅 화면만 크기 조절을 허용하고, 폼 화면들은 내용이 다 보이는 크기로 고정.
 
@@ -363,130 +315,35 @@ class MainWindow(QMainWindow):
         else:
             # 최소=최대로 두면 사용자가 가장자리를 끌어도 크기가 안 바뀜
             self.setFixedSize(*_FORM_FIXED_SIZE)
-
-    def start_boot_sequence(self):
-        """창이 화면에 뜬 뒤 호출 - 시작화면에서 업데이트를 확인/적용하고 로그인으로 넘어감.
-
-        창을 먼저 띄우고 그 다음에 업데이트를 확인하는 순서는 반드시 지켜야 함: 반대로 하면
-        업데이트가 계속 실패하는 환경에서 앱 화면을 한 번도 못 보여줌(실제 사고 이력).
-        """
-        self.stack.setCurrentWidget(self.startup_page)
-        if POST_UPDATE_FLAG in sys.argv:
-            # 방금 업데이트를 마치고 다시 실행된 참 - 업데이트를 또 확인할 필요가 없고,
-            # 사용자는 이미 한참 기다렸으므로 로고도 짧게만 보여주고 바로 로그인으로 감
-            self.startup_page.set_status("업데이트 완료! 시작하는 중...")
-            QTimer.singleShot(_SPLASH_POST_UPDATE_MS, self._go_to_login)
+    def _handle_channel_submit(self, action: str):
+        values = self.channel_page.get_values()
+        if not values["channel"]:
+            self.channel_page.show_status("채널명을 입력하세요.")
             return
-        QTimer.singleShot(_SPLASH_MIN_MS, self._boot_check_update)
-
-    def _boot_check_update(self):
-        from gui import update_flow
-
-        self.startup_page.set_status("업데이트 확인 중...")
-        QApplication.processEvents()
-        if update_flow.check_and_apply(self.startup_page):
-            # 업데이트 적용 중 - 곧 이 프로세스가 끝나고 새 버전이 뜸. 그동안 창이 그냥
-            # 멈춰 보이지 않도록 안내 문구를 남겨둠(설치가 끝날 때까지 이 화면이 유지됨)
-            self.startup_page.set_status("업데이트를 설치하고 있습니다. 곧 자동으로 다시 시작됩니다...")
-            QApplication.processEvents()
+        if action == "create":
+            self.session.create_channel(values["channel"], values["key"])
+        else:
+            self.session.join_channel(values["channel"], values["key"])
+    def _handle_add_channel(self):
+        """채팅 화면 안에서 채널을 추가로 입장 (기존 채널을 떠나지 않음, 새 채널 생성은 지원 안 함)"""
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
+        channel, ok = gui_client.themed_get_text(self.chat_page, "채널 추가", "입장할 채널명:")
+        channel = channel.strip()
+        if not ok or not channel:
             return
-        self.startup_page.hide_progress()
-        self._go_to_login()
-
-    def _go_to_login(self):
-        self.stack.setCurrentWidget(self.login_page)
-        # 업데이트로 새 버전이 된 뒤 처음 켠 것이면 "뭐가 바뀌었는지"를 한 번 보여준다.
-        # 로그인 화면이 뜬 뒤에 띄우는 이유: 시작화면 위에 겹치면 업데이트가 아직 진행
-        # 중인 것처럼 보인다. 저절로 닫히지 않으며, 한 버전당 한 번만 뜬다
-        QTimer.singleShot(300, self._show_changelog_once)
-        # 자동로그인은 로그인 화면이 실제로 보이는 상태에서 시작해야 "연결 중..." 표시와
-        # '연결 취소' 버튼이 정상적으로 보임
-        QTimer.singleShot(100, self._maybe_auto_login)
-
-    def _show_changelog_once(self):
-        """업데이트 뒤 처음 켰으면 변경 내역 창을 띄우고, 채팅에도 한 줄 남길 준비를 한다.
-
-        창만 띄우면 닫는 순간 사라져서 "뭐가 바뀐 거였지?" 할 때 볼 곳이 없다.
-        그래서 채널에 들어갈 때 대화창에도 한 줄 남긴다(나에게만 보이는 안내다).
-        """
-        from gui import changelog_dialog
-
-        notes = changelog_dialog.load_notes()
-        if changelog_dialog.show_if_updated(self) and notes:
-            self._pending_update_note = changelog_dialog.summary_line(notes)
-
-    def take_update_note(self) -> str:
-        """채널에 들어갈 때 한 번만 쓰고 비운다."""
-        note, self._pending_update_note = self._pending_update_note, ""
-        return note
-
-    # ---------------- 끊김 감지와 자동 재접속 ----------------
-
-    def _check_connection_alive(self):
-        """조용한 연결이 진짜 살아 있는지 확인한다.
-
-        TCP는 상대가 조용히 사라져도 남은 쪽이 한참 모른다(노트북이 잠들거나 와이파이가
-        연결을 버리는 경우). 그동안 화면에는 멀쩡히 접속된 것처럼 보이고 보낸 메시지는
-        그냥 사라진다. 서버(UnrealIRCd)는 180초 동안 우리 응답이 없으면 끊어버리는데,
-        그때는 이미 "왜 팅겼는지" 모르는 상태가 된다. 그래서 우리가 먼저 확인한다.
-        """
-        if self._is_pre_login() or self._intentional_close or not self.session.my_id:
-            return
-        if self.client.state() != QAbstractSocket.SocketState.ConnectedState:
-            return
-        silence = time.time() - getattr(self.client, "last_rx_at", time.time())
-        action = liveness.action_for(silence)
-        if action == liveness.PING:
-            self.session.keepalive()
-        elif action == liveness.DEAD:
-            # 살아 있으면 핑에 곧바로 답이 온다. 그래도 조용하다면 죽은 연결이다 -
-            # 끊어서 평소의 재접속 절차를 태운다(가만히 두면 영영 모른다)
-            error_log.log_text(
-                f"{int(silence)}초 동안 아무 것도 오지 않아 죽은 연결로 판단하고 다시 붙습니다.",
-                tag="연결 확인")
-            self.client.abort()
-
-    def _on_socket_disconnected(self):
-        """서버와의 연결이 끊어졌을 때. 일부러 끊은 게 아니면 재접속 정책에 맡긴다.
-
-        예전엔 끊김을 알려주는 경로가 아예 없어서, 서버가 죽어도 화면상으론 멀쩡해 보이고
-        메시지만 조용히 안 나갔음."""
-        if self._intentional_close or self._is_pre_login() or not self.session.my_id:
-            return
-        self._reconnect.start(self.session.joined_channels)
-
-    def _try_reconnect(self):
-        """재접속 정책이 "지금 붙어라"고 할 때 실제로 하는 일."""
-        protocol = self._protocol_mode
-        self.client.abort()
-        self.client.set_mode(protocol)
-        # 세션을 새로 만들어야 이전 연결의 채널/멤버 상태가 섞이지 않음
-        transport = self.client.send_irc if protocol == "irc" else self.client.send_cmd
-        self.session = build_session(
-            protocol, self._host, self._port,
-            transport=transport, on_event=self._on_domain_event,
+        key, ok2 = gui_client.themed_get_text(
+            self.chat_page, "채널 추가", "채널 비밀번호 (없으면 비워둠):", QLineEdit.EchoMode.Password
         )
-        self._auth_mode = "login"
-        self._connecting = True
-        # 타임아웃을 걸어둬야 "연결도 실패도 안 되고 매달려 있는" 경우에 다음 시도로 넘어감
-        # (방화벽이 조용히 버리는 경우가 그렇다 - 실패 신호가 영영 안 온다)
-        self._connect_timer.start(CONNECT_TIMEOUT_MS)
-        self.client.connect_to_server(
-            self._host, self._port, self._pending_cert_path, self._pending_ssl
-        )
-
-    def _on_reconnect_logged_in(self):
-        """재접속 후 로그인까지 성공했을 때 - 보던 채널로 다시 들어감"""
-        self._stop_connecting()
-        # 세션을 새로 만들었으므로 내 아이콘 기억도 새로 심어줘야 함. 안 그러면 재접속
-        # 뒤 IRC에서 남들에게 내 아이콘이 안 뿌려지고 프로필 창도 비어 보임
-        self.session.restore_my_profile(avatar_store.load_avatars().get(self.session.my_id))
-        for channel in self._reconnect.succeeded():
-            self.session.join_channel(channel)
-
-    def _cancel_reconnect(self):
-        self._reconnect.cancel()
-
+        key = key if ok2 else ""
+        self.session.join_channel(channel, key)
+    def _handle_leave_channel(self, channel: str):
+        self.session.leave_channel(channel)
+    def _handle_all_channels_left(self):
+        """마지막 채널까지 나가면 채널 선택 화면으로 돌아감(빈 채팅 화면에 갇히지 않게).
+        연결은 그대로 유지하므로 바로 다른 채널에 들어갈 수 있음"""
+        if self.stack.currentWidget() is self.chat_page:
+            self.channel_page.show_status("")
+            self.stack.setCurrentWidget(self.channel_page)
     def _notify_all_channels(self, text: str):
         """지금 열어둔 모든 채널에 안내를 남김. 채널이 없으면 보고 있는 화면에 표시."""
         channels = self.chat_page.open_channels()
@@ -499,179 +356,8 @@ class MainWindow(QMainWindow):
             return
         for channel in channels:
             self.chat_page.append_system(channel, text)
+    # ---------------- 접속 / 재접속 / 연결 확인 ----------------
 
-    def _handle_all_channels_left(self):
-        """마지막 채널까지 나가면 채널 선택 화면으로 돌아감(빈 채팅 화면에 갇히지 않게).
-        연결은 그대로 유지하므로 바로 다른 채널에 들어갈 수 있음"""
-        if self.stack.currentWidget() is self.chat_page:
-            self.channel_page.show_status("")
-            self.stack.setCurrentWidget(self.channel_page)
-
-    def _handle_back_to_login(self):
-        """채널 화면에서 로그인 화면으로 되돌아가기(로그아웃).
-
-        연결을 끊고 세션도 새로 비움 - 안 그러면 이전 계정의 채널/멤버 상태가 다음
-        로그인에 섞임. 사용자가 직접 되돌아온 것이므로 자동로그인은 이번 실행 동안
-        다시 걸지 않음(안 그러면 로그인 화면에 도착하자마자 되돌아온 계정으로 다시
-        들어가버려서 계정을 바꿀 수가 없음).
-        """
-        self._auto_login_suppressed = True
-        self._cancel_reconnect()
-        self._intentional_close = True  # 일부러 끊는 것이므로 자동 재접속 대상이 아님
-        self._stop_connecting()
-        self._say_goodbye("로그아웃")
-        self.client.abort()
-        self.session = build_session(
-            "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
-        )
-        self.chat_page.reset()
-        self._prober.reset()   # 서버가 바뀌면 사람도 프로그램도 다른 세상이다
-        self._channel_probed.clear()
-        self._seen_members.clear()
-        self._retry_scheduled.clear()
-        self._asked_in_channel.clear()
-        self.login_page.show_status("")
-        self.stack.setCurrentWidget(self.login_page)
-
-    # ---------------- 세션에서 파생되는 값들 ----------------
-    # 예전에는 MainWindow에도 my_id/_irc_current_nick/_my_avatar_b64/_protocol_mode를 따로
-    # 들고 있어서 세션과 어긋날 여지가 있었음(같은 사실을 두 곳이 기억하는 구조). 전부
-    # 세션에서 파생시키면 그런 불일치가 구조적으로 불가능해짐.
-
-    @property
-    def _protocol_mode(self) -> str:
-        return self.session.protocol_mode
-
-    @property
-    def my_id(self) -> str:
-        return self.session.my_id
-
-    @property
-    def _my_avatar_b64(self) -> str | None:
-        return self.session.avatars.get(self.session.my_id)
-
-    @property
-    def pending_mode(self) -> str:
-        return self.session.pending_auth_mode
-
-    def _is_pre_login(self) -> bool:
-        """아직 로그인 전 화면(시작화면/로그인화면)에 있는지.
-
-        자동로그인은 시작화면 직후에 걸리기 때문에 login_page만 보면 안 됨 - 시작화면을
-        도입했을 때 로그인 성공 후 화면 전환이 안 되는 버그가 실제로 이걸로 생겼었음.
-        """
-        return self.stack.currentWidget() in (self.startup_page, self.login_page)
-
-    def set_window_icon(self, icon: QIcon):
-        self.setWindowIcon(icon)
-        self._tray.set_icon(icon)
-        if self._title_bar is not None:
-            self._title_bar.set_icon(icon)
-
-    def closeEvent(self, event):
-        """창의 X는 '종료'가 아니라 '치우기'다.
-
-        메신저는 창을 닫았다고 나가버리면 곤란하다. 창만 숨기고 연결은 유지하다가,
-        트레이 아이콘 메뉴에서 '종료'를 눌러야 실제로 끝난다(그때는 _quitting이 켜진다).
-        트레이를 못 쓰는 환경이거나 설정에서 껐으면 예전처럼 그냥 종료한다.
-        """
-        if not self._quitting and self._tray.available and app_prefs.get("close_to_tray"):
-            event.ignore()
-            self.hide()
-            # 안내는 처음 한 번만. 닫을 때마다 뜨면 성가시기만 하다
-            if not app_prefs.get("tray_hint_shown"):
-                app_prefs.set_value("tray_hint_shown", True)
-                self._tray.notify(APP_TITLE, "창을 닫아도 계속 받습니다. 종료하려면 "
-                                             "이 아이콘을 우클릭해 '종료'를 누르세요.")
-            return
-        # 종료하면서 소켓이 끊기는 것도 disconnected로 오므로, 여기서 미리 막지 않으면
-        # 앱이 닫히는 중에 재접속 타이머가 걸림
-        self._intentional_close = True
-        self._cancel_reconnect()
-        self._say_goodbye("종료")
-        self._tray.hide()
-        super().closeEvent(event)
-
-    def _say_goodbye(self, reason: str):
-        """끊기 전에 서버에 "나갑니다"라고 알린다(IRC는 QUIT).
-
-        안 보내고 그냥 소켓을 닫으면 서버는 한참 뒤 핑 응답이 없어서야 알아챈다. 그동안
-        채널 사람들 목록에는 유령처럼 남아 있고 나중에 "Ping timeout"으로 나갔다고 뜬다.
-
-        쓴 줄이 실제로 나갈 때까지 잠깐 기다린다 - write()는 예약만 하므로, 곧바로
-        소켓을 닫으면 그 줄이 사라져서 보낸 의미가 없다.
-        """
-        try:
-            self.session.disconnect_gracefully(reason)
-            self.client.flush_pending()
-        except Exception:  # noqa: BLE001 - 끝내는 중이라 무슨 일이 있어도 종료는 돼야 한다
-            pass
-
-    def quit_app(self):
-        """트레이 메뉴의 '종료' - 이제 진짜로 끝낸다."""
-        self._quitting = True
-        self.close()
-        QApplication.instance().quit()
-
-    def show_from_tray(self):
-        """트레이에서 다시 창을 꺼냄. 최소화돼 있었으면 원래 크기로 되돌린다."""
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
-
-    def notify_new_message(self, sender: str, text: str, channel: str):
-        """창을 보고 있지 않을 때만 오른쪽 아래에 알림을 띄운다.
-
-        보고 있는데도 뜨면 방해만 된다 - 창이 떠 있고 활성 상태면 화면에 이미 보인다.
-        """
-        if self.isVisible() and self.isActiveWindow():
-            return
-        self._tray.notify(sender, text, channel)
-
-    def changeEvent(self, event):
-        # 버튼 클릭이 아니라 더블클릭/에어로 스냅 등 다른 경로로 최대화 상태가
-        # 바뀌어도 타이틀바의 최대화<->복원 아이콘이 항상 실제 상태와 맞도록 동기화
-        if event.type() == event.Type.WindowStateChange and self._title_bar is not None:
-            self._title_bar.set_maximized(self.isMaximized())
-        super().changeEvent(event)
-
-    def _resize_edges_at(self, local_pos: QPoint) -> Qt.Edges:
-        if self.isMaximized():
-            return Qt.Edges()
-        w, h = self.width(), self.height()
-        bw = self._RESIZE_BORDER
-        edges = Qt.Edges()
-        if local_pos.x() < bw:
-            edges |= Qt.Edge.LeftEdge
-        elif local_pos.x() > w - bw:
-            edges |= Qt.Edge.RightEdge
-        if local_pos.y() < bw:
-            edges |= Qt.Edge.TopEdge
-        elif local_pos.y() > h - bw:
-            edges |= Qt.Edge.BottomEdge
-        return edges
-
-    def eventFilter(self, obj, event):
-        # 프레임 없는 창은 OS가 알아서 해주던 가장자리 크기조절이 사라지므로,
-        # 자식 위젯이 마우스 이벤트를 먼저 가로채기 전에(앱 전역 이벤트 필터라 위젯
-        # 디스패치보다 먼저 통과함) 창 가장자리 근처인지 직접 확인해서
-        # QWindow.startSystemResize()로 OS의 네이티브 크기조절 루프를 그대로 넘김
-        et = event.type()
-        if et in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress) and isinstance(obj, QWidget):
-            if obj.window() is self:
-                local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
-                edges = self._resize_edges_at(local_pos)
-                if et == QEvent.Type.MouseMove:
-                    key = frozenset(e for e in (Qt.Edge.TopEdge, Qt.Edge.BottomEdge, Qt.Edge.LeftEdge, Qt.Edge.RightEdge) if edges & e)
-                    self.setCursor(_RESIZE_EDGE_CURSORS.get(key, Qt.CursorShape.ArrowCursor))
-                elif edges and event.button() == Qt.MouseButton.LeftButton:
-                    handle = self.windowHandle()
-                    if handle is not None:
-                        handle.startSystemResize(edges)
-                        return True
-        return super().eventFilter(obj, event)
-
-    # ---------------- 로그인 ----------------
     def _handle_login_submit(self, mode: str):
         """로그인/회원가입 버튼 -> 입력값 검사 -> 세션 준비 -> 접속.
 
@@ -694,17 +380,6 @@ class MainWindow(QMainWindow):
             self._on_connected()
             return
         self._connect_to(request)
-
-    def _remember(self, request):
-        """다시 접속할 때(재접속 포함) 쓰려고 이번 접속 정보를 기억해둠."""
-        self._pending_user_id = request.user_id
-        self._pending_password = request.password
-        self._pending_cert_path = request.cert_path
-        self._pending_auto_login = request.auto_login
-        self._pending_ssl = request.use_ssl
-        self._host = request.host
-        self._port = request.port
-
     def _start_session(self, request):
         """로그인 시도마다 도메인 세션을 새로 만듦 - 이전 세션의 채널/멤버 상태가 안 섞이게.
 
@@ -717,7 +392,6 @@ class MainWindow(QMainWindow):
         )
         # '/'만 쳐도 명령 목록이 뜨게 - 지원 명령은 프로토콜마다 다르므로 코어에서 받아옴
         self.chat_page.set_command_specs(self.session.command_specs())
-
     def _connect_to(self, request):
         self.login_page.show_status(
             f"연결 중... ({request.mode_label}, 최대 10초, 언제든 '연결 취소' 가능)",
@@ -732,50 +406,28 @@ class MainWindow(QMainWindow):
         except Exception as e:  # noqa: BLE001
             self._stop_connecting()
             self.login_page.show_status(f"오류: {e}")
-
-    def _save_login_prefs(self):
-        """로그인이 실제로 성공한 시점에만 호출함. 자동로그인 체크박스를 껐다면
-        비밀번호는 저장하지 않고(민감정보), 아이디/서버 주소 등은 다음에 편하게
-        쓸 수 있도록 계속 기억해둠. 매번 새로 덮어써서, 체크박스를 껐다가 로그인하면
-        이전에 저장돼있던 비밀번호도 자연스럽게 지워짐"""
-        prefs = {
-            "user_id": self._pending_user_id,
-            "host": self._host,
-            "port": self._port,
-            "ssl": self._pending_ssl,
-            "cert_path": self._pending_cert_path,
-            "protocol": self._protocol_mode,
-            "auto_login": self._pending_auto_login,
-        }
-        if self._pending_auto_login:
-            prefs["password"] = self._pending_password
-        login_prefs.save(prefs)
-
-    def _maybe_auto_login(self):
-        """저장된 자동로그인 정보가 있으면 앱을 켜자마자 자동으로 로그인 시도.
-        로그인 화면의 입력값은 LoginPage._load_saved_prefs()에서 이미 채워둔 상태라
-        여기서는 그걸 그대로 제출하기만 하면 됨"""
-        if self._auto_login_suppressed:
-            return  # 사용자가 직접 로그아웃해서 돌아온 경우 - 다시 자동으로 들어가면 계정을 못 바꿈
-        prefs = login_prefs.load()
-        # password는 필수로 안 봄 - IRC는 비밀번호 없이 접속하는 게 보통이라(NickServ
-        # 비번은 선택), 빈 비밀번호를 요구하면 IRC 자동로그인이 항상 조용히 안 걸림
-        if prefs.get("auto_login") and prefs.get("user_id"):
-            self._handle_login_submit("login")
-
-    def _stop_connecting(self):
-        self._connecting = False
-        self._auth_phase = False
-        self._connect_timer.stop()
-        self.login_page.set_connecting(False)
-
-    def _handle_cancel_connect(self):
-        if not self._connecting:
-            return
-        self._stop_connecting()
-        self.client.abort()
-        self.login_page.show_status("연결을 취소했습니다.", error=False)
-
+    def _on_tcp_connected(self):
+        # SSL 모드는 TLS 핸드셰이크가 끝나는 encrypted() 신호를 기다려야 함.
+        # (여기서 로그인 정보를 보내면 핸드셰이크 완료 전에 취소/타임아웃 창이 사라짐)
+        if not self._pending_ssl:
+            self._on_connected()
+    def _on_connected(self):
+        # 소켓/TLS 연결은 끝났지만 아직 로그인 응답을 못 받은 상태이므로 취소/타임아웃을
+        # 계속 활성 상태로 유지한 채 응답 대기 단계로 넘어간다 (연결만 되고 로그인 응답이
+        # 영영 안 오는 경우에도 무한정 "연결 중"에 멈추지 않도록).
+        self._connecting = True
+        self._auth_phase = True
+        self.login_page.set_connecting(True)
+        self._connect_timer.start(CONNECT_TIMEOUT_MS)
+        if self._protocol_mode == "irc":
+            self.login_page.show_status("서버 접속 중... (언제든 '연결 취소' 가능)", error=False)
+        else:
+            self.login_page.show_status("로그인 확인 중... (언제든 '연결 취소' 가능)", error=False)
+        # IRC는 회원가입 개념이 없어서 login()이 곧 등록 핸드셰이크임(프로토콜 전략이 처리)
+        if self._auth_mode == "register":
+            self.session.register(self._pending_user_id, self._pending_password)
+        else:
+            self.session.login(self._pending_user_id, self._pending_password)
     def _on_connect_timeout(self):
         if not self._connecting:
             return
@@ -803,31 +455,6 @@ class MainWindow(QMainWindow):
             timeout_message = f"연결 시간이 초과되었습니다. ({CONNECT_TIMEOUT_MS // 1000}초)"
             self.login_page.show_status(timeout_message)
             self._diagnose_network(timeout_message)
-
-    def _on_tcp_connected(self):
-        # SSL 모드는 TLS 핸드셰이크가 끝나는 encrypted() 신호를 기다려야 함.
-        # (여기서 로그인 정보를 보내면 핸드셰이크 완료 전에 취소/타임아웃 창이 사라짐)
-        if not self._pending_ssl:
-            self._on_connected()
-
-    def _on_connected(self):
-        # 소켓/TLS 연결은 끝났지만 아직 로그인 응답을 못 받은 상태이므로 취소/타임아웃을
-        # 계속 활성 상태로 유지한 채 응답 대기 단계로 넘어간다 (연결만 되고 로그인 응답이
-        # 영영 안 오는 경우에도 무한정 "연결 중"에 멈추지 않도록).
-        self._connecting = True
-        self._auth_phase = True
-        self.login_page.set_connecting(True)
-        self._connect_timer.start(CONNECT_TIMEOUT_MS)
-        if self._protocol_mode == "irc":
-            self.login_page.show_status("서버 접속 중... (언제든 '연결 취소' 가능)", error=False)
-        else:
-            self.login_page.show_status("로그인 확인 중... (언제든 '연결 취소' 가능)", error=False)
-        # IRC는 회원가입 개념이 없어서 login()이 곧 등록 핸드셰이크임(프로토콜 전략이 처리)
-        if self._auth_mode == "register":
-            self.session.register(self._pending_user_id, self._pending_password)
-        else:
-            self.session.login(self._pending_user_id, self._pending_password)
-
     def _on_connection_failed(self, err: str):
         if not self._connecting:
             # 사용자가 취소했거나 타임아웃으로 이미 처리된 경우 - 중복 메시지 방지
@@ -840,7 +467,17 @@ class MainWindow(QMainWindow):
             friendly = _friendly_connection_error(err, self._pending_ssl, self.client._pinned_cert)
             self.login_page.show_status(friendly)
             self._diagnose_network(friendly)
-
+    def _handle_cancel_connect(self):
+        if not self._connecting:
+            return
+        self._stop_connecting()
+        self.client.abort()
+        self.login_page.show_status("연결을 취소했습니다.", error=False)
+    def _stop_connecting(self):
+        self._connecting = False
+        self._auth_phase = False
+        self._connect_timer.stop()
+        self.login_page.set_connecting(False)
     def _diagnose_network(self, fallback_message: str):
         """접속 실패가 '네트워크가 막은 것'인지 확인해서 안내를 더 정확하게 바꾼다.
 
@@ -877,33 +514,193 @@ class MainWindow(QMainWindow):
 
         self._probe.finished.connect(done)
         self._probe.start(self._host)
+    def _check_connection_alive(self):
+        """조용한 연결이 진짜 살아 있는지 확인한다.
 
-    # ---------------- 채널 ----------------
-    def _handle_channel_submit(self, action: str):
-        values = self.channel_page.get_values()
-        if not values["channel"]:
-            self.channel_page.show_status("채널명을 입력하세요.")
+        TCP는 상대가 조용히 사라져도 남은 쪽이 한참 모른다(노트북이 잠들거나 와이파이가
+        연결을 버리는 경우). 그동안 화면에는 멀쩡히 접속된 것처럼 보이고 보낸 메시지는
+        그냥 사라진다. 서버(UnrealIRCd)는 180초 동안 우리 응답이 없으면 끊어버리는데,
+        그때는 이미 "왜 팅겼는지" 모르는 상태가 된다. 그래서 우리가 먼저 확인한다.
+        """
+        if self._is_pre_login() or self._intentional_close or not self.session.my_id:
             return
-        if action == "create":
-            self.session.create_channel(values["channel"], values["key"])
-        else:
-            self.session.join_channel(values["channel"], values["key"])
+        if self.client.state() != QAbstractSocket.SocketState.ConnectedState:
+            return
+        silence = time.time() - getattr(self.client, "last_rx_at", time.time())
+        action = liveness.action_for(silence)
+        if action == liveness.PING:
+            self.session.keepalive()
+        elif action == liveness.DEAD:
+            # 살아 있으면 핑에 곧바로 답이 온다. 그래도 조용하다면 죽은 연결이다 -
+            # 끊어서 평소의 재접속 절차를 태운다(가만히 두면 영영 모른다)
+            error_log.log_text(
+                f"{int(silence)}초 동안 아무 것도 오지 않아 죽은 연결로 판단하고 다시 붙습니다.",
+                tag="연결 확인")
+            self.client.abort()
+    def _on_socket_disconnected(self):
+        """서버와의 연결이 끊어졌을 때. 일부러 끊은 게 아니면 재접속 정책에 맡긴다.
 
-    def _handle_add_channel(self):
-        """채팅 화면 안에서 채널을 추가로 입장 (기존 채널을 떠나지 않음, 새 채널 생성은 지원 안 함)"""
-        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
-        channel, ok = gui_client.themed_get_text(self.chat_page, "채널 추가", "입장할 채널명:")
-        channel = channel.strip()
-        if not ok or not channel:
+        예전엔 끊김을 알려주는 경로가 아예 없어서, 서버가 죽어도 화면상으론 멀쩡해 보이고
+        메시지만 조용히 안 나갔음."""
+        if self._intentional_close or self._is_pre_login() or not self.session.my_id:
             return
-        key, ok2 = gui_client.themed_get_text(
-            self.chat_page, "채널 추가", "채널 비밀번호 (없으면 비워둠):", QLineEdit.EchoMode.Password
+        self._reconnect.start(self.session.joined_channels)
+    def _try_reconnect(self):
+        """재접속 정책이 "지금 붙어라"고 할 때 실제로 하는 일."""
+        protocol = self._protocol_mode
+        self.client.abort()
+        self.client.set_mode(protocol)
+        # 세션을 새로 만들어야 이전 연결의 채널/멤버 상태가 섞이지 않음
+        transport = self.client.send_irc if protocol == "irc" else self.client.send_cmd
+        self.session = build_session(
+            protocol, self._host, self._port,
+            transport=transport, on_event=self._on_domain_event,
         )
-        key = key if ok2 else ""
-        self.session.join_channel(channel, key)
+        self._auth_mode = "login"
+        self._connecting = True
+        # 타임아웃을 걸어둬야 "연결도 실패도 안 되고 매달려 있는" 경우에 다음 시도로 넘어감
+        # (방화벽이 조용히 버리는 경우가 그렇다 - 실패 신호가 영영 안 온다)
+        self._connect_timer.start(CONNECT_TIMEOUT_MS)
+        self.client.connect_to_server(
+            self._host, self._port, self._pending_cert_path, self._pending_ssl
+        )
+    def _on_reconnect_logged_in(self):
+        """재접속 후 로그인까지 성공했을 때 - 보던 채널로 다시 들어감"""
+        self._stop_connecting()
+        # 세션을 새로 만들었으므로 내 아이콘 기억도 새로 심어줘야 함. 안 그러면 재접속
+        # 뒤 IRC에서 남들에게 내 아이콘이 안 뿌려지고 프로필 창도 비어 보임
+        self.session.restore_my_profile(avatar_store.load_avatars().get(self.session.my_id))
+        for channel in self._reconnect.succeeded():
+            self.session.join_channel(channel)
+    def _cancel_reconnect(self):
+        self._reconnect.cancel()
+    def _remember(self, request):
+        """다시 접속할 때(재접속 포함) 쓰려고 이번 접속 정보를 기억해둠."""
+        self._pending_user_id = request.user_id
+        self._pending_password = request.password
+        self._pending_cert_path = request.cert_path
+        self._pending_auto_login = request.auto_login
+        self._pending_ssl = request.use_ssl
+        self._host = request.host
+        self._port = request.port
+    def _save_login_prefs(self):
+        """로그인이 실제로 성공한 시점에만 호출함. 자동로그인 체크박스를 껐다면
+        비밀번호는 저장하지 않고(민감정보), 아이디/서버 주소 등은 다음에 편하게
+        쓸 수 있도록 계속 기억해둠. 매번 새로 덮어써서, 체크박스를 껐다가 로그인하면
+        이전에 저장돼있던 비밀번호도 자연스럽게 지워짐"""
+        prefs = {
+            "user_id": self._pending_user_id,
+            "host": self._host,
+            "port": self._port,
+            "ssl": self._pending_ssl,
+            "cert_path": self._pending_cert_path,
+            "protocol": self._protocol_mode,
+            "auto_login": self._pending_auto_login,
+        }
+        if self._pending_auto_login:
+            prefs["password"] = self._pending_password
+        login_prefs.save(prefs)
+    def _say_goodbye(self, reason: str):
+        """끊기 전에 서버에 "나갑니다"라고 알린다(IRC는 QUIT).
 
-    def _handle_leave_channel(self, channel: str):
-        self.session.leave_channel(channel)
+        안 보내고 그냥 소켓을 닫으면 서버는 한참 뒤 핑 응답이 없어서야 알아챈다. 그동안
+        채널 사람들 목록에는 유령처럼 남아 있고 나중에 "Ping timeout"으로 나갔다고 뜬다.
+
+        쓴 줄이 실제로 나갈 때까지 잠깐 기다린다 - write()는 예약만 하므로, 곧바로
+        소켓을 닫으면 그 줄이 사라져서 보낸 의미가 없다.
+        """
+        try:
+            self.session.disconnect_gracefully(reason)
+            self.client.flush_pending()
+        except Exception:  # noqa: BLE001 - 끝내는 중이라 무슨 일이 있어도 종료는 돼야 한다
+            pass
+    def _handle_back_to_login(self):
+        """채널 화면에서 로그인 화면으로 되돌아가기(로그아웃).
+
+        연결을 끊고 세션도 새로 비움 - 안 그러면 이전 계정의 채널/멤버 상태가 다음
+        로그인에 섞임. 사용자가 직접 되돌아온 것이므로 자동로그인은 이번 실행 동안
+        다시 걸지 않음(안 그러면 로그인 화면에 도착하자마자 되돌아온 계정으로 다시
+        들어가버려서 계정을 바꿀 수가 없음).
+        """
+        self._auto_login_suppressed = True
+        self._cancel_reconnect()
+        self._intentional_close = True  # 일부러 끊는 것이므로 자동 재접속 대상이 아님
+        self._stop_connecting()
+        self._say_goodbye("로그아웃")
+        self.client.abort()
+        self.session = build_session(
+            "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
+        )
+        self.chat_page.reset()
+        self._probe_ctl.reset()   # 서버가 바뀌면 사람도 프로그램도 다른 세상이다
+        self.login_page.show_status("")
+        self.stack.setCurrentWidget(self.login_page)
+    # ---------------- 도메인 이벤트 -> 화면 ----------------
+
+    # 예전에는 이 두 메서드가 각각 150줄/70줄짜리 거대한 분기문이었고, 같은 로직이
+    # cli_client.py에도 따로 구현돼 있었음. 지금은 해석을 전부 chat_core가 하고
+    # 여기서는 원시 메시지를 넘기기만 함 - GUI/CLI가 같은 코어를 공유하게 됨.
+    def _on_irc_line(self, msg: irc_protocol.IrcMessage):
+        self.session.handle_incoming(msg)
+    def _on_message(self, msg: dict):
+        self.session.handle_incoming(msg)
+    def _on_domain_event(self, event):
+        """코어가 발행한 이벤트를 화면에 반영하는 유일한 지점.
+
+        무엇을 할지는 gui/event_router.py의 표가 정한다. 예전엔 이 메서드 하나가
+        isinstance 149줄 사슬이어서, 이벤트를 하나 늘릴 때마다 여기를 열어야 했다.
+        """
+        event_router.route(self, event)
+    def _handle_send(self, channel: str, text: str):
+        self.session.send_message(channel, text)
+    # ---------------- event_router가 쓰는 창구 (라우터가 창 내부 사정을 몰라도 되게) ----------------
+
+    def warn(self, title: str, text: str):
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
+        gui_client.themed_warning(self, title, text)
+    # 아래는 event_router가 화면을 만질 때 쓰는 창구. 라우터가 MainWindow 내부 사정을
+    # 몰라도 되게(그래서 라우터만 따로 테스트할 수 있게) 이름을 정리해서 열어둔다
+
+    def is_pre_login(self) -> bool:
+        return self._is_pre_login()
+    @property
+    def protocol_mode(self) -> str:
+        return self._protocol_mode
+    def stop_connecting(self):
+        self._stop_connecting()
+    def save_login_prefs(self):
+        self._save_login_prefs()
+    @property
+    def is_reconnecting(self) -> bool:
+        return self._reconnect.active
+    def on_reconnect_logged_in(self):
+        self._on_reconnect_logged_in()
+    def cancel_reconnect(self):
+        self._cancel_reconnect()
+    def notify_all_channels(self, text: str):
+        self._notify_all_channels(text)
+    def notify_new_message(self, sender: str, text: str, channel: str):
+        """창을 보고 있지 않을 때만 오른쪽 아래에 알림을 띄운다.
+
+        보고 있는데도 뜨면 방해만 된다 - 창이 떠 있고 활성 상태면 화면에 이미 보인다.
+        """
+        if self.isVisible() and self.isActiveWindow():
+            return
+        self._tray.notify(sender, text, channel)
+    def recent_server_lines(self) -> list:
+        return self.client.recent_lines()
+    # 누가 무슨 프로그램을 쓰는지 알아보는 일은 gui/client_probe.py가 전담한다.
+    # 창은 "그 일을 시키는 창구"만 남긴다(event_router가 이 이름으로 부른다)
+    def probe_client_versions(self, channel: str):
+        self._probe_ctl.probe(self.session, self._host, channel)
+    def note_server_message(self, text: str) -> bool:
+        return self._probe_ctl.note_server_message(self.session, self._host, text)
+    def _ask_client_version(self, user_id: str):
+        self.session.request_client_version(user_id)
+    def remember_client_version(self, user_id: str, version: str):
+        """알아낸 것을 서버별로 적어둔다 - 다음에 켤 때는 안 물어봐도 된다."""
+        client_version_store.remember(self._host, user_id, version)
+    # ---------------- 프로필 / 치트 ----------------
 
     def _handle_set_avatar(self):
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
@@ -924,74 +721,6 @@ class MainWindow(QMainWindow):
         new_nickname = dlg.result_nickname
         if new_nickname != current_nickname and (new_nickname or not is_irc):
             self.session.set_nickname(new_nickname)
-
-    # ---------------- 채팅 ----------------
-    def _handle_send(self, channel: str, text: str):
-        self.session.send_message(channel, text)
-
-    # ---------------- 프로토콜 메시지 -> 도메인 코어로 위임 ----------------
-    # 예전에는 이 두 메서드가 각각 150줄/70줄짜리 거대한 분기문이었고, 같은 로직이
-    # cli_client.py에도 따로 구현돼 있었음. 지금은 해석을 전부 chat_core가 하고
-    # 여기서는 원시 메시지를 넘기기만 함 - GUI/CLI가 같은 코어를 공유하게 됨.
-    def _on_irc_line(self, msg: irc_protocol.IrcMessage):
-        self.session.handle_incoming(msg)
-
-    def _on_message(self, msg: dict):
-        self.session.handle_incoming(msg)
-
-    # ---------------- 도메인 이벤트 -> 화면 갱신 ----------------
-    # ---------------- 도메인 이벤트 -> 화면 ----------------
-
-    def _on_domain_event(self, event):
-        """코어가 발행한 이벤트를 화면에 반영하는 유일한 지점.
-
-        무엇을 할지는 gui/event_router.py의 표가 정한다. 예전엔 이 메서드 하나가
-        isinstance 149줄 사슬이어서, 이벤트를 하나 늘릴 때마다 여기를 열어야 했다.
-        """
-        event_router.route(self, event)
-
-    # 아래는 event_router가 화면을 만질 때 쓰는 창구. 라우터가 MainWindow 내부 사정을
-    # 몰라도 되게(그래서 라우터만 따로 테스트할 수 있게) 이름을 정리해서 열어둔다
-
-    def is_pre_login(self) -> bool:
-        return self._is_pre_login()
-
-    def current_page(self):
-        return self.stack.currentWidget()
-
-    def show_page(self, page):
-        self.stack.setCurrentWidget(page)
-
-    def stop_connecting(self):
-        self._stop_connecting()
-
-    def save_login_prefs(self):
-        self._save_login_prefs()
-
-    @property
-    def is_reconnecting(self) -> bool:
-        return self._reconnect.active
-
-    def on_reconnect_logged_in(self):
-        self._on_reconnect_logged_in()
-
-    def cancel_reconnect(self):
-        self._cancel_reconnect()
-
-    def notify_all_channels(self, text: str):
-        self._notify_all_channels(text)
-
-    def recent_server_lines(self) -> list:
-        return self.client.recent_lines()
-
-    @property
-    def protocol_mode(self) -> str:
-        return self._protocol_mode
-
-    def warn(self, title: str, text: str):
-        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
-        gui_client.themed_warning(self, title, text)
-
     def play_cheat(self, cheat_id: str):
         """치트 효과 재생. 모르는 치트는 조용히 무시한다."""
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
@@ -1000,3 +729,78 @@ class MainWindow(QMainWindow):
             return
         effect(self.chat_page)
         gui_client._flash_taskbar_icon(self)
+    # ---------------- 창 동작 (닫기/트레이/크기 조절) ----------------
+
+    def closeEvent(self, event):
+        """창의 X는 '종료'가 아니라 '치우기'다.
+
+        메신저는 창을 닫았다고 나가버리면 곤란하다. 창만 숨기고 연결은 유지하다가,
+        트레이 아이콘 메뉴에서 '종료'를 눌러야 실제로 끝난다(그때는 _quitting이 켜진다).
+        트레이를 못 쓰는 환경이거나 설정에서 껐으면 예전처럼 그냥 종료한다.
+        """
+        if not self._quitting and self._tray.available and app_prefs.get("close_to_tray"):
+            event.ignore()
+            self.hide()
+            # 안내는 처음 한 번만. 닫을 때마다 뜨면 성가시기만 하다
+            if not app_prefs.get("tray_hint_shown"):
+                app_prefs.set_value("tray_hint_shown", True)
+                self._tray.notify(APP_TITLE, "창을 닫아도 계속 받습니다. 종료하려면 "
+                                             "이 아이콘을 우클릭해 '종료'를 누르세요.")
+            return
+        # 종료하면서 소켓이 끊기는 것도 disconnected로 오므로, 여기서 미리 막지 않으면
+        # 앱이 닫히는 중에 재접속 타이머가 걸림
+        self._intentional_close = True
+        self._cancel_reconnect()
+        self._say_goodbye("종료")
+        self._tray.hide()
+        super().closeEvent(event)
+    def changeEvent(self, event):
+        # 버튼 클릭이 아니라 더블클릭/에어로 스냅 등 다른 경로로 최대화 상태가
+        # 바뀌어도 타이틀바의 최대화<->복원 아이콘이 항상 실제 상태와 맞도록 동기화
+        if event.type() == event.Type.WindowStateChange and self._title_bar is not None:
+            self._title_bar.set_maximized(self.isMaximized())
+        super().changeEvent(event)
+    def eventFilter(self, obj, event):
+        # 프레임 없는 창은 OS가 알아서 해주던 가장자리 크기조절이 사라지므로,
+        # 자식 위젯이 마우스 이벤트를 먼저 가로채기 전에(앱 전역 이벤트 필터라 위젯
+        # 디스패치보다 먼저 통과함) 창 가장자리 근처인지 직접 확인해서
+        # QWindow.startSystemResize()로 OS의 네이티브 크기조절 루프를 그대로 넘김
+        et = event.type()
+        if et in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress) and isinstance(obj, QWidget):
+            if obj.window() is self:
+                local_pos = self.mapFromGlobal(event.globalPosition().toPoint())
+                edges = self._resize_edges_at(local_pos)
+                if et == QEvent.Type.MouseMove:
+                    key = frozenset(e for e in (Qt.Edge.TopEdge, Qt.Edge.BottomEdge, Qt.Edge.LeftEdge, Qt.Edge.RightEdge) if edges & e)
+                    self.setCursor(_RESIZE_EDGE_CURSORS.get(key, Qt.CursorShape.ArrowCursor))
+                elif edges and event.button() == Qt.MouseButton.LeftButton:
+                    handle = self.windowHandle()
+                    if handle is not None:
+                        handle.startSystemResize(edges)
+                        return True
+        return super().eventFilter(obj, event)
+    def show_from_tray(self):
+        """트레이에서 다시 창을 꺼냄. 최소화돼 있었으면 원래 크기로 되돌린다."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+    def quit_app(self):
+        """트레이 메뉴의 '종료' - 이제 진짜로 끝낸다."""
+        self._quitting = True
+        self.close()
+        QApplication.instance().quit()
+    def _resize_edges_at(self, local_pos: QPoint) -> Qt.Edges:
+        if self.isMaximized():
+            return Qt.Edges()
+        w, h = self.width(), self.height()
+        bw = self._RESIZE_BORDER
+        edges = Qt.Edges()
+        if local_pos.x() < bw:
+            edges |= Qt.Edge.LeftEdge
+        elif local_pos.x() > w - bw:
+            edges |= Qt.Edge.RightEdge
+        if local_pos.y() < bw:
+            edges |= Qt.Edge.TopEdge
+        elif local_pos.y() > h - bw:
+            edges |= Qt.Edge.BottomEdge
+        return edges

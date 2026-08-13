@@ -18,16 +18,10 @@ from gui.theme import AVATAR_GRID_SIZE
 _MENTION_TOKEN_RE = re.compile(r"@([^\s@]+)")
 
 
-def _app_dir() -> str:
-    """아이콘·인증서를 찾는 자리(설치 폴더 / 소스 실행 시 저장소 루트).
-
-    설정과 기록을 두는 데이터 폴더와는 다르다 - app_paths.asset_dir() 설명 참고
-    """
-    return app_paths.asset_dir()
 
 
 def _find_default_cert() -> str:
-    candidate = os.path.join(_app_dir(), "cert.pem")
+    candidate = os.path.join(app_paths.asset_dir(), "cert.pem")
     return candidate if os.path.exists(candidate) else ""
 
 
@@ -204,7 +198,7 @@ def _find_logo_image() -> str:
 
 
 def _find_image_in_app_dirs(names: tuple[str, ...]) -> str:
-    search_dirs = [_app_dir()]
+    search_dirs = [app_paths.asset_dir()]
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         search_dirs.append(meipass)
@@ -221,7 +215,7 @@ def _find_app_icon() -> str:
     # 타이틀바/작업표시줄 아이콘은 Qt가 setWindowIcon()을 직접 호출해야 반영됨 - 그래서
     # exe 옆에 icon.ico가 없어도 항상 찾을 수 있도록 PyInstaller onefile 번들이 풀리는
     # 임시 폴더(sys._MEIPASS)도 함께 찾아봄 (빌드 스크립트가 --add-data로 그 안에 넣어둠)
-    search_dirs = [_app_dir()]
+    search_dirs = [app_paths.asset_dir()]
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         search_dirs.append(meipass)

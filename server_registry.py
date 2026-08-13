@@ -9,11 +9,9 @@ import sys
 import app_paths
 
 
-def _app_dir() -> str:
-    return app_paths.data_dir()
 
 
-SERVERS_FILE = os.path.join(_app_dir(), "servers.json")
+SERVERS_FILE = os.path.join(app_paths.data_dir(), "servers.json")
 
 
 def load_servers() -> list[dict]:
