@@ -12,7 +12,7 @@ import time
 
 from PySide6.QtCore import QEvent, QPoint, Qt, QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtNetwork import QSslSocket
+from PySide6.QtNetwork import QAbstractSocket, QSslSocket
 from PySide6.QtWidgets import (
     QApplication, QDialog, QLineEdit, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
@@ -25,7 +25,7 @@ import irc_protocol
 import login_prefs
 from chat_core import constants
 from chat_core.session import build_session
-from gui import event_router
+from gui import event_router, liveness
 from gui.login_request import parse_login_values
 from gui.reconnect import ReconnectPolicy
 from gui.tray import TrayIcon
@@ -37,7 +37,7 @@ from gui.network_probe import WebReachableProbe, blocked_port_message
 from gui.pages import ChannelPage, ChatPage, LoginPage
 from gui.profile_dialog import ProfileDialog
 from gui.startup_page import StartupPage
-from gui.theme import APP_TITLE, CONNECT_TIMEOUT_MS, IS_WINDOWS
+from gui.theme import APP_TITLE, CONNECT_TIMEOUT_MS, IS_WINDOWS, LIVENESS_CHECK_MS
 from gui.title_bar import TitleBar
 from version import APP_VERSION
 
@@ -156,6 +156,12 @@ class MainWindow(QMainWindow):
         self._alive_timer.timeout.connect(error_log.arm_freeze_watchdog)
         self._alive_timer.start(5000)
         error_log.arm_freeze_watchdog()
+
+        # 연결이 살아 있는지 스스로 확인하는 타이머. 조용하면 우리가 먼저 물어보고,
+        # 그래도 답이 없으면 서버가 끊기 전에 우리가 먼저 다시 붙는다(gui/liveness.py)
+        self._liveness_timer = QTimer(self)
+        self._liveness_timer.timeout.connect(self._check_connection_alive)
+        self._liveness_timer.start(LIVENESS_CHECK_MS)
 
         # 업데이트 직후 채팅창에 한 줄 남길 안내(채널에 들어갈 때 소비된다)
         self._pending_update_note = ""
@@ -415,6 +421,30 @@ class MainWindow(QMainWindow):
         return note
 
     # ---------------- 끊김 감지와 자동 재접속 ----------------
+
+    def _check_connection_alive(self):
+        """조용한 연결이 진짜 살아 있는지 확인한다.
+
+        TCP는 상대가 조용히 사라져도 남은 쪽이 한참 모른다(노트북이 잠들거나 와이파이가
+        연결을 버리는 경우). 그동안 화면에는 멀쩡히 접속된 것처럼 보이고 보낸 메시지는
+        그냥 사라진다. 서버(UnrealIRCd)는 180초 동안 우리 응답이 없으면 끊어버리는데,
+        그때는 이미 "왜 팅겼는지" 모르는 상태가 된다. 그래서 우리가 먼저 확인한다.
+        """
+        if self._is_pre_login() or self._intentional_close or not self.session.my_id:
+            return
+        if self.client.state() != QAbstractSocket.SocketState.ConnectedState:
+            return
+        silence = time.time() - getattr(self.client, "last_rx_at", time.time())
+        action = liveness.action_for(silence)
+        if action == liveness.PING:
+            self.session.keepalive()
+        elif action == liveness.DEAD:
+            # 살아 있으면 핑에 곧바로 답이 온다. 그래도 조용하다면 죽은 연결이다 -
+            # 끊어서 평소의 재접속 절차를 태운다(가만히 두면 영영 모른다)
+            error_log.log_text(
+                f"{int(silence)}초 동안 아무 것도 오지 않아 죽은 연결로 판단하고 다시 붙습니다.",
+                tag="연결 확인")
+            self.client.abort()
 
     def _on_socket_disconnected(self):
         """서버와의 연결이 끊어졌을 때. 일부러 끊은 게 아니면 재접속 정책에 맡긴다.

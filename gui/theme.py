@@ -23,6 +23,8 @@ CHANNEL_SCROLL_BTN_PX = 18
 
 CONNECT_TIMEOUT_MS = 10_000
 # 서버가 끊겼을 때 자동 재접속: 시도할수록 간격을 늘림(죽은 서버를 계속 두드리지 않게)
+# 연결이 살아 있는지 확인하는 주기(gui/liveness.py가 무엇을 할지 정한다)
+LIVENESS_CHECK_MS = 15000
 RECONNECT_BASE_MS = 3_000
 RECONNECT_MAX_MS = 30_000
 RECONNECT_MAX_ATTEMPTS = 10

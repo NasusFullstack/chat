@@ -132,6 +132,11 @@ def format_pong(token: str) -> str:
     return f"PONG :{token}"
 
 
+def format_ping(token: str) -> str:
+    """우리가 서버에 "살아 있냐"고 물어보는 줄. 살아 있으면 곧 PONG이 돌아온다."""
+    return f"PING :{token}"
+
+
 def format_names(channel: str) -> str:
     return f"NAMES {channel}"
 

@@ -1,5 +1,6 @@
 """서버와의 TLS 소켓 통신 (커스텀 JSON 프로토콜 / 실제 IRC 프로토콜 둘 다 지원)."""
 import json
+import time
 from collections import deque
 
 # 사고 직전에 서버가 뭘 보냈는지 알아보려고 남겨두는 줄 수
@@ -21,6 +22,7 @@ class ChatClient(QSslSocket):
     def __init__(self):
         super().__init__()
         self._buffer = b""
+        self.last_rx_at = time.time()
         # 서버에서 받은 마지막 줄들. 채널에서 빠지거나 화면이 비는 사고가 났을 때
         # "그 직전에 서버가 뭘 보냈는지"를 알아야 원인을 찾을 수 있다(재현이 안 되는
         # 증상이라 이 기록이 유일한 단서다). 개수를 제한해서 메모리는 늘지 않는다.
@@ -96,6 +98,9 @@ class ChatClient(QSslSocket):
         self.waitForBytesWritten(timeout_ms)
 
     def _on_ready_read(self):
+        # 마지막으로 뭔가 받은 시각. TCP는 상대가 조용히 사라져도 한참 모르기 때문에,
+        # "얼마나 조용했는가"가 연결이 살아 있는지 판단하는 유일한 근거다
+        self.last_rx_at = time.time()
         self._buffer += bytes(self.readAll())
         if self._mode == "irc":
             self._process_irc_buffer()
