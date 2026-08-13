@@ -18,13 +18,19 @@ DESC_MAX = 200
 
 # og:xxx 와 twitter:xxx 를 둘 다 받음. 속성 순서(content가 앞에 오는 경우)도 있어서
 # 양방향으로 찾는다
-_META_RE = re.compile(
-    r"<meta[^>]+?(?:property|name)\s*=\s*[\"'](og:[^\"']+|twitter:[^\"']+)[\"'][^>]*?"
-    r"content\s*=\s*[\"'](.*?)[\"'][^>]*>"
-    r"|<meta[^>]+?content\s*=\s*[\"'](.*?)[\"'][^>]*?(?:property|name)\s*=\s*[\"']"
-    r"(og:[^\"']+|twitter:[^\"']+)[\"'][^>]*>",
-    re.IGNORECASE | re.DOTALL,
-)
+# 예전에는 meta 태그 하나를 통째로 잡는 큰 정규식을 문서 전체에 돌렸다. 그런데 `.*?`와
+# `[^>]*?`가 겹쳐 있어서, 조건에 안 맞는 <meta를 만날 때마다 뒤로 되돌아가며 문서 끝까지
+# 훑는 일이 반복됐다(catastrophic backtracking). 실측: 어떤 쇼핑몰 페이지(247KB, meta 30개)
+# 에서 **13.7초 동안 화면이 통째로 멈췄다** - 링크 하나 붙였을 뿐인데.
+#
+# 지금은 되돌아갈 일이 없게 두 단계로 나눈다.
+# 1) `<meta ...>` 하나의 범위를 따옴표를 지켜가며 앞에서 뒤로 한 번만 훑어 잘라낸다
+# 2) 잘라낸 짧은 태그 안에서만 속성을 읽는다
+# 문서 길이에 정비례해서 끝나므로 아무리 큰 페이지가 와도 멈추지 않는다.
+_ATTR_RE = re.compile(
+    r"""([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
+_META_PREFIX = "<meta"
+
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _CHARSET_RE = re.compile(rb"""charset\s*=\s*["']?\s*([\w\-]+)""", re.IGNORECASE)
 
@@ -72,6 +78,35 @@ def decode_html(raw: bytes) -> str:
     return raw.decode("utf-8", "replace")
 
 
+
+def _iter_meta_tags(html: str):
+    """`<meta ...>` 하나씩을 잘라서 돌려준다(앞에서 뒤로 한 번만 훑는다).
+
+    따옴표 안의 `>`는 태그 끝으로 치지 않는다 - content="a > b" 같은 값이 실제로 있다.
+    """
+    lower = html.lower()
+    index = 0
+    length = len(html)
+    while True:
+        start = lower.find(_META_PREFIX, index)
+        if start < 0:
+            return
+        cursor = start + len(_META_PREFIX)
+        quote = ""
+        while cursor < length:
+            char = html[cursor]
+            if quote:
+                if char == quote:
+                    quote = ""
+            elif char in "\"'":
+                quote = char
+            elif char == ">":
+                break
+            cursor += 1
+        yield html[start:cursor]
+        index = cursor + 1
+
+
 def parse_meta(html: str, base_url: str = "") -> dict:
     """<head>의 og:/twitter: 태그와 <title>에서 미리보기 정보를 뽑음.
 
@@ -79,10 +114,15 @@ def parse_meta(html: str, base_url: str = "") -> dict:
     image_url은 절대주소로 바꾸고, 접속하면 안 되는 주소면 빼버린다.
     """
     tags = {}
-    for m in _META_RE.finditer(html):
-        key = (m.group(1) or m.group(4) or "").lower()
-        value = m.group(2) if m.group(1) else m.group(3)
-        if key and value and key not in tags:
+    for tag in _iter_meta_tags(html):
+        attrs = {}
+        for m in _ATTR_RE.finditer(tag):
+            name = m.group(1).lower()
+            attrs[name] = m.group(2) or m.group(3) or m.group(4) or ""
+        key = (attrs.get("property") or attrs.get("name") or "").lower()
+        value = attrs.get("content", "")
+        # og:/twitter: 만 본다(그 외 meta는 미리보기와 상관없음)
+        if key.startswith(("og:", "twitter:")) and value and key not in tags:
             tags[key] = value.strip()
 
     def pick(*names):
