@@ -339,6 +339,11 @@ class IrcProtocol(CommonCommands):
     def request_client_version(self, session, user_id: str) -> None:
         session.transport(irc_protocol.format_ctcp_version_request(user_id))
 
+    def keepalive(self, session) -> None:
+        # 서버가 물어보기를 기다리지 않고 우리가 먼저 확인한다. 답(PONG)이 오면 살아
+        # 있는 것이고, 계속 조용하면 죽은 연결이라 다시 붙어야 한다
+        session.transport(irc_protocol.format_ping(session.host or "keepalive"))
+
     def disconnect_gracefully(self, session, reason: str) -> None:
         """나가기 전에 QUIT을 보낸다.
 

@@ -30,6 +30,10 @@ class CustomProtocol(CommonCommands):
         """
         session.apply_client_version(user_id, constants.our_client_version())
 
+    def keepalive(self, session) -> None:
+        # 우리 서버는 연결이 끊기면 바로 알아채므로 따로 물어볼 것이 없다
+        return
+
     def disconnect_gracefully(self, session, reason: str) -> None:
         """우리 서버는 연결이 끊기는 즉시 알아채므로 따로 알릴 것이 없다."""
 

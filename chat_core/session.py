@@ -176,6 +176,12 @@ class ChatSession:
             return
         self.protocol.request_client_version(self, user_id)
 
+    def keepalive(self):
+        """연결이 살아 있는지 확인하는 한 줄을 보낸다(로그인 전에는 보낼 곳이 없다)."""
+        if not self.my_id:
+            return
+        self.protocol.keepalive(self)
+
     def disconnect_gracefully(self, reason: str = ""):
         """앱을 끄거나 로그아웃할 때, 끊기 전에 서버에 알린다."""
         if self.my_id:
