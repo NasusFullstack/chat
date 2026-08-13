@@ -16,7 +16,7 @@ _shake_window를 호출하는데, 이 5개는 테스트가 gui_client 모듈에 
 """
 import time
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QStackedWidget,
                                QTabWidget, QVBoxLayout, QWidget)
 
@@ -29,9 +29,11 @@ from gui.components.channel_sidebar import ChannelSidebar
 from gui.components.member_panel import MemberPanel
 from gui.components.message_input import MessageInput
 from gui.components.message_log import ChannelLogView
+from gui.components.gear_button import GearButton
 from gui.components.sidebar_handle import SidebarHandle
 from gui.link_preview import ImageFetcher
-from gui.theme import AVATAR_MSG_PX, CHANNEL_SIDEBAR_WIDTH, SIDEBAR_HANDLE_WIDTH
+from gui.theme import (AVATAR_MSG_PX, CHANNEL_SIDEBAR_WIDTH, GEAR_BTN_PX,
+                       SIDEBAR_HANDLE_WIDTH)
 
 # 참여자 헤더 높이 - 채팅 카드 상단과 참여자 카드 상단을 같은 높이에 두기 위한 값
 MEMBER_HEADER_HEIGHT = 34
@@ -46,6 +48,8 @@ _CARD_TO_CONTROL_GAP = 6
 
 class ChatPage(QWidget):
     """여러 채널을 탭으로 동시에 열어둘 수 있음"""
+    # 환경설정 톱니가 눌렸다(창을 여는 일은 바깥이 한다)
+    settings_requested = Signal()
 
     def __init__(self, on_send, on_add_channel, on_leave_channel, on_set_avatar,
                  on_all_channels_left=None):
@@ -84,6 +88,12 @@ class ChatPage(QWidget):
         # 사이드바 안에 두면 접었을 때(폭 0) 같이 사라져 다시 펼 방법이 없어진다
         handle_column = QVBoxLayout()
         handle_column.setContentsMargins(0, 0, 0, 0)
+        # 간격을 0으로 둬야 위아래 균형 계산이 정확해진다(기본 간격이 끼면
+        # 손잡이가 그만큼 위로 밀린다 - 실측 3px)
+        handle_column.setSpacing(0)
+        # 맨 아래 톱니와 같은 높이를 위에도 비워둔다 - 그래야 손잡이가 창 세로 가운데에
+        # 그대로 남는다(톱니만 아래에 붙이면 손잡이가 그 높이의 절반만큼 위로 밀린다)
+        handle_column.addSpacing(GEAR_BTN_PX)
         handle_column.addStretch(1)
         self.sidebar_handle = SidebarHandle()
         self.sidebar_handle.set_collapsed(self.channel_sidebar.is_collapsed())
@@ -91,9 +101,17 @@ class ChatPage(QWidget):
         self.channel_sidebar.collapsed_changed.connect(self.sidebar_handle.set_collapsed)
         handle_column.addWidget(self.sidebar_handle, 0, Qt.AlignmentFlag.AlignHCenter)
         handle_column.addStretch(1)
+        # 환경설정 톱니는 채널 목록 **밖**에 둔다. 목록 안에 두면 접었을 때 같이 사라져서
+        # (접힌 폭이 0이다) 설정으로 가는 길이 트레이 메뉴 하나만 남는다
+        self.gear_btn = GearButton()
+        self.gear_btn.clicked.connect(self.settings_requested.emit)
+        handle_column.addWidget(self.gear_btn, 0, Qt.AlignmentFlag.AlignHCenter)
         handle_host = QWidget()
         handle_host.setLayout(handle_column)
-        handle_host.setFixedWidth(SIDEBAR_HANDLE_WIDTH + 6)   # 손잡이 양옆 숨쉴 틈
+        # 손잡이와 환경설정 톱니가 함께 들어가는 열 - 둘 중 넓은 것에 맞춘다
+        # (톱니가 열보다 넓으면 가장자리가 잘려 보인다)
+        handle_host.setFixedWidth(max(SIDEBAR_HANDLE_WIDTH + 6,
+                                      self.gear_btn.width() + 4))
         layout.addWidget(handle_host)
 
         center = QVBoxLayout()

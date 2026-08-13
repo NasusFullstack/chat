@@ -34,6 +34,10 @@ class IrcProtocol(CommonCommands):
     def start_auth(self, session, user_id: str, password: str, mode: str) -> None:
         """IRC는 회원가입 개념이 없음 - mode와 무관하게 등록(registration) 핸드셰이크를 함"""
         session.pending_irc_nick = user_id
+        # 회선이 바뀌어 재접속하면 예전 연결이 서버에 유령으로 남아 이 이름을 못 쓸 수
+        # 있다(뒤에 _가 붙는다). 원래 무엇을 원했는지 기억해뒀다가 되찾는다
+        session.wanted_nick = user_id
+        session.nick_reclaim_pending = False
         session.irc_password = password
         session.irc_identified = False
         session.irc_nick_retries = 0
@@ -239,6 +243,11 @@ class IrcProtocol(CommonCommands):
             )
 
     def _on_nick_collision(self, session, msg):
+        if session.nick_reclaim_pending:
+            # 원래 이름을 되찾으려던 시도가 막힌 것 - 유령 세션이 아직 안 사라졌다.
+            # 사용자가 한 일이 아니므로 알리지 않고, 다음 기회에 다시 시도한다
+            session.nick_reclaim_pending = False
+            return
         if session.nick_change_pending:
             # 접속 후 명시적으로 요청한 닉네임 변경이 거부된 경우 - 연결은 끊지 않고 실패만 알림
             session.nick_change_pending = False
@@ -327,6 +336,8 @@ class IrcProtocol(CommonCommands):
         new_nick = msg.trailing or (msg.params[0] if msg.params else "")
         if old_nick == session.my_id:
             session.nick_change_pending = False
+            # 되찾기가 성공한 것이면 여기서 정리된다(원하는 이름이 되었으므로)
+            session.nick_reclaim_pending = False
             session.set_identity(new_nick)
         for channel in list(session.members.keys()):
             if old_nick in session.members.get(channel, set()):
@@ -338,6 +349,18 @@ class IrcProtocol(CommonCommands):
 
     def request_client_version(self, session, user_id: str) -> None:
         session.transport(irc_protocol.format_ctcp_version_request(user_id))
+
+    def reclaim_nickname(self, session) -> None:
+        """원래 이름을 다시 요청해 본다. 실패해도 조용히 넘어간다.
+
+        유령 세션은 서버가 핑 타임아웃(실측 180초)으로 정리하므로, 그전까지는 계속
+        거절당한다. 거절을 오류로 보여주면 사용자는 영문도 모르고 놀라기만 하므로,
+        되찾기 중의 거절은 조용히 삼키고 다음 기회에 다시 시도한다.
+        """
+        if session.nick_reclaim_pending:
+            return
+        session.nick_reclaim_pending = True
+        session.transport(irc_protocol.format_nick(session.wanted_nick))
 
     def keepalive(self, session) -> None:
         # 서버가 물어보기를 기다리지 않고 우리가 먼저 확인한다. 답(PONG)이 오면 살아

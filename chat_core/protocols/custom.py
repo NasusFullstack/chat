@@ -30,6 +30,10 @@ class CustomProtocol(CommonCommands):
         """
         session.apply_client_version(user_id, constants.our_client_version())
 
+    def reclaim_nickname(self, session) -> None:
+        # 우리 서버는 계정으로 로그인하므로 이름이 밀릴 일이 없다
+        return
+
     def keepalive(self, session) -> None:
         # 우리 서버는 연결이 끊기면 바로 알아채므로 따로 물어볼 것이 없다
         return

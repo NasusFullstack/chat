@@ -38,7 +38,8 @@ from gui.network_probe import WebReachableProbe, blocked_port_message
 from gui.pages import ChannelPage, ChatPage, LoginPage
 from gui.profile_dialog import ProfileDialog
 from gui.startup_page import StartupPage
-from gui.theme import APP_TITLE, CONNECT_TIMEOUT_MS, IS_WINDOWS, LIVENESS_CHECK_MS
+from gui.theme import (APP_TITLE, CHANNEL_SIDEBAR_COLLAPSED_WIDTH, CHANNEL_SIDEBAR_WIDTH,
+                       CONNECT_TIMEOUT_MS, IS_WINDOWS, LIVENESS_CHECK_MS)
 from gui.title_bar import TitleBar
 from version import APP_VERSION
 
@@ -180,7 +181,11 @@ class MainWindow(QMainWindow):
         )
         # 채널 목록 아래 톱니바퀴 - 트레이 메뉴의 '환경설정'과 같은 창을 연다
         # (설정 창을 여는 곳이 둘이지만 여는 코드는 트레이 쪽 하나만 둔다)
-        self.chat_page.channel_sidebar.settings_requested.connect(self._tray.open_settings)
+        self.chat_page.settings_requested.connect(self._tray.open_settings)
+        # 채널 목록을 펼치면 그만큼 **창이 넓어진다**(대화 영역을 뺏지 않는다).
+        # 예전에는 창 폭이 그대로라 목록이 펼쳐질 때 대화창이 밀려 좁아졌고, 읽던 줄이
+        # 다시 접히면서 화면이 출렁였다. 접을 때는 반대로 창이 좁아진다
+        self.chat_page.channel_sidebar.collapsed_changed.connect(self._resize_for_sidebar)
 
         self.stack.addWidget(self.startup_page)
         self.stack.addWidget(self.login_page)
@@ -515,6 +520,28 @@ class MainWindow(QMainWindow):
 
         self._probe.finished.connect(done)
         self._probe.start(self._host)
+    def _resize_for_sidebar(self, collapsed: bool):
+        """채널 목록이 접히고 펴진 만큼 창 폭을 함께 줄이고 늘린다.
+
+        최대화 상태이거나 화면 밖으로 나가게 되는 경우에는 창을 건드리지 않는다 -
+        그때는 예전처럼 안에서 나눠 쓰는 수밖에 없다.
+        """
+        delta = CHANNEL_SIDEBAR_WIDTH - CHANNEL_SIDEBAR_COLLAPSED_WIDTH
+        if collapsed:
+            delta = -delta
+        if self.isMaximized() or self.isFullScreen():
+            return
+        target = self.width() + delta
+        screen = self.screen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            # 화면을 넘어서면 넘어서는 만큼만 포기한다(아예 안 늘리면 대화창이 그대로
+            # 좁아져서, 고치려던 증상이 그 상황에서만 되살아난다)
+            target = min(target, available.width())
+            if self.x() + target > available.right():
+                self.move(max(available.left(), available.right() - target + 1), self.y())
+        self.resize(max(self.minimumWidth(), target), self.height())
+
     def _check_connection_alive(self):
         """조용한 연결이 진짜 살아 있는지 확인한다.
 
@@ -527,6 +554,9 @@ class MainWindow(QMainWindow):
             return
         if self.client.state() != QAbstractSocket.SocketState.ConnectedState:
             return
+        # 회선이 바뀌어 이름이 밀렸으면(Mong -> Mong_) 원래 이름을 되찾아 본다.
+        # 유령 세션은 서버가 핑 타임아웃으로 정리하므로, 그때가 되면 이 시도가 성공한다
+        self.session.reclaim_nickname()
         silence = time.time() - getattr(self.client, "last_rx_at", time.time())
         action = liveness.action_for(silence)
         if action == liveness.PING:

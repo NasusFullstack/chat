@@ -15,13 +15,11 @@
   add_requested()         '+' 눌림
   leave_requested(채널)   우클릭 -> 나가기
   collapsed_changed(접힘) 접거나 폄(손잡이 화살표 방향이 이걸 따라감)
-  settings_requested()    맨 아래 톱니바퀴 눌림(환경설정 창을 여는 일은 바깥이 함)
 """
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QListWidget, QListWidgetItem, QMenu,
                                QPushButton, QVBoxLayout, QWidget)
 
-from gui.components.gear_button import GearButton
 from gui.components.unread_tint import UnreadTintDelegate
 
 from gui.theme import (ADD_TAB_LABEL, CHANNEL_ROW_HEIGHT, CHANNEL_SCROLL_BTN_PX,
@@ -44,7 +42,6 @@ class ChannelSidebar(QWidget):
     add_requested = Signal()
     leave_requested = Signal(str)
     collapsed_changed = Signal(bool)
-    settings_requested = Signal()
 
     def __init__(self, top_gap: int, parent=None):
         super().__init__(parent)
@@ -97,13 +94,6 @@ class ChannelSidebar(QWidget):
         outer.addStretch(1)
 
         # 환경설정은 자주 쓰는 기능이 아니라 맨 아래 구석에 작게 둔다(트레이 메뉴에도 있음)
-        gear_row = QHBoxLayout()
-        gear_row.setContentsMargins(8, 0, 0, 8)
-        self.gear_btn = GearButton()
-        self.gear_btn.clicked.connect(self.settings_requested.emit)
-        gear_row.addWidget(self.gear_btn, 0, Qt.AlignmentFlag.AlignLeft)
-        gear_row.addStretch(1)
-        outer.addLayout(gear_row)
 
     def _make_arrow(self, glyph: str, tip: str, direction: int) -> QPushButton:
         """채널이 많아 자리가 모자랄 때 목록을 미는 화살표.
@@ -202,7 +192,7 @@ class ChannelSidebar(QWidget):
             return 0
         used = (self._top_gap + CHANNEL_ROW_HEIGHT          # 헤더 자리 + '+' 버튼
                 + CHANNEL_SCROLL_BTN_PX * 2                  # 위/아래 화살표
-                + self.gear_btn.height() + 8)                # 맨 아래 톱니바퀴 줄
+                )
         # 최소 한 칸은 보이게(너무 작으면 목록이 아예 안 보임)
         return max(step, self.height() - used)
 
@@ -292,8 +282,7 @@ class ChannelSidebar(QWidget):
         if collapsed == self._collapsed:
             return
         self._collapsed = collapsed
-        for widget in (self.list, self.add_btn, self.scroll_up, self.scroll_down,
-                       self.gear_btn):
+        for widget in (self.list, self.add_btn, self.scroll_up, self.scroll_down):
             widget.setVisible(not collapsed)
         self.setFixedWidth(CHANNEL_SIDEBAR_COLLAPSED_WIDTH if collapsed
                            else CHANNEL_SIDEBAR_WIDTH)

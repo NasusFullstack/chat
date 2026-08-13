@@ -84,6 +84,12 @@ class ChatSession:
         # 아이콘을 여러 줄로 나눠 받기 때문에 다 모일 때까지 여기 담아둠
         self.irc_avatar_chunks: dict[tuple[str, str], dict[int, str]] = {}
         self.irc_nick_retries = 0
+        # 사용자가 원래 쓰려던 이름. 회선이 바뀌어 재접속할 때 예전 연결이 서버에
+        # 유령으로 남아 있으면 그 이름을 못 써서 뒤에 _가 붙는다(최대 180초). 그때
+        # 원래 이름으로 돌아가기 위해 무엇을 원했는지 기억해둔다
+        self.wanted_nick = ""
+        # 되찾기 요청을 보내둔 상태인가(실패해도 조용히 넘어가야 한다)
+        self.nick_reclaim_pending = False
         self.nick_change_pending = False
 
     @property
@@ -175,6 +181,12 @@ class ChatSession:
         if not user_id or user_id == self.my_id:
             return
         self.protocol.request_client_version(self, user_id)
+
+    def reclaim_nickname(self):
+        """원래 이름을 아직 못 쓰고 있으면 되찾아 본다."""
+        if not self.my_id or not self.wanted_nick or self.my_id == self.wanted_nick:
+            return
+        self.protocol.reclaim_nickname(self)
 
     def keepalive(self):
         """연결이 살아 있는지 확인하는 한 줄을 보낸다(로그인 전에는 보낼 곳이 없다)."""
@@ -305,6 +317,9 @@ class ChatSession:
         return True
 
     def set_nickname(self, nickname: str):
+        """사용자가 고른 이름 - 이제부터 이게 '원래 쓰려던 이름'이다(되찾기 기준)."""
+        if nickname:
+            self.wanted_nick = nickname
         self.protocol.publish_nickname(self, nickname)
 
     def restore_my_profile(self, avatar_b64: str | None):
