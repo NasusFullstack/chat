@@ -34,16 +34,19 @@ checks.append(("URL 두 개 이상도 각각 링크로 변환됨",
 # ---- MessageWidget 통합: 링크 렌더링 + 텍스트 선택 가능 ----
 avatar = g._hashed_avatar_pixmap("tester")
 msg = g.MessageWidget("alice", "여기 봐 https://example.com/foo 링크야", False, 0, avatar)
-label = msg.findChildren(type(msg))  # placeholder, replaced below
-from PySide6.QtWidgets import QLabel
-labels = [l for l in msg.findChildren(QLabel) if "example.com" in l.text()]
-checks.append(("MessageWidget 안에서 URL이 링크로 렌더링됨", len(labels) == 1 and "<a href=" in labels[0].text()))
-if labels:
-    flags = labels[0].textInteractionFlags()
-    checks.append(("텍스트를 마우스로 드래그해서 선택 가능(복사 가능)",
-                   bool(flags & Qt.TextInteractionFlag.TextSelectableByMouse)))
-    checks.append(("링크를 마우스로 클릭 가능", bool(flags & Qt.TextInteractionFlag.LinksAccessibleByMouse)))
-    checks.append(("링크 클릭 시 외부 브라우저로 열림", labels[0].openExternalLinks() is True))
+# 글자는 이제 텍스트 엔진 위젯이 그린다(gui/components/message_text.py).
+# 무엇으로 그리는지가 아니라 "링크가 살아 있는가"를 본다
+body = msg._text_label
+checks.append(("MessageWidget 안에서 URL이 링크로 렌더링됨",
+               'href="https://example.com/foo"' in body.toHtml()))
+checks.append(("보이는 글자에는 태그가 안 섞임",
+               "<a href=" not in body.text() and "example.com/foo" in body.text()))
+flags = body.textInteractionFlags()
+checks.append(("텍스트를 마우스로 드래그해서 선택 가능(복사 가능)",
+               bool(flags & Qt.TextInteractionFlag.TextSelectableByMouse)))
+checks.append(("링크를 마우스로 클릭 가능",
+               bool(flags & Qt.TextInteractionFlag.LinksAccessibleByMouse)))
+checks.append(("링크 클릭 시 외부 브라우저로 열림", body.openExternalLinks() is True))
 
 print("\n=== 검증 결과 (URL 하이퍼링크 + 채팅 텍스트 드래그 선택) ===")
 all_ok = True

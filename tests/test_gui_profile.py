@@ -60,7 +60,11 @@ checks.append(("닉네임 표시 항목의 툴팁에 원래 아이디가 남아�
 chat_page.append_message("#p", "alice", "안녕하세요", False, 1700000000.0)
 app.processEvents()
 view = chat_page._log_views["#p"]
-all_text = "\n".join(l.text() for l in view.findChildren(QLabel))
+# 메시지 본문은 텍스트 엔진 위젯이 그린다(시스템 안내만 라벨)
+from gui.components.message_text import MessageText  # noqa: E402
+
+all_text = "\n".join([l.text() for l in view.findChildren(QLabel)]
+                     + [b.text() for b in view.findChildren(MessageText)])
 checks.append(("채팅 메시지 발신자도 닉네임으로 표시됨", "앨리스별명" in all_text))
 checks.append(("원래 아이디(alice)는 발신자 표시에 노출되지 않음", "<b>alice</b>" not in all_text))
 
