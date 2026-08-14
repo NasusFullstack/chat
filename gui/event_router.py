@@ -53,6 +53,7 @@ def _auth_failed(view, event):
         view.notify_all_channels(f"다시 로그인하지 못했습니다: {event.text}")
         return
     view.login_page.show_status(event.text)
+    view.offer_password_free_login(event.text)
 
 
 def _nickname_retrying(view, event):

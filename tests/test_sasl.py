@@ -84,7 +84,13 @@ failed_events.clear()
 failed.handle_incoming(line(":h 904 Mong :SASL authentication failed"))
 check(f"실패해도 협상을 끝내 접속을 이어간다({failed_sent})",
       "CAP END" in failed_sent, failed_sent)
-told = [e for e in failed_events if isinstance(e, domain_events.SystemNotice)]
+# 인증 실패는 **접속 실패**로 알려야 한다. 그냥 지나가면 로그인된 것처럼 보이고,
+# 사용자는 이름이 왜 안 지켜지는지도 모른 채 쓰게 된다
+told = [e for e in failed_events
+        if isinstance(e, (domain_events.AuthFailed, domain_events.SystemNotice))]
+check("실패를 '접속 실패'로 알린다(그냥 넘어가지 않는다)",
+      any(isinstance(e, domain_events.AuthFailed) for e in failed_events),
+      [type(e).__name__ for e in failed_events])
 check(f"왜 안 됐는지 알려준다({[e.text[:24] for e in told]})", bool(told), told)
 # 서버 원문("SASL authentication failed")만 띄우면 무엇을 해야 할지 알 수 없다.
 # 가장 흔한 이유(이름 미등록)와 해결 방법까지 알려줘야 한다

@@ -602,6 +602,29 @@ class MainWindow(QMainWindow):
         # 다시 접속하면 Qt가 정리 중인 소켓과 부딪혀 조용히 무시된다(실측)
         QTimer.singleShot(0, lambda: self._handle_login_submit(self._auth_mode or "login"))
 
+    def offer_password_free_login(self, reason: str):
+        """비밀번호 때문에 막혔으면, 비밀번호 없이 들어갈지 물어본다.
+
+        계정을 아직 안 만든 사람에게는 이게 원하는 답이다. 물어보지 않고 그냥 들여보내면
+        "로그인된 것 같은데 왜 이름이 안 지켜지지?"가 되고, 물어보지 않고 막기만 하면
+        "그래서 어떻게 들어가라고?"가 된다.
+        """
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
+
+        if self._protocol_mode != "irc":
+            # 우리 자체 서버는 계정과 비밀번호가 **필수**다. 거기서 "비밀번호 없이
+            # 접속할까요?"를 물으면 될 리 없는 것을 권하는 셈이다(IRC만 익명 접속을 허용)
+            return
+        if not self.login_page.pw_input.text():
+            return          # 비밀번호를 안 넣었는데 막힌 것이면 다른 이유다
+        self.client.abort()
+        if not gui_client.themed_question(self, "접속", f"{reason}\n\n비밀번호 없이 접속할까요?"):
+            return
+        self.login_page.pw_input.setText("")
+        self.login_page.remember_check.setChecked(False) \
+            if hasattr(self.login_page, "remember_check") else None
+        QTimer.singleShot(0, lambda: self._handle_login_submit("login"))
+
     def _check_connection_alive(self):
         """조용한 연결이 진짜 살아 있는지 확인한다.
 
