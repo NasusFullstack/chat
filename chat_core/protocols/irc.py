@@ -43,7 +43,15 @@ class IrcProtocol(CommonCommands):
         session.irc_password = password
         session.irc_identified = False
         session.irc_nick_retries = 0
+        session.cap_negotiating = False
+        session.sasl_state = ""
+        session.cap_available = []
         if password:
+            # 비밀번호가 있으면 **접속 과정에서** 인증을 시도한다(SASL - 요즘 표준).
+            # 서버가 지원하지 않으면 아래 CAP 처리에서 조용히 접고, 예전처럼 접속한 뒤
+            # NickServ에게 귓속말로 인증한다
+            session.cap_negotiating = True
+            session.transport(irc_protocol.format_cap_ls())
             session.transport(irc_protocol.format_pass(password))
         session.transport(irc_protocol.format_nick(user_id))
         session.transport(irc_protocol.format_user(user_id, user_id))
@@ -252,6 +260,7 @@ class IrcProtocol(CommonCommands):
         # 다를 수 있음(길이 제한/치환 등). 이걸 안 읽고 우리가 보낸 값을 쓰면 엉뚱한 이름이 남음
         confirmed = msg.params[0] if msg.params else session.pending_irc_nick
         session.set_identity(confirmed)
+        # SASL로 이미 인증했으면(irc_identified) 귓속말을 또 보내지 않는다
         if session.irc_password and not session.irc_identified:
             session.irc_identified = True
             session.transport(
@@ -524,8 +533,64 @@ class IrcProtocol(CommonCommands):
     def _on_error(self, session, msg):
         session.emit(events.ConnectionClosed(msg.trailing or ""))
 
+    def _on_cap(self, session, msg):
+        """서버의 CAP 응답. 지원하면 SASL을 요청하고, 아니면 협상을 바로 끝낸다."""
+        sub, items, more = irc_protocol.parse_cap(msg)
+        if sub == "LS":
+            # 목록이 여러 줄로 나뉘어 올 수 있다 - 다 모은 뒤에 판단해야 한다
+            session.cap_available.extend(items)
+            if more:
+                return
+            supports_sasl = any(item.split("=")[0].lower() == "sasl"
+                                for item in session.cap_available)
+            if supports_sasl and session.irc_password:
+                session.sasl_state = "요청함"
+                session.transport(irc_protocol.format_cap_req("sasl"))
+                return
+            self._end_cap(session)          # 못 쓰면 붙잡고 있지 않는다
+        elif sub == "ACK" and any("sasl" in item.lower() for item in items):
+            session.sasl_state = "진행중"
+            session.transport(irc_protocol.format_authenticate("PLAIN"))
+        elif sub == "NAK":
+            self._end_cap(session)
+
+    def _on_authenticate(self, session, msg):
+        """서버가 "+"를 보내면 계정과 비밀번호를 실어 보낸다."""
+        token = (msg.params[0] if msg.params else "") or msg.trailing
+        if token.strip() != "+":
+            return
+        session.transport(irc_protocol.format_authenticate(
+            irc_protocol.sasl_plain_payload(session.wanted_nick or session.pending_irc_nick,
+                                            session.irc_password)))
+
+    def _on_sasl_done(self, session, msg):
+        """인증 성공(903). 이제 서버가 나를 그 이름의 주인으로 안다."""
+        session.sasl_state = "성공"
+        session.irc_identified = True       # NickServ에게 또 보낼 필요가 없다
+        self._end_cap(session)
+
+    def _on_sasl_failed(self, session, msg):
+        """인증 실패(904 등). 접속 자체는 계속한다 - 로그인 못 했다고 채팅까지 막을
+        이유는 없다. 다만 왜 이름이 안 지켜지는지 알 수 있게 한 줄 남긴다."""
+        session.sasl_state = "실패"
+        self._end_cap(session)
+        session.emit(events.SystemNotice("", msg.trailing or "비밀번호 인증에 실패했습니다."))
+
+    @staticmethod
+    def _end_cap(session):
+        if session.cap_negotiating:
+            session.cap_negotiating = False
+            session.transport(irc_protocol.format_cap_end())
+
     _HANDLERS = {
         "PING": _on_ping,
+        "CAP": _on_cap,
+        "AUTHENTICATE": _on_authenticate,
+        "903": _on_sasl_done,
+        "904": _on_sasl_failed,
+        "905": _on_sasl_failed,
+        "906": _on_sasl_failed,
+        "907": _on_sasl_failed,
         irc_protocol.RPL_WELCOME: _on_welcome,
         irc_protocol.RPL_NAMREPLY: _on_namreply,
         irc_protocol.RPL_ENDOFNAMES: _on_endofnames,

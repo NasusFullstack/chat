@@ -105,7 +105,8 @@ def _frame(tag: str, text: str) -> str:
 
 
 def _unframe(tag: str, text: str) -> str | None:
-    if len(text) < 2 or not (text.startswith(CTCP_DELIM) and text.endswith(CTCP_DELIM)):
+    if not text or len(text) < 2 or not (text.startswith(CTCP_DELIM)
+                                         and text.endswith(CTCP_DELIM)):
         return None
     inner = text[1:-1]
     prefix = tag + " "
@@ -128,6 +129,10 @@ def classify_message(text: str) -> tuple[str, str]:
     ChatSession.deliver_message가 이 함수 하나만 거치면 두 프로토콜 모두 같은 규칙으로
     행동/공지 메시지를 구분하게 됨.
     """
+    # 서버가 보낸 값은 통제할 수 없다 - 비어 있거나 글자가 아닐 수도 있다(실제로 겪었다:
+    # {"type": "chat", "text": null} 한 줄에 앱이 터졌다)
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
     action = _unframe(ACTION_TAG, text)
     if action is not None:
         return KIND_ACTION, action

@@ -105,7 +105,10 @@ class ChatPage(QWidget):
         # (접힌 폭이 0이다) 설정으로 가는 길이 트레이 메뉴 하나만 남는다
         self.gear_btn = GearButton()
         self.gear_btn.clicked.connect(self.settings_requested.emit)
+        self._handle_column = handle_column
         handle_column.addWidget(self.gear_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._place_gear(self.channel_sidebar.is_collapsed())
+        self.channel_sidebar.collapsed_changed.connect(self._place_gear)
         handle_host = QWidget()
         handle_host.setLayout(handle_column)
         # 손잡이와 환경설정 톱니가 함께 들어가는 열 - 둘 중 넓은 것에 맞춘다
@@ -357,6 +360,22 @@ class ChatPage(QWidget):
         # (비활성 탭 포함) 미리 반영해두므로, 탭을 볼 때 다시 재계산할 필요가 없음 -
         # 예전에는 여기서 매번 재계산했는데, 그게 메시지들이 눈앞에서 다시 배치되며
         # 스크롤이 출렁이는(위로 튀는) 원인이었음
+
+    def _place_gear(self, collapsed: bool):
+        """톱니 자리를 상태에 맞게 옮긴다.
+
+        - 펼쳤을 때: 채널 목록 아래(맨 밑) - 목록에 딸린 도구처럼 보인다
+        - 접었을 때: 여닫는 손잡이 바로 아래 - 얇은 띠만 남은 상태에서 톱니만 저 아래
+          구석에 홀로 떨어져 있으면 어디에 속한 버튼인지 알 수 없다
+        """
+        column = self._handle_column
+        column.removeWidget(self.gear_btn)
+        if collapsed:
+            index = column.indexOf(self.sidebar_handle) + 1
+            column.insertWidget(index, self.gear_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+        else:
+            column.addWidget(self.gear_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.gear_btn.show()
 
     def _on_sidebar_channel(self, channel: str):
         """사이드바에서 채널을 고르면 그 채널 대화창을 앞으로 가져옴"""
