@@ -130,6 +130,36 @@ no_pw.handle_incoming(line(":h 433 * Mong :Nickname is already in use."))
 check("비밀번호가 없으면 서비스에 부탁하지 않는다(쓸 수 없는 명령이다)",
       not [s for s in no_pw_sent if "RECOVER" in s], no_pw_sent)
 
+# ---------- 되찾기가 서버에 홍수로 보이지 않는가 ----------
+# 이름을 **영영 못 되찾는 경우**(진짜 다른 사람이 쓰는 중)에도 짧은 간격으로 계속
+# 시도하면 서버가 닉네임 변경 홍수로 본다. 실측: 15초마다면 한 시간에 240줄.
+# 그래서 시도할수록 간격을 늘리고 정해진 횟수 뒤에는 포기한다
+from chat_core import constants  # noqa: E402
+
+flood_sent = []
+flood = build_session("irc", "h", 6667, transport=flood_sent.append, on_event=lambda e: None)
+flood.login("Mong", "")
+flood.handle_incoming(line(":h 433 * Mong :in use"))
+flood.handle_incoming(line(":h 001 Mong_ :Welcome"))
+flood_sent.clear()
+for _ in range(50):                      # 타이머가 50번 도는 동안
+    flood.nick_reclaim_next_at = 0       # 시간이 지난 것처럼
+    flood.reclaim_nickname()
+    flood.handle_incoming(line(":h 433 * Mong :in use"))
+check(f"영영 못 되찾아도 정해진 횟수에서 멈춘다({len(flood_sent)}번)",
+      len(flood_sent) <= constants.NICK_RECLAIM_MAX_ATTEMPTS, len(flood_sent))
+
+check("간격이 시도할수록 늘어난다(홍수 방지)",
+      constants.NICK_RECLAIM_MAX_DELAY_SEC > constants.NICK_RECLAIM_FIRST_DELAY_SEC)
+check("비밀번호가 있으면 첫 시도는 훨씬 빠르다(_로 머무는 시간을 없앤다)",
+      constants.NICK_RECLAIM_FAST_DELAY_SEC < constants.NICK_RECLAIM_FIRST_DELAY_SEC,
+      (constants.NICK_RECLAIM_FAST_DELAY_SEC, constants.NICK_RECLAIM_FIRST_DELAY_SEC))
+
+# 사용자가 이름을 새로 고르면 다시 처음부터 시도할 수 있어야 한다
+flood.set_nickname("새이름")
+check("이름을 새로 고르면 시도 횟수가 초기화된다", flood.nick_reclaim_attempts == 0,
+      flood.nick_reclaim_attempts)
+
 print("=== 검증 결과 (이름 되찾기) ===")
 all_ok = True
 for name, ok, *detail in checks:

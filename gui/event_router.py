@@ -20,6 +20,10 @@ from chat_core import events as domain_events
 
 def _logged_in(view, event):
     view.chat_page.my_id = event.user_id
+    # 이름이 밀린 채로 들어왔으면(Mong -> Mong_) 곧바로 되찾기를 시작한다.
+    # 연결 확인 타이머(15초)를 기다리면 그동안 남들에게 _ 붙은 이름으로 보인다
+    if event.user_id != getattr(view.session, "wanted_nick", event.user_id):
+        view.reclaim_nickname_soon()
     if view.is_reconnecting:
         view.on_reconnect_logged_in()
         return

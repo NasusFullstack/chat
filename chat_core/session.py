@@ -90,6 +90,9 @@ class ChatSession:
         self.wanted_nick = ""
         # 되찾기 요청을 보내둔 상태인가(실패해도 조용히 넘어가야 한다)
         self.nick_reclaim_pending = False
+        # 몇 번 시도했는가 / 다음에 언제 시도할 것인가(간격을 늘려가며 시도한다)
+        self.nick_reclaim_attempts = 0
+        self.nick_reclaim_next_at = 0.0
         self.nick_change_pending = False
 
     @property
@@ -320,6 +323,9 @@ class ChatSession:
         """사용자가 고른 이름 - 이제부터 이게 '원래 쓰려던 이름'이다(되찾기 기준)."""
         if nickname:
             self.wanted_nick = nickname
+            # 새로 고른 이름이므로 되찾기 시도 횟수도 처음부터
+            self.nick_reclaim_attempts = 0
+            self.nick_reclaim_next_at = 0.0
         self.protocol.publish_nickname(self, nickname)
 
     def restore_my_profile(self, avatar_b64: str | None):
