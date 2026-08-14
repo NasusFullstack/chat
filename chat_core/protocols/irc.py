@@ -268,6 +268,11 @@ class IrcProtocol(CommonCommands):
             session.emit(events.NicknameChangeFailed(msg.trailing or "이미 사용 중인 닉네임입니다."))
             return
         if not session.my_id and session.irc_nick_retries < irc_protocol.MAX_NICK_RETRIES:
+            # 접속 중에 이름이 막힌 것 - 유령이 쥐고 있을 수 있으니 서비스에 한 번 부탁해
+            # 본다(비밀번호가 있을 때만 의미가 있다). 그래도 안 되면 _를 붙여 들어간 뒤
+            # 나중에 되찾는다
+            if session.irc_nick_retries == 0:
+                self._ask_services_to_recover(session)
             # 아직 등록(RPL_WELCOME) 전이면 밑줄을 붙여 자동 재시도
             session.irc_nick_retries += 1
             session.pending_irc_nick += "_"
@@ -364,6 +369,24 @@ class IrcProtocol(CommonCommands):
     def request_client_version(self, session, user_id: str) -> None:
         session.transport(irc_protocol.format_ctcp_version_request(user_id))
 
+    @staticmethod
+    def _ask_services_to_recover(session) -> bool:
+        """유령이 잡고 있는 내 이름을 **즉시** 되찾아 달라고 서비스에 부탁한다.
+
+        회선이 뽑히듯 끊기면(와이파이<->랜선 전환 등) 서버는 그 연결이 죽은 줄 모르고
+        최대 180초 동안 이름을 붙잡고 있다. 그동안 재접속하면 이름 뒤에 _가 붙는다.
+
+        실측(home.pdlab.kr, 2026-08-14): 이 서버의 NickServ는 GHOST가 없고 RECOVER를
+        쓴다 - "다른 사람이 내 이름을 쥐고 있으면 죽인다(옛 GHOST와 같음)".
+        **다만 그 이름이 등록돼 있어야 하고 비밀번호가 필요하다.** 비밀번호가 없으면
+        할 수 있는 게 없으므로 조용히 넘어가고, 유령이 저절로 사라질 때까지 기다린다.
+        """
+        if not session.irc_password or not session.wanted_nick:
+            return False
+        session.transport(irc_protocol.format_privmsg(
+            "NickServ", f"RECOVER {session.wanted_nick} {session.irc_password}"))
+        return True
+
     def reclaim_nickname(self, session) -> None:
         """원래 이름을 다시 요청해 본다. 실패해도 조용히 넘어간다.
 
@@ -374,6 +397,9 @@ class IrcProtocol(CommonCommands):
         if session.nick_reclaim_pending:
             return
         session.nick_reclaim_pending = True
+        # 비밀번호가 있으면 유령을 즉시 쫓아낼 수 있다(등록된 이름일 때). 없으면 그냥
+        # 요청만 해보고, 유령이 사라지는 순간 성공한다
+        self._ask_services_to_recover(session)
         session.transport(irc_protocol.format_nick(session.wanted_nick))
 
     def keepalive(self, session) -> None:
