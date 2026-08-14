@@ -64,12 +64,14 @@ class LoginPage(QWidget):
         self.host_input.setPlaceholderText("서버 주소")
         box.addWidget(self.host_input)
 
-        self.port_input = QLineEdit(DEFAULT_PLAIN_PORT)
+        # 기본은 **보안 접속**이다. 평문으로 붙으면 대화와 비밀번호가 그대로 오간다
+        self.port_input = QLineEdit(DEFAULT_SSL_PORT)
         self.port_input.setPlaceholderText("포트")
         box.addWidget(self.port_input)
 
         self.ssl_checkbox = QCheckBox("SSL 암호화 사용 (권장, 포트 6697)")
-        self.ssl_checkbox.setChecked(False)
+        # 기본은 켜둔다 - 평문으로 붙으면 대화와 비밀번호가 그대로 오간다
+        self.ssl_checkbox.setChecked(True)
         self.ssl_checkbox.toggled.connect(self._on_ssl_toggled)
         box.addWidget(self.ssl_checkbox)
 
@@ -162,6 +164,9 @@ class LoginPage(QWidget):
         prefs = login_prefs.load()
         if not prefs:
             return
+        # 예전에 평문으로 저장된 접속은 보안 접속으로 올려준다(같은 서버의 보안 포트가
+        # 열려 있는 것을 확인하고 기본값을 바꿨다 - 쓰던 사람도 따라오게)
+        prefs = login_prefs.upgrade_to_secure(prefs)
         if prefs.get("host"):
             self.host_input.setText(prefs["host"])
         if prefs.get("port"):

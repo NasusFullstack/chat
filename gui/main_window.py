@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 import app_prefs
 import error_log
+import trusted_certs
 import avatar_store
 import client_version_store
 import irc_protocol
@@ -39,6 +40,7 @@ from gui.pages import ChannelPage, ChatPage, LoginPage
 from gui.profile_dialog import ProfileDialog
 from gui.startup_page import StartupPage
 from gui.theme import (APP_TITLE, CHANNEL_SIDEBAR_COLLAPSED_WIDTH, CHANNEL_SIDEBAR_WIDTH,
+                       DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT,
                        CONNECT_TIMEOUT_MS, IS_WINDOWS, LIVENESS_CHECK_MS)
 from gui.title_bar import TitleBar
 from version import APP_VERSION
@@ -101,6 +103,7 @@ class MainWindow(QMainWindow):
         self.client.connected.connect(self._on_tcp_connected)
         self.client.encrypted.connect(self._on_connected)
         self.client.connection_failed.connect(self._on_connection_failed)
+        self.client.certificate_untrusted.connect(self._on_certificate_untrusted)
         self.client.message_received.connect(self._on_message)
         self.client.irc_line_received.connect(self._on_irc_line)
         self.client.disconnected.connect(self._on_socket_disconnected)
@@ -161,6 +164,8 @@ class MainWindow(QMainWindow):
 
         # 업데이트 직후 채팅창에 한 줄 남길 안내(채널에 들어갈 때 소비된다)
         self._pending_update_note = ""
+        # 보안 접속이 막힌 곳에서 평문으로 한 번만 물러나기 위한 표시
+        self._plain_fallback_tried = False
         # 접속 실패 원인 진단용. 서버마다 한 번만 확인하고 결과를 기억한다
         self._probe = None
         self._web_reachable: dict[str, bool] = {}
@@ -417,6 +422,25 @@ class MainWindow(QMainWindow):
         # (여기서 로그인 정보를 보내면 핸드셰이크 완료 전에 취소/타임아웃 창이 사라짐)
         if not self._pending_ssl:
             self._on_connected()
+    def _try_plain_fallback(self) -> bool:
+        """보안 포트가 막힌 것 같으면 평문으로 한 번만 다시 시도한다.
+
+        기본을 보안 접속으로 바꾸면서 생긴 위험을 덮는 장치다 - 학교나 회사 네트워크가
+        그 포트를 막아두면 아무리 기다려도 응답이 없다. 사람에게 "포트를 바꿔보라"고
+        설명하는 대신 우리가 한 번 해본다. 이것도 안 되면 그때는 진짜 네트워크 문제다.
+        """
+        if self._plain_fallback_tried or not self.login_page.ssl_checkbox.isChecked():
+            return False
+        if str(self.login_page.port_input.text()).strip() != DEFAULT_SSL_PORT:
+            return False       # 사용자가 직접 넣은 포트는 우리가 바꾸지 않는다
+        self._plain_fallback_tried = True
+        self.login_page.ssl_checkbox.setChecked(False)
+        self.login_page.port_input.setText(DEFAULT_PLAIN_PORT)
+        self.login_page.show_status(
+            "보안 접속이 막혀 있는 것 같아 일반 접속으로 다시 시도합니다...", error=False)
+        QTimer.singleShot(0, lambda: self._handle_login_submit(self._auth_mode or "login"))
+        return True
+
     def _on_connected(self):
         # 소켓/TLS 연결은 끝났지만 아직 로그인 응답을 못 받은 상태이므로 취소/타임아웃을
         # 계속 활성 상태로 유지한 채 응답 대기 단계로 넘어간다 (연결만 되고 로그인 응답이
@@ -440,6 +464,8 @@ class MainWindow(QMainWindow):
         was_auth_phase = self._auth_phase
         self._stop_connecting()
         self.client.abort()
+        if not was_auth_phase and self._try_plain_fallback():
+            return
         if self._reconnect.active:
             self._reconnect.schedule()  # 붙긴 했는데 로그인 응답이 없음 - 다음 간격에 다시
             return
@@ -546,6 +572,41 @@ class MainWindow(QMainWindow):
         서비스가 유령을 죽이는 데 잠깐 걸리므로 아주 조금 기다렸다가 보낸다.
         """
         QTimer.singleShot(1500, self.session.reclaim_nickname)
+
+    def _on_certificate_untrusted(self, host: str, port: int, fingerprint: str, reason: str):
+        """서버 인증서를 확인할 수 없을 때 - 사람에게 한 번 묻는다.
+
+        개인이 돌리는 IRC 서버는 대개 자체 서명 인증서를 쓴다(실측: home.pdlab.kr:6697).
+        무조건 막으면 그 서버에는 못 붙고, 무조건 넘기면 가짜 서버를 구분할 수 없다.
+        그래서 지문을 보여주고 한 번만 묻는다. 신뢰하기로 하면 기억해뒀다가 다음부터는
+        조용히 붙고, **지문이 바뀌면 다시 묻는다**.
+        """
+        import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
+
+        self._stop_connecting()
+        shown = trusted_certs.readable(fingerprint)[:47]
+        known = trusted_certs.fingerprint_of(host, port)
+        headline = ("이 서버의 인증서가 예전과 다릅니다." if known
+                    else "이 서버의 인증서를 확인할 수 없습니다.")
+        agreed = gui_client.themed_question(
+            self, "보안 접속 확인",
+            f"{headline}\n\n"
+            f"서버: {host}:{port}\n"
+            f"지문: {shown}...\n"
+            f"이유: {reason}\n\n"
+            "개인이 운영하는 서버는 정식 인증서가 없는 경우가 많습니다. "
+            "아는 서버가 맞다면 신뢰하고 계속할 수 있습니다.\n"
+            "(신뢰하면 이 지문을 기억해두고, 나중에 지문이 바뀌면 다시 물어봅니다)")
+        if not agreed:
+            self.login_page.show_status("보안 접속을 취소했습니다.")
+            return
+        trusted_certs.trust(host, port, fingerprint)
+        self.login_page.show_status("서버를 신뢰하기로 했습니다. 다시 접속합니다...",
+                                    error=False)
+        # 로그인 화면의 입력 그대로 다시 접속한다(주소·포트·계정이 이미 거기 있다).
+        # **한 박자 뒤에** 건다 - 지금은 소켓 오류를 처리하는 중이라, 그 안에서 곧바로
+        # 다시 접속하면 Qt가 정리 중인 소켓과 부딪혀 조용히 무시된다(실측)
+        QTimer.singleShot(0, lambda: self._handle_login_submit(self._auth_mode or "login"))
 
     def _check_connection_alive(self):
         """조용한 연결이 진짜 살아 있는지 확인한다.
