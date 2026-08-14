@@ -25,7 +25,7 @@ import irc_protocol
 import login_prefs
 from chat_core import constants
 from chat_core.session import build_session
-from gui import event_router, liveness
+from gui import event_router, liveness, window_geometry
 from gui.login_request import parse_login_values
 from gui.reconnect import ReconnectPolicy
 from gui.tray import TrayIcon
@@ -531,16 +531,14 @@ class MainWindow(QMainWindow):
             delta = -delta
         if self.isMaximized() or self.isFullScreen():
             return
-        target = self.width() + delta
         screen = self.screen()
-        if screen is not None:
-            available = screen.availableGeometry()
-            # 화면을 넘어서면 넘어서는 만큼만 포기한다(아예 안 늘리면 대화창이 그대로
-            # 좁아져서, 고치려던 증상이 그 상황에서만 되살아난다)
-            target = min(target, available.width())
-            if self.x() + target > available.right():
-                self.move(max(available.left(), available.right() - target + 1), self.y())
-        self.resize(max(self.minimumWidth(), target), self.height())
+        available = screen.availableGeometry() if screen is not None else None
+        new_x, new_width = window_geometry.widen_to_left(
+            self.x(), self.width(), delta,
+            available.left() if available else self.x(),
+            available.right() if available else self.x() + self.width() + abs(delta),
+            self.minimumWidth())
+        self.setGeometry(new_x, self.y(), new_width, self.height())
 
     def reclaim_nickname_soon(self):
         """이름 되찾기를 곧바로 한 번 시도한다(라우터가 로그인 직후에 부른다).

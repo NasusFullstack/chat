@@ -84,6 +84,13 @@ class ChatSession:
         # 아이콘을 여러 줄로 나눠 받기 때문에 다 모일 때까지 여기 담아둠
         self.irc_avatar_chunks: dict[tuple[str, str], dict[int, str]] = {}
         self.irc_nick_retries = 0
+        # SASL(접속 과정에서 하는 인증) 진행 상태. 협상을 시작했으면 반드시 CAP END로
+        # 끝내야 서버가 등록을 마무리한다 - 안 그러면 접속이 멈춘 것처럼 보인다
+        self.cap_negotiating = False
+        # "" / "요청함" / "진행중" / "성공" / "실패"
+        self.sasl_state = ""
+        # 서버가 알려준 기능 목록. 목록이 길면 여러 줄로 나뉘어 오므로 모아둔다
+        self.cap_available: list = []
         # 사용자가 원래 쓰려던 이름. 회선이 바뀌어 재접속할 때 예전 연결이 서버에
         # 유령으로 남아 있으면 그 이름을 못 써서 뒤에 _가 붙는다(최대 180초). 그때
         # 원래 이름으로 돌아가기 위해 무엇을 원했는지 기억해둔다

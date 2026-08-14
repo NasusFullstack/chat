@@ -170,6 +170,50 @@ def format_pong(token: str) -> str:
     return f"PONG :{token}"
 
 
+def format_cap_ls() -> str:
+    """서버가 무엇을 지원하는지 물어본다(IRCv3). 302는 값까지 알려달라는 뜻."""
+    return "CAP LS 302"
+
+
+def format_cap_req(names: str) -> str:
+    return f"CAP REQ :{names}"
+
+
+def format_cap_end() -> str:
+    """협상 끝. **이걸 안 보내면 서버가 등록을 마무리하지 않는다**(접속이 멈춘 것처럼 보인다)."""
+    return "CAP END"
+
+
+def format_authenticate(payload: str) -> str:
+    return f"AUTHENTICATE {payload}"
+
+
+def sasl_plain_payload(account: str, password: str) -> str:
+    """SASL PLAIN이 요구하는 형식: 계정\0계정\0비밀번호 를 base64로."""
+    import base64
+
+    raw = f"{account}\0{account}\0{password}".encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
+
+
+def parse_cap(msg) -> tuple:
+    """CAP 응답에서 (하위명령, 기능목록, 더_있음)을 뽑는다.
+
+    목록이 길면 서버가 여러 줄로 나눠 보내고 "아직 더 있다"를 `*`로 표시한다:
+
+        :server CAP * LS * :첫째묶음
+        :server CAP * LS :마지막묶음
+
+    이걸 모르고 첫 줄만 보면 뒤에 오는 기능(sasl 등)을 놓친다(실측으로 겪었다).
+    """
+    params = list(msg.params)
+    sub = (params[1] if len(params) > 1 else "").upper()
+    body = msg.trailing or ""
+    middle = params[2:-1] if len(params) > 2 else []
+    more = "*" in middle
+    return sub, body.split(), more
+
+
 def format_ping(token: str) -> str:
     """우리가 서버에 "살아 있냐"고 물어보는 줄. 살아 있으면 곧 PONG이 돌아온다."""
     return f"PING :{token}"
