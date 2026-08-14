@@ -91,13 +91,10 @@ class ChatPage(QWidget):
         # 간격을 0으로 둬야 위아래 균형 계산이 정확해진다(기본 간격이 끼면
         # 손잡이가 그만큼 위로 밀린다 - 실측 3px)
         handle_column.setSpacing(0)
-        # 맨 아래 톱니와 같은 높이를 위에도 비워둔다 - 그래야 손잡이가 창 세로 가운데에
-        # 그대로 남는다(톱니만 아래에 붙이면 손잡이가 그 높이의 절반만큼 위로 밀린다)
-        handle_column.addSpacing(GEAR_BTN_PX)
         handle_column.addStretch(1)
         self.sidebar_handle = SidebarHandle()
         self.sidebar_handle.set_collapsed(self.channel_sidebar.is_collapsed())
-        self.sidebar_handle.toggled.connect(self.channel_sidebar.toggle_collapsed)
+        self.sidebar_handle.toggled.connect(self._toggle_sidebar)
         self.channel_sidebar.collapsed_changed.connect(self.sidebar_handle.set_collapsed)
         handle_column.addWidget(self.sidebar_handle, 0, Qt.AlignmentFlag.AlignHCenter)
         handle_column.addStretch(1)
@@ -106,6 +103,7 @@ class ChatPage(QWidget):
         self.gear_btn = GearButton()
         self.gear_btn.clicked.connect(self.settings_requested.emit)
         self._handle_column = handle_column
+        self._gear_balance = None      # 손잡이 균형용 위쪽 여백
         handle_column.addWidget(self.gear_btn, 0, Qt.AlignmentFlag.AlignHCenter)
         self._place_gear(self.channel_sidebar.is_collapsed())
         self.channel_sidebar.collapsed_changed.connect(self._place_gear)
@@ -361,20 +359,45 @@ class ChatPage(QWidget):
         # 예전에는 여기서 매번 재계산했는데, 그게 메시지들이 눈앞에서 다시 배치되며
         # 스크롤이 출렁이는(위로 튀는) 원인이었음
 
-    def _place_gear(self, collapsed: bool):
-        """톱니 자리를 상태에 맞게 옮긴다.
+    def _toggle_sidebar(self):
+        """채널 목록을 접거나 편다 - **화면은 한 번만 다시 그린다.**
 
-        - 펼쳤을 때: 채널 목록 아래(맨 밑) - 목록에 딸린 도구처럼 보인다
-        - 접었을 때: 여닫는 손잡이 바로 아래 - 얇은 띠만 남은 상태에서 톱니만 저 아래
-          구석에 홀로 떨어져 있으면 어디에 속한 버튼인지 알 수 없다
+        목록 폭이 줄어드는 것과 창 폭이 줄어드는 것은 두 단계로 일어난다. 그 사이 상태가
+        그대로 그려지면 대화창이 한 번 확 넓어졌다가 제자리로 돌아오는 것처럼 보인다
+        (실측: 접을 때 418 -> 598 -> 418). 그리는 것을 잠깐 멈춰두면 중간이 안 보인다.
+        """
+        window = self.window()
+        window.setUpdatesEnabled(False)
+        try:
+            self.channel_sidebar.toggle_collapsed()
+        finally:
+            # 이번 처리(창 크기 조정 포함)가 다 끝난 뒤에 한 번만 그린다
+            QTimer.singleShot(0, lambda: window.setUpdatesEnabled(True))
+
+    def _place_gear(self, collapsed: bool):
+        """톱니는 언제나 **왼쪽 아래**에 있어야 한다.
+
+        - 펼쳤을 때: 채널 목록 아래(목록에 딸린 도구처럼 보인다)
+        - 접었을 때: 목록이 사라지므로 손잡이 열의 맨 아래로 옮긴다(같은 왼쪽 아래)
+
+        가운데로 올려봤더니 "저기 있으면 어떡해, 아래에 있어야지"가 됐다. 자리를 옮겨
+        끼우는 이유는 접힌 목록의 폭이 0이라 그 안에 두면 잘려서다.
         """
         column = self._handle_column
         column.removeWidget(self.gear_btn)
+        self.channel_sidebar.gear_slot.removeWidget(self.gear_btn)
+        # 손잡이는 늘 창 세로 가운데에 있어야 한다. 아래에 톱니가 붙는 동안에는 위에도
+        # 같은 높이를 비워둬야 균형이 맞는다(안 그러면 그 절반만큼 위로 밀린다)
+        if self._gear_balance is not None:
+            column.removeItem(self._gear_balance)
+            self._gear_balance = None
         if collapsed:
-            index = column.indexOf(self.sidebar_handle) + 1
-            column.insertWidget(index, self.gear_btn, 0, Qt.AlignmentFlag.AlignHCenter)
-        else:
+            column.insertSpacing(0, GEAR_BTN_PX)
+            self._gear_balance = column.itemAt(0)
             column.addWidget(self.gear_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+        else:
+            self.channel_sidebar.gear_slot.addWidget(
+                self.gear_btn, 0, Qt.AlignmentFlag.AlignLeft)
         self.gear_btn.show()
 
     def _on_sidebar_channel(self, channel: str):

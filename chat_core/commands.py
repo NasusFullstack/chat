@@ -155,6 +155,8 @@ NICK = CommandSpec("nick", "/nick <닉네임>", "닉네임을 바꿉니다")
 NAMES = CommandSpec("names", "/names [채널]", "참여자 목록을 새로 받아옵니다")
 TOPIC = CommandSpec("topic", "/topic [내용]", "채널 주제를 보거나 바꿉니다")
 WHOIS = CommandSpec("whois", "/whois <닉네임>", "상대 정보를 조회합니다")
+REGISTER = CommandSpec("register", "/register <비밀번호> <이메일>",
+                       "지금 이름으로 서버 계정을 만듭니다(그 뒤로 비밀번호 접속 가능)")
 AWAY = CommandSpec("away", "/away [사유]", "자리비움을 켜거나(사유 입력) 끕니다(생략)")
 INVITE = CommandSpec("invite", "/invite <닉네임> [채널]", "채널로 초대합니다")
 KICK = CommandSpec("kick", "/kick <닉네임> [사유]", "채널에서 내보냅니다 (권한 필요)")

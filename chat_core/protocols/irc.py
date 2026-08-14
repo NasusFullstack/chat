@@ -121,6 +121,29 @@ class IrcProtocol(CommonCommands):
         handler(self, session, channel, args)
         return True
 
+    def _cmd_register(self, session, channel: str, args: str) -> None:
+        """지금 쓰고 있는 이름으로 서버 계정을 만든다.
+
+        서버의 이름 관리 서비스(NickServ)에 등록을 요청한다. 등록하면 그 뒤로는
+        - 비밀번호로 인증해서 접속할 수 있고(접속 과정에서 바로 - SASL)
+        - 회선이 바뀌어 이름이 밀려도 **즉시 되찾을 수 있다**(RECOVER)
+
+        비밀번호는 채팅창에 보이지 않게 하지만, 서버로는 가야 하므로 공용 PC에서는
+        주의하라고 알린다.
+        """
+        parts = args.split()
+        if len(parts) < 2:
+            session.emit(events.CommandError(f"사용법: {commands.REGISTER.usage}"))
+            return
+        password, email = parts[0], parts[1]
+        session.transport(irc_protocol.format_privmsg(
+            "NickServ", f"REGISTER {password} {email}"))
+        session.emit(events.SystemNotice(
+            channel,
+            f"'{session.my_id}' 이름으로 서버 계정 만들기를 요청했습니다. "
+            "서버가 보내는 답을 확인하세요(이메일 인증을 요구할 수 있습니다). "
+            "등록이 끝나면 로그인 화면 비밀번호 칸에 그 비밀번호를 넣으면 됩니다."))
+
     def _cmd_notice(self, session, channel: str, args: str) -> None:
         if not args:
             session.emit(events.CommandError(f"사용법: {commands.NOTICE.usage}"))
@@ -260,8 +283,11 @@ class IrcProtocol(CommonCommands):
         # 다를 수 있음(길이 제한/치환 등). 이걸 안 읽고 우리가 보낸 값을 쓰면 엉뚱한 이름이 남음
         confirmed = msg.params[0] if msg.params else session.pending_irc_nick
         session.set_identity(confirmed)
-        # SASL로 이미 인증했으면(irc_identified) 귓속말을 또 보내지 않는다
-        if session.irc_password and not session.irc_identified:
+        # SASL로 이미 인증했으면 귓속말을 또 보내지 않는다. 인증이 **실패**한 경우도
+        # 마찬가지다 - 같은 비밀번호로 다시 시도해봐야 똑같이 실패하고 서버 오류 문구만
+        # 한 줄 더 쌓인다(사용자에게는 안내를 이미 한 줄 보냈다)
+        if (session.irc_password and not session.irc_identified
+                and session.sasl_state != "실패"):
             session.irc_identified = True
             session.transport(
                 irc_protocol.format_privmsg("NickServ", f"IDENTIFY {session.irc_password}")
@@ -571,10 +597,17 @@ class IrcProtocol(CommonCommands):
 
     def _on_sasl_failed(self, session, msg):
         """인증 실패(904 등). 접속 자체는 계속한다 - 로그인 못 했다고 채팅까지 막을
-        이유는 없다. 다만 왜 이름이 안 지켜지는지 알 수 있게 한 줄 남긴다."""
+        이유는 없다.
+
+        **무엇을 하면 되는지까지 알려준다.** 서버가 주는 말은 "SASL authentication
+        failed" 한 줄이라, 그대로 띄우면 사용자는 뭐가 잘못됐는지 알 수 없다. 실제로
+        가장 흔한 이유는 **그 이름이 서버에 등록돼 있지 않은 것**이다(실측: 이 서버의
+        NickServ가 "Nick ... isn't registered"라고 답한다). 등록하지 않았다면 비밀번호는
+        아무 소용이 없으므로, 등록 방법과 "비워도 접속된다"는 사실을 함께 알린다.
+        """
         session.sasl_state = "실패"
         self._end_cap(session)
-        session.emit(events.SystemNotice("", msg.trailing or "비밀번호 인증에 실패했습니다."))
+        session.emit(events.SystemNotice("", constants.SASL_FAILED_HELP))
 
     @staticmethod
     def _end_cap(session):
@@ -618,6 +651,7 @@ _COMMANDS = {
     commands.NAMES: IrcProtocol._cmd_names,
     commands.TOPIC: IrcProtocol._cmd_topic,
     commands.WHOIS: IrcProtocol._cmd_whois,
+    commands.REGISTER: IrcProtocol._cmd_register,
     commands.AWAY: IrcProtocol._cmd_away,
     commands.INVITE: IrcProtocol._cmd_invite,
     commands.KICK: IrcProtocol._cmd_kick,
