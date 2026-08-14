@@ -542,6 +542,13 @@ class MainWindow(QMainWindow):
                 self.move(max(available.left(), available.right() - target + 1), self.y())
         self.resize(max(self.minimumWidth(), target), self.height())
 
+    def reclaim_nickname_soon(self):
+        """이름 되찾기를 곧바로 한 번 시도한다(라우터가 로그인 직후에 부른다).
+
+        서비스가 유령을 죽이는 데 잠깐 걸리므로 아주 조금 기다렸다가 보낸다.
+        """
+        QTimer.singleShot(1500, self.session.reclaim_nickname)
+
     def _check_connection_alive(self):
         """조용한 연결이 진짜 살아 있는지 확인한다.
 

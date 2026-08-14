@@ -38,6 +38,8 @@ class IrcProtocol(CommonCommands):
         # 있다(뒤에 _가 붙는다). 원래 무엇을 원했는지 기억해뒀다가 되찾는다
         session.wanted_nick = user_id
         session.nick_reclaim_pending = False
+        session.nick_reclaim_attempts = 0
+        session.nick_reclaim_next_at = 0.0
         session.irc_password = password
         session.irc_identified = False
         session.irc_nick_retries = 0
@@ -357,6 +359,9 @@ class IrcProtocol(CommonCommands):
             session.nick_change_pending = False
             # 되찾기가 성공한 것이면 여기서 정리된다(원하는 이름이 되었으므로)
             session.nick_reclaim_pending = False
+            if new_nick == session.wanted_nick:
+                session.nick_reclaim_attempts = 0
+                session.nick_reclaim_next_at = 0.0
             session.set_identity(new_nick)
         for channel in list(session.members.keys()):
             if old_nick in session.members.get(channel, set()):
@@ -396,6 +401,21 @@ class IrcProtocol(CommonCommands):
         """
         if session.nick_reclaim_pending:
             return
+        if session.nick_reclaim_attempts >= constants.NICK_RECLAIM_MAX_ATTEMPTS:
+            # 여기까지 왔으면 유령이 아니라 **진짜 다른 사람**이 그 이름을 쓰는 중이다.
+            # 계속 두드려봐야 안 되고, 서버 눈에는 닉네임 변경 홍수로 보인다
+            return
+        now = time.time()
+        if now < session.nick_reclaim_next_at:
+            return
+        # 시도할수록 간격을 늘린다(최대 5분). 비밀번호가 있으면 서비스가 유령을 바로
+        # 죽여주므로 처음 몇 번은 아주 짧게 - 그래야 _가 붙은 채로 머물지 않는다
+        base = (constants.NICK_RECLAIM_FAST_DELAY_SEC if session.irc_password
+                else constants.NICK_RECLAIM_FIRST_DELAY_SEC)
+        delay = min(constants.NICK_RECLAIM_MAX_DELAY_SEC,
+                    base * (2 ** session.nick_reclaim_attempts))
+        session.nick_reclaim_next_at = now + delay
+        session.nick_reclaim_attempts += 1
         session.nick_reclaim_pending = True
         # 비밀번호가 있으면 유령을 즉시 쫓아낼 수 있다(등록된 이름일 때). 없으면 그냥
         # 요청만 해보고, 유령이 사라지는 순간 성공한다
