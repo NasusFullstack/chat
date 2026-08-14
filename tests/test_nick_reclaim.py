@@ -106,6 +106,30 @@ custom.wanted_nick = "다른이름"
 custom.reclaim_nickname()
 check("우리 서버에서는 되찾을 일이 없다", not custom_sent, custom_sent)
 
+# ---------- 유령을 즉시 쫓아낼 수 있는 경우 ----------
+# 실측(home.pdlab.kr, 2026-08-14): 이 서버의 NickServ는 GHOST가 없고 RECOVER를 쓴다.
+# "다른 사람이 내 이름을 쥐고 있으면 죽인다(옛 GHOST와 같음)" - 단, 이름이 등록돼 있고
+# 비밀번호가 있어야 한다. 비밀번호가 없으면 쓸 수 없으므로 보내면 안 된다
+with_pw_sent = []
+with_pw = build_session("irc", "h", 6667, transport=with_pw_sent.append,
+                        on_event=lambda e: None)
+with_pw.login("Mong", "비밀번호")
+with_pw_sent.clear()
+with_pw.handle_incoming(line(":h 433 * Mong :Nickname is already in use."))
+recover = [s for s in with_pw_sent if "RECOVER" in s]
+check(f"비밀번호가 있으면 유령을 즉시 쫓아낸다({recover})",
+      recover == ["PRIVMSG NickServ :RECOVER Mong 비밀번호"], with_pw_sent)
+check("그래도 접속은 계속한다(_를 붙여 들어간다)",
+      "NICK Mong_" in with_pw_sent, with_pw_sent)
+
+no_pw_sent = []
+no_pw = build_session("irc", "h", 6667, transport=no_pw_sent.append, on_event=lambda e: None)
+no_pw.login("Mong", "")
+no_pw_sent.clear()
+no_pw.handle_incoming(line(":h 433 * Mong :Nickname is already in use."))
+check("비밀번호가 없으면 서비스에 부탁하지 않는다(쓸 수 없는 명령이다)",
+      not [s for s in no_pw_sent if "RECOVER" in s], no_pw_sent)
+
 print("=== 검증 결과 (이름 되찾기) ===")
 all_ok = True
 for name, ok, *detail in checks:
