@@ -22,8 +22,10 @@ app.processEvents()
 lp = window.login_page
 checks.append(("기본 프로토콜이 실제 IRC 서버", lp.protocol_combo.currentData() == "irc"))
 checks.append(("기본 주소가 home.pdlab.kr", lp.host_input.text() == "home.pdlab.kr"))
-checks.append(("기본 SSL이 꺼짐", lp.ssl_checkbox.isChecked() is False))
-checks.append(("SSL 꺼짐에 맞춰 포트도 평문 포트로", lp.port_input.text() == g.DEFAULT_PLAIN_PORT))
+# 기본은 **보안 접속**이다(평문으로 붙으면 대화와 비밀번호가 그대로 오간다).
+# 서버의 보안 포트가 열려 있는 것을 확인하고 기본값을 바꿨다(실측: TLS 1.3)
+checks.append(("기본이 보안 접속", lp.ssl_checkbox.isChecked() is True))
+checks.append(("보안 접속에 맞는 포트", lp.port_input.text() == g.DEFAULT_SSL_PORT))
 checks.append(("IRC 기본 선택에 맞춰 닉네임 플레이스홀더로 바뀜(크래시 없이)", lp.user_input.placeholderText() == "닉네임"))
 checks.append(("로그인 버튼 텍스트도 '접속'으로 바뀜", lp.login_btn.text() == "접속"))
 checks.append(("회원가입 버튼은 숨겨짐(IRC엔 없음)", lp.register_btn.isVisible() is False))

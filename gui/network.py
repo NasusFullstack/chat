@@ -7,9 +7,11 @@ from collections import deque
 RECENT_LINE_COUNT = 40
 
 from PySide6.QtCore import Signal
+from PySide6.QtCore import QCryptographicHash
 from PySide6.QtNetwork import QSslSocket, QSslCertificate, QSslConfiguration, QSslError
 
 import irc_protocol
+import trusted_certs
 
 
 class ChatClient(QSslSocket):
@@ -18,6 +20,9 @@ class ChatClient(QSslSocket):
     message_received = Signal(dict)
     irc_line_received = Signal(object)
     connection_failed = Signal(str)
+    # 서버 인증서를 확인할 수 없을 때(자체 서명 등). 사람에게 물어보라는 뜻이다.
+    # (주소, 포트, 지문, 이유)
+    certificate_untrusted = Signal(str, int, str, str)
 
     def __init__(self):
         super().__init__()
@@ -34,6 +39,10 @@ class ChatClient(QSslSocket):
         self.sslErrors.connect(self._on_ssl_errors)
         # 끊김을 알려주는 경로가 없어서, 서버가 죽어도 화면상으론 멀쩡해 보였음
         self.disconnected.connect(self._on_disconnected)
+        self.encrypted.connect(self._on_encrypted)
+        self._pending_host = ""
+        self._pending_port = 0
+        self._trusted_fingerprint = ""
 
     def recent_lines(self) -> list[str]:
         """서버에서 받은 마지막 줄들(오래된 것부터). 사고 원인을 찾을 때 씀."""
@@ -63,10 +72,20 @@ class ChatClient(QSslSocket):
         # 반드시 setSslConfiguration() 이후에 setPeerVerifyMode()를 호출해야 함
         # (먼저 호출하면 아래에서 덮어써져 무시됨).
         self.setSslConfiguration(config)
-        if cert_path or self._mode == "irc":
+        self._pending_host = host
+        self._pending_port = port
+        self._trusted_fingerprint = trusted_certs.fingerprint_of(host, port)
+        if self._trusted_fingerprint:
+            # 사용자가 예전에 직접 확인하고 신뢰하기로 한 서버다. 시스템 검증은 통과하지
+            # 못하지만(자체 서명), 대신 **지문이 그때와 같은지** 우리가 직접 확인한다.
+            # 검증을 끄고 붙은 뒤 encrypted 시점에 지문을 대조한다 - 윈도우 기본 TLS
+            # 백엔드에서는 ignoreSslErrors()로 이 오류를 넘길 수 없기 때문이다
+            self.setPeerVerifyMode(QSslSocket.PeerVerifyMode.VerifyNone)
+        elif cert_path or self._mode == "irc":
             # cert.pem을 지정한 경우(우리 서버, 자체 서명 인증서 핀닝) 뿐 아니라
-            # 실제 IRC 서버 모드도 표준 방식으로 검증한다 (실제 서버는 보통 정식
-            # CA 인증서를 쓰므로 시스템 신뢰 저장소로 검증해야 위조 인증서를 걸러냄).
+            # 실제 IRC 서버 모드도 표준 방식으로 검증한다 (정식 CA 인증서를 쓰는 서버는
+            # 이 경로로 조용히 통과한다). 자체 서명 서버라면 아래 sslErrors에서 걸리고,
+            # 그때 사용자에게 한 번 물어본다
             self.setPeerVerifyMode(QSslSocket.PeerVerifyMode.VerifyPeer)
         else:
             # Windows 기본 TLS 백엔드(Schannel)는 QueryPeer + ignoreSslErrors()로
@@ -132,6 +151,23 @@ class ChatClient(QSslSocket):
                 continue
             self.irc_line_received.emit(msg)
 
+    def _on_encrypted(self):
+        """암호화 연결이 맺어졌다. 신뢰하기로 한 서버면 지문이 그대로인지 본다.
+
+        지문이 바뀌었다면 서버를 갈아탄 것일 수도, 누가 중간에 낀 것일 수도 있다.
+        어느 쪽이든 사람이 다시 확인해야 하므로 그냥 잇지 않는다.
+        """
+        if not self._trusted_fingerprint:
+            return
+        certificate = self.peerCertificate()
+        now = ""
+        if certificate is not None and not certificate.isNull():
+            now = bytes(certificate.digest(QCryptographicHash.Algorithm.Sha256)).hex()
+        if now and now != self._trusted_fingerprint:
+            self.abort()
+            self.certificate_untrusted.emit(self._pending_host, self._pending_port, now,
+                                            "예전에 확인한 인증서와 다릅니다")
+
     def _on_error(self, _error):
         # state()는 handshake 실패 시점에도 여전히 ConnectedState를 보고하는 경우가 있어
         # (Qt가 Closing/Unconnected로 전이하기 전에 errorOccurred를 먼저 emit) 상태로
@@ -140,6 +176,20 @@ class ChatClient(QSslSocket):
         self.connection_failed.emit(self.errorString())
 
     def _on_ssl_errors(self, errors: list[QSslError]):
+        if (self._mode == "irc" and not self._pinned_cert
+                and self.peerVerifyMode() == QSslSocket.PeerVerifyMode.VerifyPeer):
+            # 개인 서버는 대개 자체 서명 인증서를 쓴다. 무조건 막으면 그 서버에는 영영
+            # 못 붙고, 무조건 넘기면 가짜 서버를 구분할 수 없다. 그래서 **한 번 묻는다**
+            certificate = self.peerCertificate()
+            fingerprint = ""
+            if certificate is not None and not certificate.isNull():
+                fingerprint = bytes(
+                    certificate.digest(QCryptographicHash.Algorithm.Sha256)).hex()
+            reasons = "; ".join(error.errorString() for error in errors)
+            self.abort()
+            self.certificate_untrusted.emit(self._pending_host, self._pending_port,
+                                            fingerprint, reasons)
+            return
         if self.peerVerifyMode() == QSslSocket.PeerVerifyMode.VerifyNone:
             # cert.pem 없이 접속: 암호화만 하고 신원 검증은 생략
             self.ignoreSslErrors()
