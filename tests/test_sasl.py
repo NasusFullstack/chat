@@ -85,11 +85,19 @@ failed.handle_incoming(line(":h 904 Mong :SASL authentication failed"))
 check(f"실패해도 협상을 끝내 접속을 이어간다({failed_sent})",
       "CAP END" in failed_sent, failed_sent)
 told = [e for e in failed_events if isinstance(e, domain_events.SystemNotice)]
-check(f"왜 안 됐는지 알려준다({[e.text[:30] for e in told]})", bool(told), told)
+check(f"왜 안 됐는지 알려준다({[e.text[:24] for e in told]})", bool(told), told)
+# 서버 원문("SASL authentication failed")만 띄우면 무엇을 해야 할지 알 수 없다.
+# 가장 흔한 이유(이름 미등록)와 해결 방법까지 알려줘야 한다
+guidance = " ".join(e.text for e in told)
+check("무엇을 하면 되는지까지 알려준다(앱 안에서 계정 만들기)",
+      "/register" in guidance, guidance[:60])
+check("비밀번호 없이도 쓸 수 있다는 것도 알려준다", "비워두면" in guidance, guidance[:60])
+
 failed_sent.clear()
 failed.handle_incoming(line(":h 001 Mong :Welcome"))
-check("실패했으면 예전 방식(귓속말 인증)으로 물러난다",
-      any("NickServ" in s for s in failed_sent), failed_sent)
+# 같은 비밀번호로 귓속말 인증을 또 하면 똑같이 실패하고 서버 오류만 한 줄 더 쌓인다
+check("실패한 비밀번호로 다시 시도하지 않는다",
+      not [s for s in failed_sent if "NickServ" in s], failed_sent)
 
 # ---------- 6) 서버가 지원 안 하면 붙잡고 있지 않는다 ----------
 plain, plain_sent, _ = new_session("pw123")

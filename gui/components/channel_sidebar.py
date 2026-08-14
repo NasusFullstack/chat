@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QFrame, QHBoxLayout, QListWidget, QListWidgetItem
 from gui.components.unread_tint import UnreadTintDelegate
 
 from gui.theme import (ADD_TAB_LABEL, CHANNEL_ROW_HEIGHT, CHANNEL_SCROLL_BTN_PX,
+                       GEAR_BTN_PX,
                        CHANNEL_SIDEBAR_COLLAPSED_WIDTH, CHANNEL_SIDEBAR_WIDTH,
                        UNREAD_BLINK_COUNT, UNREAD_BLINK_INTERVAL_MS, UNREAD_TINT_ALPHA_IDLE,
                        UNREAD_TINT_ALPHA_OFF, UNREAD_TINT_ALPHA_ON)
@@ -93,7 +94,14 @@ class ChannelSidebar(QWidget):
 
         outer.addStretch(1)
 
-        # 환경설정은 자주 쓰는 기능이 아니라 맨 아래 구석에 작게 둔다(트레이 메뉴에도 있음)
+        # 맨 아래 왼쪽에 환경설정 톱니가 앉을 자리. 무엇을 앉힐지는 화면(chat_page)이 정한다 -
+        # 접으면 이 목록 자체가 사라지므로, 그때는 화면이 톱니를 다른 자리로 옮겨 끼운다
+        self.gear_host = QWidget()
+        self.gear_host.setFixedHeight(GEAR_BTN_PX + 8)
+        self.gear_slot = QHBoxLayout(self.gear_host)
+        self.gear_slot.setContentsMargins(8, 0, 0, 8)
+        self.gear_slot.setSpacing(0)
+        outer.addWidget(self.gear_host)
 
     def _make_arrow(self, glyph: str, tip: str, direction: int) -> QPushButton:
         """채널이 많아 자리가 모자랄 때 목록을 미는 화살표.
@@ -192,6 +200,7 @@ class ChannelSidebar(QWidget):
             return 0
         used = (self._top_gap + CHANNEL_ROW_HEIGHT          # 헤더 자리 + '+' 버튼
                 + CHANNEL_SCROLL_BTN_PX * 2                  # 위/아래 화살표
+                + self.gear_host.height()                    # 맨 아래 톱니 줄
                 )
         # 최소 한 칸은 보이게(너무 작으면 목록이 아예 안 보임)
         return max(step, self.height() - used)
@@ -282,7 +291,8 @@ class ChannelSidebar(QWidget):
         if collapsed == self._collapsed:
             return
         self._collapsed = collapsed
-        for widget in (self.list, self.add_btn, self.scroll_up, self.scroll_down):
+        for widget in (self.list, self.add_btn, self.scroll_up, self.scroll_down,
+                       self.gear_host):
             widget.setVisible(not collapsed)
         self.setFixedWidth(CHANNEL_SIDEBAR_COLLAPSED_WIDTH if collapsed
                            else CHANNEL_SIDEBAR_WIDTH)

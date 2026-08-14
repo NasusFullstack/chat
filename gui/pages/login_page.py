@@ -200,7 +200,7 @@ class LoginPage(QWidget):
         is_irc = self.protocol_combo.itemData(index) == "irc"
         if is_irc:
             self.user_input.setPlaceholderText("닉네임")
-            self.pw_input.setPlaceholderText("서버/NickServ 비밀번호 (선택, 보통 비워둠)")
+            self.pw_input.setPlaceholderText("서버 계정 비밀번호 (없으면 비워두세요)")
         else:
             self.user_input.setPlaceholderText("아이디")
             self.pw_input.setPlaceholderText("비밀번호")
