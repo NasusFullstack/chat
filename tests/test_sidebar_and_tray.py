@@ -95,6 +95,23 @@ else:
     check(f"화면 끝까지는 늘려서 최대한 지킨다(창 {window.width()} / 화면 {room})",
           window.width() >= room - 2, (window.width(), room))
 
+# ---------- 4) 손잡이 화살표가 움직이는 방향과 맞는가 ----------
+# 접고 펼 때 **창의 왼쪽 변**이 움직인다(대화 영역은 제자리). 화살표가 그 반대를 가리키면
+# "화살표가 반대인 것 같다"는 말을 듣는다(실제로 들었다).
+handle = chat_page.sidebar_handle
+sidebar.set_collapsed(False)
+for _ in range(6):
+    app.processEvents()
+left_before = window.x()
+check("펼친 상태에서는 오른쪽(접히는 쪽)을 가리킨다", handle._collapsed is False)
+
+sidebar.set_collapsed(True)
+for _ in range(8):
+    app.processEvents()
+check(f"접으면 창 왼쪽 변이 오른쪽으로 온다({left_before} -> {window.x()})",
+      window.x() >= left_before, (left_before, window.x()))
+check("접힌 상태에서는 왼쪽(펴지는 쪽)을 가리킨다", handle._collapsed is True)
+
 print("=== 검증 결과 (트레이 / 톱니 / 채널 목록 폭) ===")
 all_ok = True
 for name, ok, *detail in checks:
