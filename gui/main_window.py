@@ -405,7 +405,7 @@ class MainWindow(QMainWindow):
         self.chat_page.set_command_specs(self.session.command_specs())
     def _connect_to(self, request):
         self.login_page.show_status(
-            f"연결 중... ({request.mode_label}, 최대 10초, 언제든 '연결 취소' 가능)",
+            f"연결 중... ({request.mode_label})",
             error=False)
         self.login_page.set_connecting(True)
         self._connecting = True
@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
         self.login_page.ssl_checkbox.setChecked(False)
         self.login_page.port_input.setText(DEFAULT_PLAIN_PORT)
         self.login_page.show_status(
-            "보안 접속이 막혀 있는 것 같아 일반 접속으로 다시 시도합니다...", error=False)
+            "보안 접속이 막혀 일반 접속으로 다시 시도합니다...", error=False)
         QTimer.singleShot(0, lambda: self._handle_login_submit(self._auth_mode or "login"))
         return True
 
@@ -474,12 +474,11 @@ class MainWindow(QMainWindow):
             # (예: 진짜 IRC 서버 등 다른 프로토콜) 서버가 멈춰있을 가능성이 큼
             if self._protocol_mode == "irc":
                 self.login_page.show_status(
-                    f"서버 응답이 없습니다. ({CONNECT_TIMEOUT_MS // 1000}초) IRC 서버 주소/포트가 맞는지 확인하세요."
+                    "서버가 응답하지 않습니다. 주소와 포트를 확인하세요."
                 )
             else:
                 self.login_page.show_status(
-                    f"서버 응답이 없습니다. ({CONNECT_TIMEOUT_MS // 1000}초) "
-                    "이 친구 채팅 서버(server.py)가 맞는지, 주소/포트가 맞는지 확인하세요."
+                    "서버가 응답하지 않습니다. 주소와 포트를 확인하세요."
                 )
         else:
             # 포트가 막힌 네트워크에서는 거절도 안 오고 그냥 조용히 시간만 흐른다.
@@ -584,25 +583,20 @@ class MainWindow(QMainWindow):
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
 
         self._stop_connecting()
-        shown = trusted_certs.readable(fingerprint)[:47]
         known = trusted_certs.fingerprint_of(host, port)
-        headline = ("이 서버의 인증서가 예전과 다릅니다." if known
-                    else "이 서버의 인증서를 확인할 수 없습니다.")
-        agreed = gui_client.themed_question(
-            self, "보안 접속 확인",
-            f"{headline}\n\n"
-            f"서버: {host}:{port}\n"
-            f"지문: {shown}...\n"
-            f"이유: {reason}\n\n"
-            "개인이 운영하는 서버는 정식 인증서가 없는 경우가 많습니다. "
-            "아는 서버가 맞다면 신뢰하고 계속할 수 있습니다.\n"
-            "(신뢰하면 이 지문을 기억해두고, 나중에 지문이 바뀌면 다시 물어봅니다)")
+        if known:
+            # 지문이 바뀐 경우는 짧게 넘기면 안 된다 - 누가 중간에 끼었을 수도 있다
+            question = (f"{host}의 인증서가 예전과 달라졌습니다.\n"
+                        "서버를 바꾼 것이 아니라면 위험합니다.\n\n그래도 신뢰할까요?")
+        else:
+            question = (f"{host}은(는) 자체 서명 인증서를 씁니다.\n"
+                        "개인이 운영하는 서버는 대부분 이렇습니다.\n\n이 서버를 신뢰할까요?")
+        agreed = gui_client.themed_question(self, "보안 접속", question)
         if not agreed:
             self.login_page.show_status("보안 접속을 취소했습니다.")
             return
         trusted_certs.trust(host, port, fingerprint)
-        self.login_page.show_status("서버를 신뢰하기로 했습니다. 다시 접속합니다...",
-                                    error=False)
+        self.login_page.show_status("다시 접속합니다...", error=False)
         # 로그인 화면의 입력 그대로 다시 접속한다(주소·포트·계정이 이미 거기 있다).
         # **한 박자 뒤에** 건다 - 지금은 소켓 오류를 처리하는 중이라, 그 안에서 곧바로
         # 다시 접속하면 Qt가 정리 중인 소켓과 부딪혀 조용히 무시된다(실측)

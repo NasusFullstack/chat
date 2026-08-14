@@ -19,6 +19,7 @@ _REPO = _os.path.dirname(_HERE)
 _os.environ["QT_QPA_PLATFORM"] = "offscreen"
 _sys.path.insert(0, _REPO)
 
+import io  # noqa: E402
 import tempfile  # noqa: E402
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -84,9 +85,14 @@ gui_client.themed_question = lambda parent, title, text: (
     asked.update(title=title, text=text), False)[1]
 window._on_certificate_untrusted("home.pdlab.kr", 6697, "aabbcc", "자체 서명")
 gui_client.themed_question = real_question
-check(f"무엇을 묻는지 사람이 알 수 있다({asked.get('title')})",
-      "home.pdlab.kr:6697" in asked.get("text", ""), asked)
-check("지문을 보여준다", "AA:BB:CC" in asked.get("text", ""), asked.get("text", "")[:120])
+# 물음은 짧아야 한다 - 지문과 오류 원문을 늘어놓으면 아무도 안 읽고 그냥 누른다
+message = asked.get("text", "")
+check(f"어느 서버인지 알려준다({message.splitlines()[0] if message else ''})",
+      "home.pdlab.kr" in message, message)
+check("자체 서명이라는 것과 무엇을 묻는지가 분명하다",
+      "자체 서명" in message and "신뢰" in message, message)
+check(f"세 줄을 넘지 않는다({len([x for x in message.splitlines() if x.strip()])}줄)",
+      len([x for x in message.splitlines() if x.strip()]) <= 3, message)
 check("거절하면 신뢰 목록에 남지 않는다",
       trusted_certs.fingerprint_of("home.pdlab.kr", 6697) == "")
 
@@ -99,6 +105,31 @@ check("한 번은 물러난다", window._try_plain_fallback() is True)
 check("물러난 뒤에는 평문 포트로 바뀐다", page.port_input.text() == g.DEFAULT_PLAIN_PORT,
       page.port_input.text())
 check("두 번은 물러나지 않는다(무한 반복 방지)", window._try_plain_fallback() is False)
+
+
+# ---------- 6) 저장하는 비밀번호를 그대로 두지 않는가 ----------
+import json  # noqa: E402
+
+import secret_store  # noqa: E402
+
+sealed = secret_store.protect("0990")
+check(f"저장 형태가 원문과 다르다({sealed[:14]}...)", "0990" not in sealed, sealed[:30])
+check("다시 읽으면 원래 비밀번호", secret_store.unprotect(sealed) == "0990")
+check("예전에 그대로 저장된 값도 읽힌다", secret_store.unprotect("옛날비번") == "옛날비번")
+check("빈 값은 그대로 둔다", secret_store.protect("") == "" and secret_store.unprotect("") == "")
+check("한글 비밀번호도 오간다", secret_store.unprotect(secret_store.protect("비밀번호가")) == "비밀번호가")
+
+work = tempfile.mkdtemp(prefix="chup_prefs_")
+real_file = login_prefs.LOGIN_PREFS_FILE
+login_prefs.LOGIN_PREFS_FILE = _os.path.join(work, "login_prefs.json")
+try:
+    login_prefs.save({"user_id": "Mong", "password": "0990", "auto_login": True})
+    on_disk = io.open(login_prefs.LOGIN_PREFS_FILE, encoding="utf-8").read()
+    check("파일에 비밀번호가 그대로 적히지 않는다", "0990" not in on_disk, on_disk[:80])
+    check("앱이 읽을 때는 원래 비밀번호가 나온다",
+          login_prefs.load().get("password") == "0990")
+finally:
+    login_prefs.LOGIN_PREFS_FILE = real_file
 
 print("=== 검증 결과 (보안 접속) ===")
 all_ok = True

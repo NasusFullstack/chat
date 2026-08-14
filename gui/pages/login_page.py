@@ -282,6 +282,11 @@ class LoginPage(QWidget):
         """
         # 서버가 색을 입혀 보낸 안내도 여기서는 서식을 못 쓴다 - 글자만 남긴다
         self.status_label.setText(irc_format.strip(text))
+        # 글자가 길면 칸도 그만큼 늘어나야 한다. 고정 높이로 두면 뒷줄이 잘려서
+        # "왜 안 되는지" 설명하는 문장이 정작 안 보인다(실측: 94px 필요한데 칸은 67px)
+        fitted = self.status_label.heightForWidth(max(1, self.status_label.width()))
+        if fitted > 0:
+            self.status_label.setMinimumHeight(fitted)
         name = "status_err" if error else "status_info"
         if self.status_label.objectName() != name:
             self.status_label.setObjectName(name)
