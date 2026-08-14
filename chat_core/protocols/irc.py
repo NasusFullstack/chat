@@ -607,7 +607,8 @@ class IrcProtocol(CommonCommands):
         """
         session.sasl_state = "실패"
         self._end_cap(session)
-        session.emit(events.SystemNotice("", constants.SASL_FAILED_HELP))
+        # 그냥 지나가면 로그인된 것처럼 보인다. 접속을 멈추고 사용자에게 돌려보낸다
+        session.emit(events.AuthFailed(constants.SASL_FAILED_HELP))
 
     @staticmethod
     def _end_cap(session):

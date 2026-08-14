@@ -85,10 +85,9 @@ class LoginPage(QWidget):
         cert_row.addWidget(self.cert_browse_btn)
         box.addLayout(cert_row)
 
-        hint = QLabel(
-            "※ SSL을 끄면 암호화 없이 평문(포트 6667)으로 접속해요. "
-            "목록에서 공용서버를 고르거나, 주소를 직접 입력한 뒤 '공용서버 등록'으로 저장해두면 다음부터 목록에서 바로 고를 수 있어요"
-        )
+        # 설명은 짧게. 길게 적으면 칸을 넘쳐 잘리고(실측: 68px 필요한데 칸은 40px),
+        # 로그인 화면에 스크롤까지 생긴다. 자세한 것은 필요할 때 안내 문구로 알려준다
+        hint = QLabel("※ 자주 쓰는 서버는 '공용서버 등록'으로 저장해두세요.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
         box.addWidget(hint)
