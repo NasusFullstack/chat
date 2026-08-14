@@ -31,7 +31,14 @@ class SidebarHandle(QWidget):
         self._update_tip()
 
     def set_collapsed(self, collapsed: bool):
-        """접힌 상태면 화살표가 '펴는 쪽'(오른쪽)을 가리킨다."""
+        """화살표는 **누르면 화면이 움직이는 방향**을 가리킨다.
+
+        채널 목록을 접고 펼 때 창의 왼쪽 변이 움직인다(대화 영역은 제자리에 있다).
+        - 펼친 상태에서 누르면: 목록이 사라지며 창 왼쪽 변이 **오른쪽**으로 온다 -> ▶
+        - 접힌 상태에서 누르면: 목록이 나오며 창 왼쪽 변이 **왼쪽**으로 간다 -> ◀
+
+        움직임과 반대로 그리면 "화살표가 반대인 것 같다"는 말을 듣는다(실제로 들었다).
+        """
         self._collapsed = collapsed
         self._update_tip()
         self.update()
@@ -80,8 +87,9 @@ class SidebarHandle(QWidget):
         # 접혀 있으면 '펴는 쪽'(오른쪽), 펴져 있으면 '접는 쪽'(왼쪽)을 가리킨다
         cx, cy = self.width() / 2, self.height() / 2
         reach = SIDEBAR_HANDLE_ARROW_PX / 2
-        tip = cx - reach if not self._collapsed else cx + reach
-        back = cx + reach if not self._collapsed else cx - reach
+        # 펼침 -> 누르면 오른쪽으로 움직인다(▶) / 접힘 -> 누르면 왼쪽으로 움직인다(◀)
+        tip = cx + reach if not self._collapsed else cx - reach
+        back = cx - reach if not self._collapsed else cx + reach
         chevron = QPainterPath()
         chevron.moveTo(back, cy - SIDEBAR_HANDLE_ARROW_PX)
         chevron.lineTo(tip, cy)
