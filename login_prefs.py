@@ -10,6 +10,7 @@ import os
 import sys
 
 import app_paths
+import secret_store
 
 
 
@@ -23,13 +24,26 @@ def load() -> dict:
     try:
         with open(LOGIN_PREFS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        if data.get("password"):
+            # 잠가둔 비밀번호를 원래 글자로 되돌린다(예전에 그대로 저장된 값도 읽힌다)
+            data["password"] = secret_store.unprotect(data["password"])
+        return data
     except (json.JSONDecodeError, OSError):
         return {}
 
 
 def save(prefs: dict) -> None:
+    """접속 정보를 저장한다. **비밀번호는 그대로 적지 않는다.**
+
+    예전에는 이 파일을 열면 비밀번호가 글자 그대로 보였다(자동 로그인을 켠 경우).
+    윈도우가 제공하는 보호 장치로 잠가서, 지금 로그인한 사용자만 풀 수 있게 한다.
+    """
     try:
+        prefs = dict(prefs)
+        if prefs.get("password"):
+            prefs["password"] = secret_store.protect(prefs["password"])
         with open(LOGIN_PREFS_FILE, "w", encoding="utf-8") as f:
             json.dump(prefs, f)
     except OSError:
