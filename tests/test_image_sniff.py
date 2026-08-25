@@ -32,9 +32,14 @@ def check(name, ok, detail=""):
 DAUM_THUMB = ("https://img1.daumcdn.net/thumb/R800x0/?scode=mtistory2&fname=https%3A%2F%2F"
               "blog.kakaocdn.net%2Fdna%2FM7CBu%2Fimg.png%3Fcredential%3Dabc%26signature%3Dxyz")
 
+# 구글 이미지 썸네일도 같은 모양이다(확장자 없음) - 실제로 둘 다 신고를 받았다
+GOOGLE_THUMB = ("https://encrypted-tbn0.gstatic.com/images?"
+                "q=tbn:ANd9GcQ6-edgBcVcH2OYfU7KckpjTCDxfveJrdPUT4jnxXTQHA&s=10")
+
 # ---------- 1) 주소만으로는 못 알아본다(그래서 내용을 봐야 한다) ----------
-check("확장자가 뒤에 없으면 주소로는 그림인 줄 모른다",
-      link_meta.is_image_url(DAUM_THUMB) is False, link_meta.is_image_url(DAUM_THUMB))
+for label, url in (("다음 썸네일", DAUM_THUMB), ("구글 썸네일", GOOGLE_THUMB)):
+    check(f"{label}: 주소만으로는 그림인 줄 모른다",
+          link_meta.is_image_url(url) is False, link_meta.is_image_url(url))
 
 # ---------- 2) 내용으로는 확실히 알아본다 ----------
 SAMPLES = {
