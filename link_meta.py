@@ -37,6 +37,30 @@ _CHARSET_RE = re.compile(rb"""charset\s*=\s*["']?\s*([\w\-]+)""", re.IGNORECASE)
 _IMAGE_EXT_RE = re.compile(r"\.(png|jpe?g|gif|webp|bmp)(?:[?#].*)?$", re.IGNORECASE)
 
 
+# 파일 형식마다 정해져 있는 첫 몇 바이트(매직). 주소가 어떻게 생겼든 이걸 보면 확실하다
+_IMAGE_SIGNATURES = (
+    b"\x89PNG\r\n\x1a\n",     # PNG
+    b"\xff\xd8\xff",            # JPEG
+    b"GIF87a", b"GIF89a",        # GIF
+    b"BM",                       # BMP
+)
+
+
+def looks_like_image(data: bytes) -> bool:
+    """받아온 내용이 이미지인가(주소 모양과 무관하게).
+
+    요즘 이미지 주소는 확장자가 뒤에 없는 경우가 흔하다 - 썸네일 변환 주소, 서명이 붙은
+    주소 등. 그런 주소를 웹페이지로 착각하면 그림이 통째로 안 뜬다(실제로 겪었다).
+    """
+    if not data or len(data) < 4:
+        return False
+    head = bytes(data[:16])
+    if head.startswith(_IMAGE_SIGNATURES):
+        return True
+    # WEBP는 RIFF....WEBP 형태라 앞 네 바이트만으로는 알 수 없다
+    return head.startswith(b"RIFF") and head[8:12] == b"WEBP"
+
+
 def is_image_url(url: str) -> bool:
     """확장자로 이미지 직링크인지 판단.
 

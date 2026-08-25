@@ -9,7 +9,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 import link_meta
-from gui.preview.fetcher import HTML_LIMIT_BYTES
+from gui.preview.fetcher import HTML_LIMIT_BYTES, UNKNOWN_LIMIT_BYTES
 from gui.preview import youtube
 from gui.preview.image_preview import ImagePreview, is_image_url
 from gui.preview.link_card import CARD_MAX_WIDTH, LinkCard
@@ -84,8 +84,10 @@ class LinkPreviewArea(QWidget):
             elif is_image_url(url):
                 fetcher.fetch(url, lambda data, u=url: self._on_direct_image(u, data))
             else:
-                fetcher.fetch(url, lambda data, u=url: self._on_html(u, data),
-                              limit=HTML_LIMIT_BYTES)
+                # 확장자만 보고 웹페이지로 단정하지 않는다 - 받아본 뒤 내용으로 정한다.
+                # 그래서 넉넉한 한도로 받는다(그림이면 그대로 보여줄 수 있게)
+                fetcher.fetch(url, lambda data, u=url: self._on_unknown(u, data),
+                              limit=UNKNOWN_LIMIT_BYTES)
 
     def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt 규약
         return True
@@ -152,6 +154,18 @@ class LinkPreviewArea(QWidget):
         if not info.get("title"):
             return
         self._add_card(url, info)
+
+    def _on_unknown(self, url: str, data):
+        """주소만 봐서는 뭔지 모를 때 - 받아온 내용을 보고 정한다.
+
+        그림이면 그림으로 보여주고, 아니면 웹페이지로 보고 미리보기 카드를 만든다.
+        주소가 `.png`로 끝나야만 그림으로 치던 예전 방식은, 요즘 흔한 썸네일/서명 주소를
+        전부 놓쳤다(실제로 다음 썸네일 주소가 통째로 안 떴다).
+        """
+        if link_meta.looks_like_image(data or b""):
+            self._on_direct_image(url, data)
+            return
+        self._on_html(url, data)
 
     def _on_html(self, url: str, data):
         """받아온 HTML에서 메타태그를 뽑아 카드를 만듦. 제목이 없으면 아무 것도 안 함."""

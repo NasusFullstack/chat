@@ -14,6 +14,9 @@ import link_meta
 
 DOWNLOAD_LIMIT_BYTES = 8 * 1024 * 1024  # 이보다 크면 받다가 중단(거대 파일로 앱 멈춤 방지)
 HTML_LIMIT_BYTES = 256 * 1024           # og 태그는 <head>에 있어 앞부분만 있으면 충분
+# 주소만으로는 그림인지 웹페이지인지 모를 때 쓰는 한도. 그림일 수 있으므로
+# HTML보다 넉넉하게 잡되, 웹페이지를 통째로 받지는 않도록 제한한다
+UNKNOWN_LIMIT_BYTES = 4 * 1024 * 1024
 REQUEST_TIMEOUT_MS = 10000              # 죽은 링크가 계속 붙잡고 있지 않게
 
 USER_AGENT = b"Mozilla/5.0 (compatible; FriendChat/1.0)"
