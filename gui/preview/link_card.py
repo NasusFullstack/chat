@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout
 
+from gui.components import relayout
 from gui.preview.image_preview import CARD_THUMB_PX, crop_to_square
 
 CARD_MAX_WIDTH = 360
@@ -111,20 +112,6 @@ class LinkCard(QFrame):
         # 아래가 살짝 잘렸다. 그만큼만 여유를 둔다(눈에 안 띄고, 잘림은 확실히 막힌다)
         self.setFixedHeight(content + margins.top() + margins.bottom() + 2)
 
-    def _ask_parent_to_remeasure(self):
-        """내 키가 바뀌었으니 대화 목록에도 높이를 다시 재라고 알림.
-
-        안 알리면 목록이 예전 높이를 그대로 써서 채팅 맨 아래에 빈 공간이 남는다.
-        """
-        parent = self.parentWidget()
-        while parent is not None:
-            sync = getattr(parent, "sync_content_height", None)
-            if callable(sync):
-                sync()
-                return
-            parent.updateGeometry()
-            parent = parent.parentWidget()
-
     def remeasure(self):
         """높이를 다시 재고, 달라졌으면 위쪽에도 알린다.
 
@@ -134,14 +121,22 @@ class LinkCard(QFrame):
         before = self.height()
         self.adjust_height()
         if self.height() != before:
-            self._ask_parent_to_remeasure()
+            relayout.size_changed(self)
 
     def set_thumbnail(self, pixmap: QPixmap):
+        """썸네일은 카드보다도 늦게 도착한다 - 붙이면 필요한 높이가 달라진다.
+
+        예전에는 여기서 높이만 다시 잡고 **위쪽에 알리지 않아서**, 목록이 옛 높이를
+        그대로 써서 카드 아래가 잘리거나 빈 공간이 남았다.
+        """
         if pixmap.isNull():
             return
+        before = self.height()
         self.thumb.setPixmap(crop_to_square(pixmap, CARD_THUMB_PX))
         self.thumb.setVisible(True)
-        self.adjust_height()   # 썸네일이 붙으면 필요한 높이가 달라짐
+        self.adjust_height()
+        if self.height() != before:
+            relayout.size_changed(self)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:

@@ -72,6 +72,11 @@ class MessageReceived:
 class SystemNotice:
     channel: str
     text: str
+    # 언제 일어난 일인가. 사람이 오간 알림(입장/나감/접속 종료/내보내짐)에만 채워진다 -
+    # 도움말 출력이나 "── 이전 대화 기록 ──" 같은 안내는 시각이 의미가 없으므로 0.
+    # 시각을 붙일지 말지는 "무슨 일이 일어났는가"를 아는 코어가 정하고, 어떻게 보여줄지는
+    # 어댑터가 정한다
+    ts: float = 0.0
 
 
 @dataclass(frozen=True)

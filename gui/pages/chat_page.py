@@ -511,11 +511,11 @@ class ChatPage(QWidget):
         gui_client._flash_taskbar_icon(top)
         gui_client._shake_window(top)
 
-    def append_system(self, channel: str, text: str):
+    def append_system(self, channel: str, text: str, ts: float = 0.0):
         view = self._log_views.get(channel)
         if view is None:
             return
-        view.append_system(text)
+        view.append_system(text, ts)
 
     def load_history(self, channel: str, entries: list[dict]):
         """지난 대화 기록을 다시 그림 - 여기서는 링크 미리보기를 만들지 않는다.

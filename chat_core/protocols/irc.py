@@ -255,7 +255,8 @@ class IrcProtocol(CommonCommands):
         reason = msg.trailing if len(msg.params) > 2 else ""
         session.remove_member(channel, target)
         suffix = f" ({reason})" if reason else ""
-        session.emit(events.SystemNotice(channel, f"{target}님이 내보내졌습니다{suffix}."))
+        session.emit(events.SystemNotice(
+            channel, f"{target}님이 내보내졌습니다{suffix}.", ts=time.time()))
         if target == session.my_id:
             session.forget_channel(channel)
             session.emit(events.ChannelLeft(channel))
@@ -364,7 +365,8 @@ class IrcProtocol(CommonCommands):
                 self._send_avatar(session, channel, my_avatar)
         else:
             session.add_member(channel, nick)
-            session.emit(events.SystemNotice(channel, f"{nick}님이 입장했습니다."))
+            session.emit(events.SystemNotice(
+                channel, f"{nick}님이 입장했습니다.", ts=time.time()))
             my_avatar = session.avatars.get(session.my_id)
             if my_avatar:
                 # 새로 들어온 사람에게만 1:1로 알려줌(채널 전체에 다시 뿌릴 필요 없음)
@@ -374,7 +376,7 @@ class IrcProtocol(CommonCommands):
         nick = msg.source_nick
         channel = msg.params[0] if msg.params else ""
         session.remove_member(channel, nick)
-        session.emit(events.SystemNotice(channel, f"{nick}님이 나갔습니다."))
+        session.emit(events.SystemNotice(channel, f"{nick}님이 나갔습니다.", ts=time.time()))
         if nick == session.my_id:
             session.forget_channel(channel)
             session.emit(events.ChannelLeft(channel))
@@ -385,7 +387,8 @@ class IrcProtocol(CommonCommands):
         for channel in list(session.members.keys()):
             if nick in session.members.get(channel, set()):
                 session.remove_member(channel, nick)
-                session.emit(events.SystemNotice(channel, f"{nick}님이 접속을 종료했습니다."))
+                session.emit(events.SystemNotice(
+                    channel, f"{nick}님이 접속을 종료했습니다.", ts=time.time()))
 
     def _on_nick(self, session, msg):
         old_nick = msg.source_nick
