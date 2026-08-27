@@ -13,6 +13,7 @@
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QLayout, QSizePolicy, QWidget
 
+from gui.components import relayout
 from gui.link_preview import ImagePreview
 
 EMOJI_PX = 192         # 채팅에 보이는 이모티콘 한 변의 최대 크기
@@ -107,16 +108,10 @@ class EmojiRow(QWidget):
         if not data or not preview.set_image_data(data):
             return
         preview.set_max_width(EMOJI_PX)
-        self.updateGeometry()
-        # 도착한 뒤 위쪽에 높이를 다시 재라고 알림(안 하면 아래에 빈 공간이 남음)
-        parent = self.parentWidget()
-        while parent is not None:
-            sync = getattr(parent, "sync_content_height", None)
-            if callable(sync):
-                sync()
-                return
-            parent.updateGeometry()
-            parent = parent.parentWidget()
+        # 자리를 잡아둔 크기(192x192)와 실제 그림 크기가 다르므로 여기서 배치가 바뀐다.
+        # 알리는 방법을 손으로 짜지 말 것 - 예전에 이 자리에서 조상 레이아웃 무효화를
+        # 빠뜨려서 이모티콘 여러 개일 때 아래에 1184px이 남았다(relayout.py 참고)
+        relayout.size_changed(self)
 
     def urls(self):
         return [p.url for p in self._previews]

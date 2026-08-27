@@ -142,9 +142,12 @@ class CustomProtocol(CommonCommands):
         session.deliver_message(channel, sender, text, mine=(sender == session.my_id), ts=ts)
 
     def _on_system(self, session, msg: dict):
+        """서버가 보내는 안내 - 지금은 전부 사람이 오간 알림(입장/나감/접속 종료)이라
+        언제 일어난 일인지 같이 알려준다. 옛 서버는 시각을 안 보내므로 받은 때로 대신한다."""
         channel = msg.get("channel") or session.active_channel
         if channel:
-            session.emit(events.SystemNotice(channel, msg.get("text", "")))
+            session.emit(events.SystemNotice(
+                channel, msg.get("text", ""), ts=msg.get("ts") or time.time()))
 
     def _on_userlist(self, session, msg: dict):
         channel = msg.get("channel") or session.active_channel

@@ -137,7 +137,7 @@ def _system_notice(view, event):
         if view.is_pre_login():
             view.login_page.show_status(event.text, error=False)
         return
-    view.chat_page.append_system(event.channel, event.text)
+    view.chat_page.append_system(event.channel, event.text, event.ts)
 
 
 def _userlist_updated(view, event):

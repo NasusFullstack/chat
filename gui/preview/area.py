@@ -9,6 +9,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 import link_meta
+from gui.components import relayout
 from gui.preview.fetcher import HTML_LIMIT_BYTES, UNKNOWN_LIMIT_BYTES
 from gui.preview import youtube
 from gui.preview.image_preview import ImagePreview, is_image_url
@@ -125,26 +126,14 @@ class LinkPreviewArea(QWidget):
 
     def _notify_shown(self):
         # 미리보기는 네트워크로 나중에 도착하므로, 그때 이 칸의 크기가 바뀐다는 걸
-        # 위쪽 레이아웃에 명시적으로 알려야 한다. 안 알리면 메시지 높이가 도착 전 값으로
-        # 굳어 그림이 잘리거나 아래에 빈 공간이 남는다(이 코드베이스에서 이미 한 번 난
-        # 사고 유형 - CLAUDE.md의 "줄바꿈 폭" 항목과 같은 뿌리).
-        self.updateGeometry()
-        parent = self.parentWidget()
-        while parent is not None:
-            parent.updateGeometry()
-            layout = parent.layout()
-            if layout is not None:
-                layout.invalidate()
-            # 메시지 목록(ChannelLogView)까지 올라가서 높이를 다시 맞추게 한다.
-            # 예전엔 여기서 안쪽 위젯에 adjustSize()를 불렀는데, 그건 폭까지 sizeHint로
-            # 바꿔버려서 스크롤 영역이 정하는 폭과 싸운다
-            sync = getattr(parent, "sync_content_height", None)
-            if callable(sync):
-                sync()
-                break
-            parent = parent.parentWidget()
+        # 위쪽 레이아웃에 알려야 한다. 안 알리면 메시지 높이가 도착 전 값으로 굳어
+        # 그림이 잘리거나 아래에 빈 공간이 남는다(relayout.py에 실측표가 있다).
+        relayout.size_changed(self)
+        # 주소 글자를 지우는 것도 높이를 바꾸므로 지운 **뒤에** 한 번 더 알린다.
+        # 예전엔 지우기 전에만 알려서, 주소가 여러 줄이던 메시지가 그만큼 부풀어 있었다
         if self._on_preview_shown is not None:
             self._on_preview_shown()
+            relayout.size_changed(self)
 
     def _on_youtube(self, url: str, data):
         """유튜브 oEmbed 응답으로 카드를 만든다(그림은 영상 대표 이미지)."""

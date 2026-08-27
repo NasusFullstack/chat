@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWi
 
 from chat_core.commands import KIND_ACTION, KIND_CHAT, KIND_NOTICE, split_emoji_parts
 from gui import irc_format
+from gui.components import relayout
 from gui.components.message_text import MessageText
 from gui.helpers import _format_ts, _linkify, extract_urls, text_is_only_urls
 from gui.theme import AVATAR_MSG_PX, TIMESTAMP_BADGE_HEIGHT_PX
@@ -130,8 +131,7 @@ class MessageWidget(QWidget):
         글자가 줄어들면 높이도 줄어드는데, 그걸 레이아웃에 알리지 않으면 예전 높이가
         그대로 남아 아래에 빈 공간이 생긴다."""
         self._text_label.setText(self._sender_only_html)
-        self._text_label.updateGeometry()
-        self.updateGeometry()
+        relayout.size_changed(self._text_label)
 
     def set_wrap_width(self, view_width: int):
         """이 줄이 쓸 수 있는 폭을 알려준다. 글자는 이 폭에서 배치되고 높이가 정해진다.
@@ -155,15 +155,22 @@ class MessageWidget(QWidget):
             self.preview_area.set_max_width(inner_width)
 
 
-def _build_system_label(text: str) -> QLabel:
+def _build_system_label(text: str, ts: float = 0.0) -> QLabel:
+    """안내 한 줄. `ts`가 있으면 언제 일어난 일인지 뒤에 덧붙인다.
+
+    시각이 붙는 건 사람이 오간 알림(입장/나감/접속 종료/내보내짐)뿐이다. 대화처럼
+    시간 배지를 따로 달지는 않는다 - 안내는 대화와 구분돼 보여야 하므로, 같은 줄
+    끝에 더 흐린 색으로 붙인다.
+    """
     safe = (text or "").replace("<", "&lt;").replace(">", "&gt;")
     decorated = irc_format.to_html(safe)
+    when = f'<span style="color:#6f7180"> ({_format_ts(ts)})</span>' if ts else ""
     # 서버가 색을 입혀 보낸 안내(환영 인사 등)는 그 색을 살린다. 우리가 만든 안내는
     # 예전처럼 흐린 회색 기울임으로 둔다 - 대화와 구분하기 위한 표시이므로
     if irc_format.has_formatting(safe):
-        label = QLabel(f'<span style="color:#c8ccd8">{decorated}</span>')
+        label = QLabel(f'<span style="color:#c8ccd8">{decorated}</span>{when}')
     else:
-        label = QLabel(f'<span style="color:#9a9cad"><i>* {decorated}</i></span>')
+        label = QLabel(f'<span style="color:#9a9cad"><i>* {decorated}</i></span>{when}')
     label.setObjectName("systemNotice")
     label.setStyleSheet("QLabel#systemNotice { background: transparent; }")
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)

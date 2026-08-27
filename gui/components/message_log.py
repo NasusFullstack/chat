@@ -4,7 +4,7 @@
 배치와 어긋나면 그 차이가 그대로 채팅 맨 아래 빈 공간이 되고, 심하면 맨 아래에서 메시지가
 하나도 안 보인다. 자세한 사고 이력과 실측값은 _ChatLogContent 주석과 CLAUDE.md 참고.
 """
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
 
@@ -38,11 +38,61 @@ class _ChatLogContent(QWidget):
     # 되므로 클래스 속성으로 둔다 - 이 위젯은 __init__ 없이 만들어진다
     _measuring = False
 
+    # 배치가 바뀌었을 때 부를 곳(대화 목록이 자기 sync_content_height를 꽂아준다).
+    # 이 위젯은 __init__ 없이 만들어지므로 기본값을 클래스 속성으로 둔다
+    _on_layout_request = None
+    _handling_layout_request = False
+
+    # 지금까지 실측한 '정말로 필요한 높이'. minimumSizeHint가 이 값을 답하므로,
+    # 스크롤 영역이 안쪽 위젯을 이 아래로 누르지 못한다(minimumSizeHint 설명 참고)
+    _min_height = 0
+
+    def event(self, event):
+        """안쪽 어딘가의 크기가 바뀌면 높이를 다시 잰다.
+
+        그림·카드·이모티콘은 네트워크로 뒤늦게 도착하고, 도착하면 그 자리가 커지거나
+        작아진다. 예전에는 도착한 쪽이 **각자** 대화 목록을 찾아 올라가 높이를 다시
+        재라고 알렸는데, 네 군데로 흩어지다 보니 두 곳이 빠뜨려서 맨 아래에 빈 공간이
+        남았다(실측: 이모티콘 여러 개에서 1184px).
+
+        지금은 반대로 한다 - 크기가 바뀐 쪽은 `relayout.size_changed()`로 조상 배치를
+        무효로 만들기만 하고, 그러면 Qt가 여기로 LayoutRequest를 보내므로 **목록이
+        스스로** 다시 잰다. 새 미리보기 종류가 늘어도 여기를 안 건드려도 된다.
+        """
+        if (event.type() == QEvent.Type.LayoutRequest
+                and self._on_layout_request is not None
+                and not self._handling_layout_request):
+            self._handling_layout_request = True
+            try:
+                self._on_layout_request()
+            finally:
+                self._handling_layout_request = False
+        return super().event(event)
+
     def sizeHint(self):
         layout = self.layout()
         if layout is None:
             return super().sizeHint()
         return layout.sizeHint()
+
+    def minimumSizeHint(self):  # noqa: N802 - Qt 규약
+        """최소 높이도 **실측값**으로 답한다(계산식으로 답하면 안 된다).
+
+        스크롤 영역(widgetResizable)은 안쪽 위젯을 여기서 답한 최소치 아래로는 못 줄인다.
+        그래서 이 값이 틀리면 우리가 실측으로 맞춰놓은 높이가 곧바로 되돌려진다.
+
+        이걸 구현하지 않으면 Qt가 레이아웃의 `totalMinimumSize()`를 대신 쓰는데, 그 값은
+        '창을 최대한 좁혔을 때'를 가정한다 - 글자는 줄이 늘고 이모티콘은 한 줄에 하나씩
+        내려가므로 실제보다 훨씬 크게 나온다. 실측(2026-08-27, 이모티콘 6개 x 4줄):
+        실제 필요 3039px인데 최소치 4223px -> 그 차이 1184px이 그대로 채팅 맨 아래
+        빈 공간이었다("이모티콘을 여러 개 넣으면 아래가 빈다"는 신고).
+
+        그렇다고 0을 답하면 반대로 눌린다 - 스크롤 영역이 화면 높이까지 줄여버려서,
+        긴 글 한 줄(실측 736px)이 398px 안에 갇히고 스크롤도 안 생겼다. 최소치는
+        **없애는 게 아니라 옳게 답해야** 하는 값이다.
+        """
+        hint = super().minimumSizeHint()
+        return QSize(hint.width(), self._min_height)
 
     def measured_height(self) -> int:
         """지금 실제로 배치된 마지막 위젯의 아랫끝(= 정말로 필요한 높이).
@@ -66,26 +116,40 @@ class _ChatLogContent(QWidget):
         layout = self.layout()
         if layout is None:
             return 0
-        if not self._measuring:
-            self._measuring = True
-            try:
-                # **먼저 자리를 넉넉히 준 뒤에 재야 한다.** activate()는 지금 위젯 높이
-                # 안에서 배치하므로, 높이가 모자라면 줄들이 눌린 채로 놓이고 우리는 그
-                # 눌린 값을 "필요한 높이"라고 답하게 된다. 그러면 스크롤 영역이 그 값을
-                # 그대로 쓰고, 다음 번에도 같은 답이 나와 영영 안 늘어난다(자기 오답을
-                # 다시 재는 셈). 실제 사고 2026-08-13: 공백 없는 장문 한 줄이 1313px를
-                # 요구하는데 498px(뷰포트 높이)에서 굳어 글 대부분이 안 보이고 스크롤도
-                # 안 생겼다.
-                # 넉넉히 준 다음 재는 것이므로, 계산식이 크게 부르는 경우(대화 200건에서
-                # +1152px)에도 결과는 여전히 '실제로 놓인 자리'다
-                needed = layout.heightForWidth(self.width())
-                if needed <= 0:
-                    needed = layout.sizeHint().height()
-                if needed > self.height():
-                    self.resize(self.width(), needed)
-                layout.activate()
-            finally:
-                self._measuring = False
+        if self._measuring:
+            # 재는 도중에 다시 물어온 것 - 지금 놓인 자리를 그대로 답한다.
+            # 여기서 _min_height를 갱신하면 안 된다: 지금은 자리를 넓히는 중이라
+            # 아직 눌린 값이고, 그걸 최소치로 기억하면 스크롤 영역이 곧바로 도로
+            # 눌러버려서 영영 안 늘어난다(자기 오답을 다시 재는 셈)
+            return self._bottom_edge(layout)
+        self._measuring = True
+        try:
+            # **먼저 자리를 넉넉히 준 뒤에 재야 한다.** activate()는 지금 위젯 높이
+            # 안에서 배치하므로, 높이가 모자라면 줄들이 눌린 채로 놓인다. 실제 사고
+            # 2026-08-13: 공백 없는 장문 한 줄이 1313px를 요구하는데 498px(뷰포트
+            # 높이)에서 굳어 글 대부분이 안 보이고 스크롤도 안 생겼다.
+            # 넉넉히 준 다음 재는 것이므로, 계산식이 크게 부르는 경우(대화 200건에서
+            # +1152px)에도 결과는 여전히 '실제로 놓인 자리'다
+            needed = layout.heightForWidth(self.width())
+            if needed <= 0:
+                needed = layout.sizeHint().height()
+            if needed > self.height():
+                # 넓히는 동안에도 스크롤 영역이 도로 누르지 않게 최소치를 같이 올린다.
+                # (resize 자체가 스크롤 영역의 크기 재계산을 부르고, 그때 이 값을 본다)
+                self._min_height = needed
+                self.resize(self.width(), needed)
+            layout.activate()
+            measured = self._bottom_edge(layout)
+        finally:
+            self._measuring = False
+        # 다 재고 나면 **실측값이 최소치**다. 넓히려고 잠깐 올려둔 계산값은 여기서
+        # 실측값으로 내려앉으므로, 계산식이 크게 부른 만큼이 빈 공간으로 남지 않는다
+        self._min_height = measured
+        return measured
+
+    @staticmethod
+    def _bottom_edge(layout) -> int:
+        """지금 놓여 있는 위젯들의 가장 아랫끝(+ 아래 여백)."""
         bottom = 0
         for i in range(layout.count()):
             item = layout.itemAt(i).widget()
@@ -153,6 +217,8 @@ class ChannelLogView(QScrollArea):
         self._layout.setContentsMargins(8, 8, 8, 8)
         self._layout.setSpacing(2)
         self.setWidget(content)
+        # 안쪽 배치가 바뀌면(늦게 도착한 그림 등) 알아서 높이를 다시 재게 연결
+        content._on_layout_request = self.sync_content_height
         self._messages: list[MessageWidget] = []
         # "빈 화면" 진단을 채널당 한 번만 남기기 위한 표시(로그가 불어나지 않게)
         self._blank_reported = False
@@ -231,8 +297,8 @@ class ChannelLogView(QScrollArea):
         self.sync_content_height()
         self._warn_if_blank()
 
-    def append_system(self, text: str):
-        self._layout.addWidget(_build_system_label(text))
+    def append_system(self, text: str, ts: float = 0.0):
+        self._layout.addWidget(_build_system_label(text, ts))
         self.sync_content_height()
 
     def set_container_width(self, width: int):
