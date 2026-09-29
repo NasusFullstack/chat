@@ -21,7 +21,7 @@ import math
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QRadialGradient
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QApplication, QWidget
 
 import battle_ai
 import battle_protocol as bp
@@ -120,15 +120,24 @@ class BattleArena(QWidget):
 
     # ---------- 바깥에서 부르는 것 ----------
     def attach_input(self, line_edit):
-        """조작을 가로챌 입력창. 혼자 날 때(BattlecruiserOverlay)와 같은 방식이다 -
-        포커스는 보통 입력창에 있으므로 거기에 필터를 건다."""
-        if self._input is line_edit:
-            return
-        if self._input is not None:
-            self._input.removeEventFilter(self)
+        """메시지 입력창을 알려준다.
+
+        **여기에 필터를 걸지는 않는다.** 조종은 앱 전체에서 받고(아래 `_watch_keys`),
+        이 입력창은 "지금 채팅을 쓰는 중인가"를 보는 데만 쓴다 - 그게 조종과 채팅을
+        가르는 유일한 기준이다.
+        """
         self._input = line_edit
-        if line_edit is not None:
-            line_edit.installEventFilter(self)
+
+    def _watch_keys(self, on: bool):
+        """전투 중에만 앱 전체의 키를 본다. **끝나면 반드시 푼다** - 안 풀면 전투가
+        끝난 뒤에도 방향키를 가로채 채팅창 스크롤이 안 된다."""
+        app = QApplication.instance()
+        if app is None:
+            return
+        if on:
+            app.installEventFilter(self)
+        else:
+            app.removeEventFilter(self)
 
     def start(self, my_slot: int, players: dict, ai_slots=()):
         """전투 시작. players = {자리: (이름, 색)}
@@ -156,8 +165,10 @@ class BattleArena(QWidget):
         self.show()
         self.raise_()
         self._timer.start(sim.TICK_MS)
+        self._watch_keys(True)
 
     def stop(self):
+        self._watch_keys(False)
         self._timer.stop()
         self._battle = None
         self._pressed.clear()
@@ -223,28 +234,51 @@ class BattleArena(QWidget):
 
     # ---------- 조작 ----------
     def eventFilter(self, obj, event):
-        if obj is not self._input or not self.is_active:
+        """전투 중에는 **커서가 어디 있든** 조종된다.
+
+        예전에는 입력창에 필터를 걸어서, 커서가 입력창에 있을 때만 조종됐다. 채널 목록이나
+        대화창을 한 번 누르면 조종이 안 되고, 대화창에 커서가 있으면 방향키가 스크롤을
+        움직였다. 포커스에 매달린 게 문제의 뿌리였다.
+
+        그래서 판단 기준을 하나로 바꿨다 - **입력창이 비어 있으면 조종, 글자가 있으면 채팅.**
+        무엇을 누르고 있든 상관없고, 글자를 치기 시작하면 저절로 채팅으로 넘어간다.
+
+        주의(CLAUDE.md 1번 계열): 이 필터는 앱 전체를 지나가므로 **빨리 빠져나가야 하고,
+        여기서 화면을 만지면 안 된다**(예전에 앱 전역 필터 안에서 커서 모양을 바꿨다가
+        같은 이벤트가 다시 들어와 스택이 넘친 적이 있다). 여기서는 키만 읽는다.
+        """
+        kind = event.type()
+        if kind not in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
             return False
-        if event.type() not in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+        if not self.is_active or not self.window().isActiveWindow():
             return False
+
         if event.key() == Qt.Key.Key_Escape:
-            if event.type() == QEvent.Type.KeyPress:
+            if kind == QEvent.Type.KeyPress:
                 self.escape_pressed.emit()
             return True
+
         bit = KEY_BITS.get(event.key())
+        typing = bool(self._input is not None and self._input.text())
+
         if bit is None:
+            # 게임 키가 아니다. 글자를 치기 시작한 것이면 입력창으로 넘겨준다 -
+            # 전투 중에도 그냥 타자를 치면 채팅이 되어야 한다
+            if kind == QEvent.Type.KeyPress and not typing and event.text().strip() \
+                    and self._input is not None and not self._input.hasFocus():
+                self._input.setFocus()
             return False
-        if event.type() == QEvent.Type.KeyRelease:
-            # **키를 뗀 건 무조건 반영한다.** 예전에는 입력창에 글자가 있으면 여기서
-            # 바로 돌아갔는데, 방향키를 누른 채 글자를 치면 그 키가 눌린 채로 박혀
-            # 배가 그쪽으로 계속 갔다. 떼는 건 막을 이유가 없다
+
+        if kind == QEvent.Type.KeyRelease:
+            # **뗀 건 무조건 반영한다.** 안 그러면 방향키를 누른 채 글자를 치기 시작했을 때
+            # 그 키가 눌린 채로 박혀 배가 계속 그쪽으로 간다
             self._pressed.discard(bit)
-            return not self._input.text()
-        # 메시지를 쓰는 중이면 조작을 가로채지 않는다 - 전투 중에도 채팅이 우선
-        if self._input.text():
-            return False
+            return not typing
+
+        if typing:
+            return False        # 메시지를 쓰는 중 - 채팅이 우선
         self._pressed.add(bit)
-        return True
+        return True             # 대화창 스크롤 등 다른 곳으로 안 흘러가게 여기서 끝낸다
 
     # ---------- 한 틱 ----------
     def _advance(self):
