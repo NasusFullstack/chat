@@ -153,6 +153,10 @@ class MessageWidget(QWidget):
         # 그림이 밖으로 삐져나가 가로 스크롤이 생기고 시간 배지까지 화면 밖으로 밀림
         if self.preview_area is not None:
             self.preview_area.set_max_width(inner_width)
+        # 이모티콘도 이 폭 안에서 몇 줄이 되는지 정해져야 한다. 안 알려주면 레이아웃이
+        # 추측하게 되고, 그 추측이 실제와 어긋난 만큼 눌리거나 빈 공간이 남는다
+        if self.emoji_area is not None:
+            self.emoji_area.set_wrap_width(inner_width)
 
 
 def _build_system_label(text: str, ts: float = 0.0) -> QLabel:
