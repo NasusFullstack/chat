@@ -13,8 +13,8 @@
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
-from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-                               QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QListWidget,
+                               QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
 import battle_protocol as bp
 from gui.helpers import _find_image_in_app_dirs
@@ -26,7 +26,8 @@ TITLE_IMAGE = "battle_title.jpg"
 TITLE_MAX_WIDTH = 460
 
 # 배 색 - battle_protocol.COLOR_COUNT 개여야 한다(서버가 번호로만 주고받으므로
-# 실제 색은 화면이 정한다). 스타1 플레이어 색을 본떠 서로 확실히 구분되게 골랐다
+# 실제 색은 화면이 정한다). 스타1 플레이어 색을 본떠 서로 확실히 구분되게 골랐다.
+# 마지막 '무지개'는 **숨겨진 색**이다 - 아래 KONAMI 설명 참고
 SHIP_COLORS = (
     ("빨강", "#e53935"),
     ("파랑", "#1e88e5"),
@@ -36,8 +37,21 @@ SHIP_COLORS = (
     ("갈색", "#8d6e63"),
     ("연두", "#7cb342"),
     ("노랑", "#fdd835"),
+    ("무지개", "#ff0066"),      # 견본용 대표색. 실제로는 계속 바뀐다
 )
 assert len(SHIP_COLORS) == bp.COLOR_COUNT, "색 개수가 규약과 다르면 서버와 말이 안 통한다"
+
+RAINBOW = bp.RAINBOW_COLOR
+
+# 색 고르는 화면에서 이 순서대로 방향키를 누르면 무지개가 열린다.
+# 위 아래 위 위 아래 좌 우 위 아래
+KONAMI = (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Up, Qt.Key.Key_Up,
+          Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
+          Qt.Key.Key_Up, Qt.Key.Key_Down)
+
+# 무지개가 한 바퀴 도는 데 걸리는 틱 수(60fps 기준 약 2초).
+# 너무 빠르면 눈이 아프고 너무 느리면 안 바뀌는 것처럼 보인다
+RAINBOW_PERIOD_TICKS = 120
 
 SWATCH_PX = 14
 
@@ -48,6 +62,21 @@ def color_name(index: int) -> str:
 
 def color_hex(index: int) -> str:
     return SHIP_COLORS[index % len(SHIP_COLORS)][1]
+
+
+def ship_color(index: int, phase: int = 0) -> QColor:
+    """배를 그릴 색. 무지개면 `phase`(틱 번호)에 따라 계속 바뀐다.
+
+    **벽시계가 아니라 틱 번호로 정한다.** 그래야 모두의 화면에서 같은 순간에 같은 색이
+    된다(시계는 PC마다 조금씩 어긋난다).
+
+    비싸지 않다: 배는 어차피 매 틱 다시 그려지고, 여기서 하는 일은 색 하나를 만드는
+    것뿐이다(그림을 새로 만들지 않는다).
+    """
+    if index != RAINBOW:
+        return QColor(color_hex(index))
+    hue = int(phase * 360 / RAINBOW_PERIOD_TICKS) % 360
+    return QColor.fromHsv(hue, 235, 255)
 
 
 def _swatch(index: int) -> QPixmap:
@@ -70,6 +99,8 @@ class BattleLobby(ThemedDialog):
     capacity_chosen = Signal(int)   # 정원을 바꿨다(방 연 사람만)
     start_pressed = Signal()        # 시작을 눌렀다
     closed = Signal()               # 창을 닫았다(= 전투를 그만둠)
+    rainbow_unlocked = Signal()     # 숨겨진 색을 열었다
+    practice_toggled = Signal(bool)  # 연습 상대로 빈 자리를 채울지
 
     def __init__(self, is_host: bool, my_nick: str, parent=None):
         # ThemedDialog 는 글/버튼을 미리 채우는 팝업이라, 여기서는 틀만 빌리고
@@ -80,6 +111,8 @@ class BattleLobby(ThemedDialog):
         self._my_slot = -1
         self._taken_colors = set()
         self._players = {}          # 자리 -> (이름, 색)
+        self._konami = []           # 방금 누른 방향키들(숨겨진 색을 여는 커맨드)
+        self._rainbow_open = False
 
         # ThemedDialog 가 만든 내용물을 비우고 우리 것으로 채운다
         old = self.layout()
@@ -128,11 +161,29 @@ class BattleLobby(ThemedDialog):
         setting_row.addWidget(QLabel("내 배 색"))
         self.color = QComboBox()
         for index, (name, _hex) in enumerate(SHIP_COLORS):
+            if index == RAINBOW:
+                continue           # 숨겨진 색 - 커맨드를 넣어야 나타난다
             self.color.addItem(_swatch(index), name, index)
         self.color.currentIndexChanged.connect(self._on_color_changed)
         setting_row.addWidget(self.color)
         setting_row.addStretch(1)
         layout.addLayout(setting_row)
+
+        # 연습 상대 - 혼자 있을 때 시험해 보라고 둔다.
+        # **내 화면에서만 도는 상대**라는 걸 분명히 적는다(남들에겐 안 보인다)
+        self.practice_row = QHBoxLayout()
+        self.practice = QCheckBox("연습 상대 채우기")
+        self.practice.setToolTip("빈 자리를 연습 상대로 채웁니다. 내 화면에서만 보입니다.")
+        self.practice.toggled.connect(self.practice_toggled.emit)
+        self.practice.toggled.connect(lambda _on: self._refresh())
+        self.practice.setVisible(is_host)     # 방을 연 사람만 정한다
+        self.practice_row.addWidget(self.practice)
+        self.practice_hint = QLabel("내 화면에서만 보입니다")
+        self.practice_hint.setObjectName("battlePracticeHint")
+        self.practice_hint.setVisible(is_host)
+        self.practice_row.addWidget(self.practice_hint)
+        self.practice_row.addStretch(1)
+        layout.addLayout(self.practice_row)
 
         button_row = QHBoxLayout()
         button_row.addStretch(1)
@@ -231,11 +282,24 @@ class BattleLobby(ThemedDialog):
             if item is not None:
                 item.setEnabled(self.color.itemData(index) not in self._taken_colors)
 
-        enough = len(self._players) >= bp.MIN_PLAYERS
+        # 연습 상대를 켜두면 혼자서도 시작할 수 있다(그게 이 기능을 넣은 이유다)
+        practice = self.practice.isChecked()
+        enough = len(self._players) >= bp.MIN_PLAYERS or practice
         self.start_button.setEnabled(self._is_host and enough)
         if self._is_host:
             self.start_button.setToolTip(
-                "" if enough else f"{bp.MIN_PLAYERS}명 이상 모여야 시작할 수 있습니다")
+                "" if enough
+                else f"{bp.MIN_PLAYERS}명 이상 모이거나 '연습 상대 채우기'를 켜야 합니다")
+
+    def practice_enabled(self) -> bool:
+        return self.practice.isChecked()
+
+    def empty_slots(self):
+        """연습 상대가 채울 빈 자리들. 정원에서 사람 수를 뺀 만큼이다."""
+        if not self.practice.isChecked():
+            return []
+        capacity = self.capacity.currentData() or bp.MAX_PLAYERS
+        return [slot for slot in range(capacity) if slot not in self._players]
 
     def taken_colors(self):
         """남이 쓰고 있어서 못 고르는 색들(검사와 창이 같은 값을 본다)."""
@@ -243,6 +307,35 @@ class BattleLobby(ThemedDialog):
 
     def player_count(self) -> int:
         return len(self._players)
+
+    # ------------------------------------------------------------------
+    def keyPressEvent(self, event):
+        """방향키를 순서대로 누르면 숨겨진 무지개가 열린다.
+
+        **ESC로 창을 닫는 건 그대로 둔다** - 커맨드 때문에 나가지도 못하면 안 된다.
+        방향키는 목록/콤보가 먼저 먹을 수도 있어서 여기(창)에서 가로채 센다.
+        """
+        if event.key() in KONAMI and not self._rainbow_open:
+            self._konami.append(event.key())
+            # 마지막 몇 개만 본다 - 중간에 틀려도 이어서 다시 넣으면 되게
+            self._konami = self._konami[-len(KONAMI):]
+            if tuple(self._konami) == KONAMI:
+                self._unlock_rainbow()
+                return
+        super().keyPressEvent(event)
+
+    def _unlock_rainbow(self):
+        if self._rainbow_open:
+            return
+        self._rainbow_open = True
+        self.color.addItem(_swatch(RAINBOW), color_name(RAINBOW), RAINBOW)
+        self.color.setCurrentIndex(self.color.count() - 1)   # 바로 골라준다
+        self.notice.setText("★ 무지개 배틀크루저를 손에 넣었습니다 ★")
+        self.rainbow_unlocked.emit()
+
+    def rainbow_available(self) -> bool:
+        """무지개가 열려 있는가(검사와 창이 같은 값을 본다)."""
+        return self._rainbow_open
 
     def reject(self):
         self.closed.emit()

@@ -150,6 +150,9 @@ check(f"전투장 밖으로 안 나간다({edge.px:.0f},{edge.py:.0f} / 300x200)
 # ---------- 4) 야마토포 ----------
 # 포탄이 금방 전투장 밖으로 나가버리면 세는 게 헷갈리므로 넉넉한 판에서 잰다
 firing = sim.Battle((0,), 4000, 4000)
+# 포탄이 전투장 밖으로 나가버리지 않게 배를 한가운데로 옮긴다
+firing.ships[0].x = firing.width // 2
+firing.ships[0].y = firing.height // 2
 firing.advance({0: bp.KEY_FIRE})
 check(f"쏘면 포탄이 생긴다({len(firing.shells)}발)", len(firing.shells) == 1, firing.shells)
 check(f"쏘면 재장전이 걸린다({firing.ships[0].reload_left}틱)",
@@ -167,6 +170,7 @@ check(f"재장전되면 또 쏜다({len(firing.shells)}발)", len(firing.shells)
 
 # 포탄은 언젠가 사라진다(영원히 쌓이면 안 된다)
 lonely = sim.Battle((0,), 4000, 4000)
+lonely.ships[0].x, lonely.ships[0].y = lonely.width // 2, lonely.height // 2
 lonely.advance({0: bp.KEY_FIRE})
 for _ in range(sim.SHELL_LIFE_TICKS + 5):
     lonely.advance({0: 0})

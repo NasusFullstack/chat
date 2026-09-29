@@ -165,7 +165,81 @@ try:
 finally:
     lobby_module._find_image_in_app_dirs = real_finder
 
-# ---------- 7) 순환참조 규칙(CLAUDE.md 1번) ----------
+# ---------- 7) 숨겨진 무지개(코나미 커맨드) ----------
+import io  # noqa: E402
+import time  # noqa: E402
+
+from gui.battle.lobby import KONAMI, RAINBOW, RAINBOW_PERIOD_TICKS, ship_color  # noqa: E402
+
+secret = BattleLobby(is_host=True, my_nick="Mong")
+secret.show()
+pump()
+
+check(f"처음에는 무지개가 안 보인다({secret.color.count()}가지)",
+      secret.rainbow_available() is False
+      and RAINBOW not in [secret.color.itemData(i) for i in range(secret.color.count())],
+      secret.color.count())
+
+# 틀린 순서로는 안 열린다
+for key in (Qt.Key.Key_Up, Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left):
+    QTest.keyClick(secret, key)
+pump()
+check("아무 방향키나 누른다고 열리지는 않는다", secret.rainbow_available() is False)
+
+# 제대로 된 순서 - 진짜 키 입력으로 넣는다
+unlocked = []
+secret.rainbow_unlocked.connect(lambda: unlocked.append(True))
+for key in KONAMI:
+    QTest.keyClick(secret, key)
+pump()
+check("커맨드를 넣으면 열린다", secret.rainbow_available() is True)
+check("열렸다고 알린다", unlocked == [True], unlocked)
+check(f"목록에 무지개가 생긴다({[secret.color.itemText(i) for i in range(secret.color.count())]})",
+      RAINBOW in [secret.color.itemData(i) for i in range(secret.color.count())])
+check(f"바로 골라준다({secret.color.currentData()})", secret.color.currentData() == RAINBOW)
+
+# 중간에 틀려도 이어서 다시 넣으면 열린다(한 번 삐끗했다고 창을 다시 열게 하면 답답하다)
+again = BattleLobby(is_host=False, my_nick="Gil")
+again.show()
+pump()
+for key in (Qt.Key.Key_Left, Qt.Key.Key_Left, Qt.Key.Key_Right):
+    QTest.keyClick(again, key)
+for key in KONAMI:
+    QTest.keyClick(again, key)
+pump()
+check("중간에 틀려도 이어서 넣으면 열린다", again.rainbow_available() is True)
+
+# 색이 실제로 계속 바뀌는가
+hues = {ship_color(RAINBOW, tick).hue() for tick in range(0, RAINBOW_PERIOD_TICKS, 4)}
+check(f"무지개는 틱마다 색이 바뀐다(한 바퀴에 {len(hues)}가지)", len(hues) > 20, len(hues))
+check("한 바퀴 돌면 처음 색으로 돌아온다",
+      ship_color(RAINBOW, 0).hue() == ship_color(RAINBOW, RAINBOW_PERIOD_TICKS).hue())
+check("보통 색은 틱이 바뀌어도 그대로다",
+      ship_color(0, 0) == ship_color(0, 999), (ship_color(0, 0), ship_color(0, 999)))
+check("시계가 아니라 틱으로 정한다(모두의 화면에서 같은 순간에 같은 색)",
+      "time." not in io.open(_os.path.join(_REPO, "gui/battle/lobby.py"),
+                             encoding="utf-8").read().split("def ship_color", 1)[1]
+      .split("def ", 1)[0])
+
+# **렉이 걸리는가** - 색을 만드는 비용을 실제로 잰다
+ROUNDS = 100_000
+started = time.perf_counter()
+for tick in range(ROUNDS):
+    ship_color(RAINBOW, tick)
+rainbow_ns = (time.perf_counter() - started) / ROUNDS * 1e9
+started = time.perf_counter()
+for tick in range(ROUNDS):
+    ship_color(0, tick)
+plain_ns = (time.perf_counter() - started) / ROUNDS * 1e9
+# 한 틱(16ms)에 배 4척이면 색을 4번 만든다. 그게 한 틱의 1%도 안 되어야 한다
+per_frame_us = rainbow_ns * bp.MAX_PLAYERS / 1000
+check(f"무지개 색 만들기가 싸다(1회 {rainbow_ns:.0f}ns, 4척이면 한 틱에 "
+      f"{per_frame_us:.1f}us / 틱 16000us)",
+      per_frame_us < 160, per_frame_us)
+check(f"보통 색과 비슷하다(무지개 {rainbow_ns:.0f}ns vs 보통 {plain_ns:.0f}ns)",
+      rainbow_ns < plain_ns * 6, (rainbow_ns, plain_ns))
+
+# ---------- 8) 순환참조 규칙(CLAUDE.md 1번) ----------
 import io  # noqa: E402
 
 source = io.open(_os.path.join(_REPO, "gui/battle/lobby.py"), encoding="utf-8").read()
