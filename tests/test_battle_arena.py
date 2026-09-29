@@ -153,6 +153,76 @@ arena.apply_peer_input(2, 5, 9999)
 check(f"이상한 키 값은 걸러진다({arena._peer_keys.get(2)})",
       arena._peer_keys.get(2) == (9999 & bp.KEY_MASK), arena._peer_keys.get(2))
 
+# ---------- 3-1) 커서가 어디 있든 조종되는가 ----------
+# 예전에는 입력창에 커서가 있어야만 조종됐다. 채널 목록이나 대화창을 한 번 누르면
+# 조종이 안 되고, 대화창에 커서가 있으면 방향키가 스크롤을 움직였다(실제 신고).
+from PySide6.QtCore import QEvent, Qt  # noqa: E402
+from PySide6.QtGui import QKeyEvent  # noqa: E402
+from PySide6.QtWidgets import QLineEdit, QListWidget  # noqa: E402
+
+keyed_host, keyed = make()
+line = QLineEdit(keyed_host)
+keyed.attach_input(line)
+elsewhere = QListWidget(keyed_host)      # '다른 데'를 흉내낸다(채널 목록 같은 것)
+keyed_host.show()
+app.processEvents()
+
+
+def press(widget, key, text=""):
+    event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier, text)
+    return keyed.eventFilter(widget, event)
+
+
+def release(widget, key):
+    event = QKeyEvent(QEvent.Type.KeyRelease, key, Qt.KeyboardModifier.NoModifier, "")
+    return keyed.eventFilter(widget, event)
+
+
+check("입력창이 비었으면 조종된다(커서가 입력창)",
+      press(line, Qt.Key.Key_Left) is True and bp.KEY_LEFT in keyed._pressed)
+release(line, Qt.Key.Key_Left)
+
+check("커서가 다른 데 있어도 조종된다",
+      press(elsewhere, Qt.Key.Key_Right) is True and bp.KEY_RIGHT in keyed._pressed)
+check("그 키가 다른 곳으로 안 흘러간다(대화창 스크롤 방지)",
+      press(elsewhere, Qt.Key.Key_Down) is True)
+release(elsewhere, Qt.Key.Key_Right)
+release(elsewhere, Qt.Key.Key_Down)
+check(f"떼면 빠진다({keyed._pressed})", not keyed._pressed, keyed._pressed)
+
+check("스페이스도 조종이다", press(elsewhere, Qt.Key.Key_Space) is True
+      and bp.KEY_FIRE in keyed._pressed)
+release(elsewhere, Qt.Key.Key_Space)
+
+# 글자를 치면 채팅이 우선
+line.setText("안녕")
+check("채팅을 쓰는 중이면 조종을 안 가로챈다",
+      press(line, Qt.Key.Key_Left) is False)
+check("그동안 눌린 키가 안 쌓인다", not keyed._pressed, keyed._pressed)
+
+# 방향키를 누른 채 글자를 치기 시작해도 키가 박히지 않는다
+line.setText("")
+press(elsewhere, Qt.Key.Key_Up)
+check("누른 상태에서", bp.KEY_UP in keyed._pressed)
+line.setText("타자중")
+release(elsewhere, Qt.Key.Key_Up)
+check(f"채팅을 쓰기 시작해도 뗀 키는 빠진다({keyed._pressed})", not keyed._pressed,
+      keyed._pressed)
+line.setText("")
+
+# ESC는 언제나 이탈 물음
+escapes = []
+keyed.escape_pressed.connect(lambda: escapes.append(True))
+check("ESC는 어디서든 먹힌다", press(elsewhere, Qt.Key.Key_Escape) is True)
+app.processEvents()
+check(f"ESC가 이탈 물음을 부른다({escapes})", escapes == [True], escapes)
+
+# 전투가 끝나면 키를 더 이상 안 가로챈다
+keyed.stop()
+check("전투가 끝나면 방향키를 안 가로챈다(채팅창 스크롤이 되어야 함)",
+      press(elsewhere, Qt.Key.Key_Left) is False)
+keyed_host.close()
+
 # ---------- 4) 이탈 - 계산에서는 즉시 빼고 연출만 남는다 ----------
 crashes_before = len(arena._crashes)
 arena.remove_player(2)
