@@ -20,7 +20,8 @@ app = QApplication.instance() or QApplication([])
 
 import battle_protocol as bp  # noqa: E402
 import gui_client as g  # noqa: E402
-from gui.battle.lobby import SHIP_COLORS, BattleLobby, color_name  # noqa: E402
+from gui.battle.lobby import (SHIP_COLORS, TITLE_MAX_WIDTH, BattleLobby,  # noqa: E402
+                              color_name)
 
 app.setStyleSheet(g.STYLE_SHEET)
 
@@ -135,7 +136,36 @@ needed = fresh.notice.heightForWidth(max(1, fresh.notice.width()))
 check(f"안내 문구가 안 잘린다(필요 {needed}px / 칸 {fresh.notice.height()}px)",
       fresh.notice.height() >= needed, (needed, fresh.notice.height()))
 
-# ---------- 6) 순환참조 규칙(CLAUDE.md 1번) ----------
+# ---------- 6) 시작 그림 ----------
+titled = BattleLobby(is_host=True, my_nick="Mong")
+titled.show()
+pump()
+if titled.title_image is not None:
+    shown = titled.title_image.pixmap()
+    check(f"시작 그림이 걸린다({shown.width()}x{shown.height()})",
+          not shown.isNull() and shown.width() > 0, shown.size())
+    check(f"창을 넘지 않게 줄여서 건다({shown.width()} <= {TITLE_MAX_WIDTH})",
+          shown.width() <= TITLE_MAX_WIDTH, shown.width())
+    check(f"비율이 안 찌그러졌다({shown.width() / max(1, shown.height()):.2f})",
+          abs(shown.width() / max(1, shown.height()) - 1.5) < 0.1,
+          (shown.width(), shown.height()))
+else:
+    check("그림 파일이 없어도 창은 떴다(그림 하나로 전투를 막으면 안 됨)", True)
+
+# 파일이 없는 상황에서도 안 터지는지 - 찾는 함수를 잠깐 바꿔 확인한다
+import gui.battle.lobby as lobby_module  # noqa: E402
+
+real_finder = lobby_module._find_image_in_app_dirs
+lobby_module._find_image_in_app_dirs = lambda names: ""
+try:
+    bare = BattleLobby(is_host=False, my_nick="Gil")
+    bare.show()
+    pump()
+    check("그림이 없어도 창이 뜬다", bare.title_image is None and bare.isVisible())
+finally:
+    lobby_module._find_image_in_app_dirs = real_finder
+
+# ---------- 7) 순환참조 규칙(CLAUDE.md 1번) ----------
 import io  # noqa: E402
 
 source = io.open(_os.path.join(_REPO, "gui/battle/lobby.py"), encoding="utf-8").read()

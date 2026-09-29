@@ -17,7 +17,13 @@ from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QListWidget, QLis
                                QPushButton, QVBoxLayout, QWidget)
 
 import battle_protocol as bp
+from gui.helpers import _find_image_in_app_dirs
 from gui.themed_dialogs import ThemedDialog, _MiniTitleBar
+
+# 대기방 맨 위에 거는 시작 그림. 없으면(파일이 안 딸려온 빌드 등) 그냥 안 건다 -
+# 그림 하나 때문에 전투를 못 하면 안 된다
+TITLE_IMAGE = "battle_title.jpg"
+TITLE_MAX_WIDTH = 460
 
 # 배 색 - battle_protocol.COLOR_COUNT 개여야 한다(서버가 번호로만 주고받으므로
 # 실제 색은 화면이 정한다). 스타1 플레이어 색을 본떠 서로 확실히 구분되게 골랐다
@@ -91,6 +97,10 @@ class BattleLobby(ThemedDialog):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(10)
 
+        self.title_image = self._build_title_image()
+        if self.title_image is not None:
+            layout.addWidget(self.title_image)
+
         self.notice = QLabel(
             "방을 만들었습니다. 채널 사람들이 '배틀크루저 전투 참가'를 치면 들어옵니다."
             if is_host else "방에 들어왔습니다. 방을 만든 사람이 시작하면 전투가 열립니다.")
@@ -139,6 +149,27 @@ class BattleLobby(ThemedDialog):
 
         old.addWidget(body)
         self._refresh()
+
+    @staticmethod
+    def _build_title_image():
+        """맨 위 시작 그림. 파일이 없으면 None을 돌려주고 그 자리는 그냥 비운다.
+
+        빌드에 그림이 안 딸려온 경우에도 전투는 되어야 하므로 여기서 조용히 넘어간다
+        (없는 그림 때문에 창이 안 뜨면 그게 더 큰 문제다).
+        """
+        path = _find_image_in_app_dirs((TITLE_IMAGE,))
+        if not path:
+            return None
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            return None
+        label = QLabel()
+        label.setObjectName("battleTitleImage")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # 원본이 커서 그대로 두면 창이 화면을 넘는다. 비율을 지켜 줄인다
+        label.setPixmap(pixmap.scaledToWidth(
+            TITLE_MAX_WIDTH, Qt.TransformationMode.SmoothTransformation))
+        return label
 
     # ------------------------------------------------------------------
     def set_me(self, slot: int, color: int, capacity: int):
