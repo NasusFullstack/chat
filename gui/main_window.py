@@ -136,6 +136,8 @@ class MainWindow(QMainWindow):
         # 창을 닫아도 계속 받으려면 트레이가 필요하다. 트레이가 없는 환경이면
         # available=False로 오고, 그때는 창을 닫는 즉시 종료된다
         self._quitting = False
+        # 전투 담당은 실제로 전투를 할 때 만든다(안 하면 아무것도 안 만들어진다)
+        self._battle = None
         self._tray = TrayIcon(self.windowIcon(), self)
         self._tray.open_requested.connect(self.show_from_tray)
         self._tray.quit_requested.connect(self.quit_app)
@@ -838,11 +840,47 @@ class MainWindow(QMainWindow):
     def play_cheat(self, cheat_id: str):
         """치트 효과 재생. 모르는 치트는 조용히 무시한다."""
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
+        # 사람끼리 하는 전투는 화면 효과가 아니라 '한 판을 끌고 가는 일'이라
+        # 따로 담당(gui/battle/controller.py)에게 넘긴다
+        if cheat_id in self._BATTLE_CHEATS:
+            self._BATTLE_CHEATS[cheat_id](self)
+            return
         effect = self._CHEAT_EFFECTS.get(cheat_id)
         if effect is None:
             return
         effect(self.chat_page)
         gui_client._flash_taskbar_icon(self)
+
+    # ---------------- 배틀크루저 전투 ----------------
+    @property
+    def battle(self):
+        """전투 담당(처음 쓸 때 만든다 - 전투를 안 하면 아무것도 안 만든다)."""
+        if self._battle is None:
+            from gui.battle.controller import BattleController
+
+            self._battle = BattleController(self.chat_page, self)
+            self._battle.system_notice.connect(self.chat_page.append_system)
+            self._battle.announce_room.connect(self.session.announce_battle_room)
+        return self._battle
+
+    def _open_battle(self):
+        channel = self.chat_page.active_channel()
+        if channel:
+            self.battle.open_room(channel, self.my_id or "나", time.time())
+
+    def _join_battle(self):
+        channel = self.chat_page.active_channel()
+        if channel:
+            self.battle.join_room(channel, self.my_id or "나", time.time())
+
+    def on_battle_room(self, channel: str, host: str, room: str):
+        """누가 전투를 열었다는 알림(event_router가 부른다)."""
+        self.battle.remember_room(channel, host, room, time.time())
+
+    _BATTLE_CHEATS = {
+        constants.CHEAT_BATTLE_OPEN: lambda window: window._open_battle(),
+        constants.CHEAT_BATTLE_JOIN: lambda window: window._join_battle(),
+    }
     # ---------------- 창 동작 (닫기/트레이/크기 조절) ----------------
 
     def closeEvent(self, event):

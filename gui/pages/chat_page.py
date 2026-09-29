@@ -249,6 +249,10 @@ class ChatPage(QWidget):
         """'배틀크루저 소환해제' - 순간 가속해서 화면 밖으로 빠져나가며 사라짐"""
         self._battlecruiser.dismiss()
 
+    def battle_host(self):
+        """전투 화면이 올라갈 자리 - 혼자 나는 배틀크루저와 같은 곳(채팅 영역 위)."""
+        return self._center_stack
+
     def set_protocol_mode(self, mode: str):
         self._protocol_mode = mode
         # 프로토콜이 바뀌면 예전 세상의 아이콘/닉네임은 의미가 없음

@@ -140,6 +140,10 @@ def _system_notice(view, event):
     view.chat_page.append_system(event.channel, event.text, event.ts)
 
 
+def _battle_room_opened(view, event):
+    view.on_battle_room(event.channel, event.host, event.room)
+
+
 def _userlist_updated(view, event):
     view.chat_page.update_userlist(event.channel, event.users)
     # 새로 보이는 사람들에게 "무슨 프로그램 쓰세요?"를 천천히 물어본다(gui/version_prober.py)
@@ -218,6 +222,7 @@ EVENT_HANDLERS = {
     domain_events.MessageReceived: _message_received,
     domain_events.SystemNotice: _system_notice,
     domain_events.UserlistUpdated: _userlist_updated,
+    domain_events.BattleRoomOpened: _battle_room_opened,
     domain_events.AvatarUpdated: _avatar_updated,
     domain_events.ClientVersionUpdated: _client_version_updated,
     domain_events.NicknameUpdated: _nickname_updated,

@@ -80,6 +80,18 @@ class SystemNotice:
 
 
 @dataclass(frozen=True)
+class BattleRoomOpened:
+    """누군가 이 채널에서 배틀크루저 전투 방을 열었다.
+
+    **주소가 아니라 방 번호만 오간다**(중계 서버로 붙으므로). 이 알림은 우리끼리만
+    보이는 숨김 프레임으로 오므로 다른 클라이언트 화면에는 아무것도 안 뜬다.
+    """
+    channel: str
+    host: str
+    room: str
+
+
+@dataclass(frozen=True)
 class UserlistUpdated:
     channel: str
     users: list[str]

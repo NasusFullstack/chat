@@ -70,6 +70,9 @@ class ProtocolPort(Protocol):
     def reclaim_nickname(self, session: Any) -> None:
         """원래 쓰려던 이름을 되찾아 본다(IRC에서 유령 세션 때문에 밀렸을 때)."""
 
+    def announce_battle_room(self, session: Any, channel: str, room: str) -> None:
+        """배틀크루저 전투 방 번호를 채널에 알린다(IRC는 CTCP, 커스텀은 걸러지는 채팅)."""
+
     def keepalive(self, session: Any) -> None:
         """조용할 때 "살아 있냐"를 한 줄 보낸다(프로토콜마다 방식이 다르다)."""
 

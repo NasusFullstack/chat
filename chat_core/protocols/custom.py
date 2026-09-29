@@ -6,6 +6,7 @@
 """
 import time
 
+import battle_protocol
 from chat_core import commands, events
 from chat_core import constants
 from chat_core.protocols import wire_custom as wire
@@ -139,7 +140,20 @@ class CustomProtocol(CommonCommands):
         channel = msg.get("channel", "")
         text = msg.get("text", "")
         ts = msg.get("ts", time.time())
+        # 우리끼리 쓰는 숨김 프레임은 **채팅으로 새면 안 된다.** 커스텀 서버는 글자를
+        # 그대로 돌려주므로, 여기서 걸러내지 않으면 제어문자가 그대로 화면에 뜬다
+        # (IRC 쪽에서 실제로 그런 사고가 있었다 - CLAUDE.md 2-2)
+        if battle_protocol.is_battle_notice(text):
+            room = battle_protocol.parse_room_notice(text)
+            if room and sender != session.my_id and channel:
+                session.emit(events.BattleRoomOpened(channel, sender, room))
+            return
         session.deliver_message(channel, sender, text, mine=(sender == session.my_id), ts=ts)
+
+    def announce_battle_room(self, session, channel: str, room: str) -> None:
+        """채널에 방 번호를 알린다. 커스텀 서버에는 CTCP가 없으므로 채팅으로 보내되,
+        받는 쪽이 위에서 걸러내므로 글자로는 안 보인다."""
+        session.transport(wire.format_msg(channel, battle_protocol.format_room_notice(room)))
 
     def _on_system(self, session, msg: dict):
         """서버가 보내는 안내 - 지금은 전부 사람이 오간 알림(입장/나감/접속 종료)이라

@@ -6,6 +6,7 @@
 """
 import time
 
+import battle_protocol
 import irc_protocol
 from chat_core import commands, constants, events
 from chat_core.protocols.common_commands import CommonCommands
@@ -501,6 +502,9 @@ class IrcProtocol(CommonCommands):
             # 해석에 실패해도 여기서 끝내는 게 중요함 - 서버가 512바이트에서 잘라버린
             # 프레임을 그냥 흘려보내면 잘린 base64 쓰레기가 채널에 그대로 뜬다
             # (실측으로 확인한 실제 증상)
+            if battle_protocol.is_battle_notice(text):
+                self._handle_battle_notice(session, sender, target, text)
+                return
             self._handle_avatar_frame(session, sender, text)
             return
         ts = time.time()
@@ -513,6 +517,25 @@ class IrcProtocol(CommonCommands):
                 )
         else:
             session.deliver_message(target, sender, text, mine=False, ts=ts)
+
+    @staticmethod
+    def _handle_battle_notice(session, sender: str, target: str, text: str):
+        """"이 방으로 와라" - 배틀크루저 전투 방 번호.
+
+        내가 연 방 알림이 나에게 되돌아오는 일은 없지만(IRC는 보낸 걸 안 돌려준다),
+        다른 클라이언트가 흉내낸 값일 수도 있으므로 방 번호 모양을 먼저 검사한다.
+        """
+        room = battle_protocol.parse_room_notice(text)
+        if not room or sender == session.my_id:
+            return
+        channel = target if target.startswith("#") else session.active_channel
+        if channel:
+            session.emit(events.BattleRoomOpened(channel, sender, room))
+
+    def announce_battle_room(self, session, channel: str, room: str) -> None:
+        """채널에 방 번호를 알린다. **주소는 안 실린다.**"""
+        session.transport(irc_protocol.format_privmsg(
+            channel, battle_protocol.format_room_notice(room)))
 
     def _handle_avatar_frame(self, session, sender: str, text: str):
         """조각난 아이콘 프레임을 모아서 다 오면 반영.
