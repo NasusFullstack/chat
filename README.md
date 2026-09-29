@@ -4,7 +4,7 @@
 ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/PySide6-Qt%206-41CD52?logo=qt&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-82%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-84%20passing-brightgreen)
 
 **IRC 채팅 GUI 클라이언트 — Python + PySide6로 만든 윈도우 데스크톱 앱.**
 
@@ -25,6 +25,10 @@ Libera.Chat 같은 표준 IRC 서버에 그대로 접속해서 쓰는 채팅 프
 |---|---|
 | **진짜 IRC 클라이언트** | RFC 1459 / IRCv3를 직접 구현해 Libera.Chat 등 표준 IRC 서버에 접속. 닉네임 충돌·NickServ·채널 모드까지 처리 |
 | **자체 서버 모드** | IRC를 안 쓰고 싶으면 같이 들어 있는 서버(계정·채널·비밀번호, TLS)로 우리끼리만 쓸 수도 있음 |
+| **사진·파일 올리기** | 입력줄에서 골라 올리면 사진은 미리보기로, 파일은 받는 링크로 채팅에 들어갑니다(하나 최대 1GB, 하루 1GB). 올린 것은 하루 뒤 지워집니다 — 500MB가 넘으면 6시간 |
+| **이모티콘 보관** | 채팅에 뜬 그림을 우클릭해 저장하면 **그림 자체가 서버에 남습니다**. 원본이 사라져도 계속 쓸 수 있고, 큰 사진은 알아서 줄여 담습니다(움짤은 움짤로) |
+| **놓친 대화 따라잡기** | 앱을 꺼둔 사이에 오간 이야기를 다시 켤 때 하루치까지 채워 보여줍니다 |
+| **접속 안 해도 보이는 얼굴** | 아이콘을 서로 접속해 있을 때만 주고받던 것을 고쳤습니다. 내 아이콘은 나만 바꿀 수 있습니다 |
 | **자동 업데이트** | GitHub Releases에서 새 버전을 확인해 Inno Setup 설치본으로 조용히 교체하고 재시작(새 기능은 **테스트 버전**으로 먼저 내보내고, 정식 사용자에게는 검증된 뒤에 나감) |
 | **바뀐 점을 알려줌** | 업데이트가 끝나면 무엇이 바뀌었는지 창으로 보여주고 채팅창에도 한 줄 남김(환경설정 > 정보에서 언제든 다시 볼 수 있음) |
 | **한 컴퓨터에 하나만** | 두 번 켜면 새로 뜨지 않고 이미 떠 있는 창을 꺼내줌 |
@@ -58,7 +62,7 @@ server.py        asyncio 서버 (TLS)
 **프로토콜 분기를 코드에서 없앴습니다.** `if protocol == "irc"` 같은 분기 대신 전략 객체와
 표(registry)를 씁니다. 새 프로토콜은 클래스 하나 만들고 표에 한 줄 등록하면 됩니다.
 
-**회귀 테스트 82개**가 실제 서버를 띄워서 돕니다(`python tests/run_all.py`).
+**회귀 테스트 84개**가 실제 서버를 띄워서 돕니다(`python tests/run_all.py`).
 화면을 건드리는 작업은 [픽셀 단위 비교 도구](tests/ui_snapshot.py)로 리팩토링 전후가
 같은지 확인합니다 — 기능 테스트는 배치가 몇 px 틀어진 것을 못 잡기 때문입니다.
 

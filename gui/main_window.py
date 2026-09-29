@@ -30,7 +30,10 @@ from gui import event_router, liveness, window_geometry
 from gui.login_request import parse_login_values
 from gui.reconnect import ReconnectPolicy
 from gui.tray import TrayIcon
+from gui.chat_log_sync import ChatLogSync
 from gui.client_probe import ClientProbeController
+from gui.emoji_backup import EmojiBackup
+from gui.profile_sync import ProfileSync
 from gui.version_prober import VersionProber
 from updater import POST_UPDATE_FLAG
 from gui.helpers import _friendly_connection_error
@@ -132,6 +135,7 @@ class MainWindow(QMainWindow):
         self.session = build_session(
             "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
         )
+        self._rebuild_relay()
 
         # 창을 닫아도 계속 받으려면 트레이가 필요하다. 트레이가 없는 환경이면
         # available=False로 오고, 그때는 창을 닫는 즉시 종료된다
@@ -214,6 +218,98 @@ class MainWindow(QMainWindow):
         # 화면이 바뀔 때마다 그 화면에 맞는 크기 정책을 적용
         self.stack.currentChanged.connect(self._apply_size_policy_for_page)
         self._apply_size_policy_for_page(self.stack.currentIndex())
+    # ---------------- 중계 서버(기록·프로필) ----------------
+
+    def _rebuild_relay(self):
+        """세션을 새로 만들 때마다 같이 새로 만든다.
+
+        기록과 프로필이 놓이는 자리는 (프로토콜, 호스트, 포트)로 정해진다. 세션만 바꾸고
+        여기를 그대로 두면 **다른 서버의 기록에 우리 대화가 쌓인다.**
+
+        전에 모아둔 줄은 버리지 않고 마지막으로 밀어낸다 - 로그아웃 직전에 나눈 대화가
+        통째로 안 올라가면 남들이 받아갈 기록에 구멍이 생긴다.
+        """
+        old = getattr(self, "log_sync", None)
+        if old is not None:
+            old.stop()
+            old.deleteLater()
+        old_profiles = getattr(self, "profile_sync", None)
+        if old_profiles is not None:
+            old_profiles.deleteLater()
+
+        protocol = self.session.protocol.name
+        host, port = self.session.host, self.session.port
+        self.log_sync = ChatLogSync(protocol, host, port, self)
+        self.log_sync.missed.connect(self._show_missed)
+        self.profile_sync = ProfileSync(protocol, host, port, self)
+        self.profile_sync.profile_known.connect(self._on_server_profile)
+
+    def record_chat_line(self, channel: str, sender: str, text: str, ts: float):
+        """받아본 줄을 중계 서버에 올릴 목록에 넣는다(놓친 사람이 따라잡을 수 있게)."""
+        self.log_sync.record(channel, sender, text, ts)
+
+    def fetch_missed(self, channel: str, history: list):
+        """앱을 꺼둔 사이에 오간 이야기를 받아온다.
+
+        기준은 **내가 마지막으로 본 줄의 시각**이다. 그보다 뒤엣것만 달라고 하면 이미
+        화면에 있는 것과 겹치지 않는다.
+        """
+        newest = 0.0
+        for entry in history or []:
+            newest = max(newest, float(entry.get("ts", 0) or 0))
+        if not newest:
+            # 여기 기록이 아예 없으면 하루치를 다 받아온다(처음 들어온 채널)
+            newest = time.time() - 24 * 3600
+        self.log_sync.fetch(channel, newest)
+
+    def _show_missed(self, channel: str, lines: list):
+        if not self.chat_page.has_channel(channel):
+            return
+        self.chat_page.append_system(channel, f"── 내가 없는 동안 오간 이야기 {len(lines)}줄 ──")
+        for line in lines:
+            sender = str(line.get("sender", "?"))
+            self.chat_page.append_message(
+                channel, sender, str(line.get("text", "")),
+                sender == self.my_id, float(line.get("ts", 0)), preview=False)
+        self.chat_page.append_system(channel, "── 여기까지 ──")
+
+    def back_up_emojis(self):
+        """예전부터 쓰던 이모티콘을 서버로 옮겨 담는다(한 번 하면 다음부터는 할 일이 없다)."""
+        if getattr(self, "_emoji_backup", None) is None:
+            self._emoji_backup = EmojiBackup(self)
+            self._emoji_backup.finished.connect(self._emoji_backup_done)
+        self._emoji_backup.start_later()
+
+    def _emoji_backup_done(self, moved: int, total: int):
+        if not moved:
+            return
+        channel = self.chat_page.active_channel()
+        if channel:
+            self.chat_page.append_system(
+                channel, f"이모티콘 {moved}개를 서버에 보관했습니다"
+                         f"{'' if moved == total else f' ({total - moved}개는 원본을 못 찾음)'}.")
+
+    def publish_my_profile(self):
+        """내 아이콘·닉네임을 중계 서버에 올린다(상대가 없어도 얼굴이 보이게).
+
+        채팅 통로로 보내는 길은 그대로 둔 채 **하나 더** 하는 것이다 - 중계 서버를 못
+        쓰는 상황에서도 지금처럼 동작해야 한다.
+        """
+        if not self.my_id:
+            return
+        self.profile_sync.publish(self.my_id, self._my_avatar_b64 or "")
+
+    def want_profiles(self, channel: str):
+        """지금 보이는 사람들의 얼굴을 서버에 물어본다(이미 아는 사람은 알아서 건너뛴다)."""
+        self.profile_sync.want(self.session.members.get(channel, []))
+
+    def _on_server_profile(self, nick: str, avatar_b64: str, _display: str):
+        # 채팅 통로로 이미 받아뒀으면 그걸 놔둔다 - 방금 바꾼 것이 더 최신이다
+        if self.chat_page.has_avatar(nick):
+            return
+        # 로컬에 남기는 일은 참여자 목록이 알아서 한다(set_avatar 안에서)
+        self.chat_page.set_avatar(nick, avatar_b64)
+
     def set_window_icon(self, icon: QIcon):
         self.setWindowIcon(icon)
         self._tray.set_icon(icon)
@@ -403,6 +499,7 @@ class MainWindow(QMainWindow):
             request.protocol, request.host, request.port,
             transport=transport, on_event=self._on_domain_event,
         )
+        self._rebuild_relay()
         # '/'만 쳐도 명령 목록이 뜨게 - 지원 명령은 프로토콜마다 다르므로 코어에서 받아옴
         self.chat_page.set_command_specs(self.session.command_specs())
     def _connect_to(self, request):
@@ -672,6 +769,7 @@ class MainWindow(QMainWindow):
             protocol, self._host, self._port,
             transport=transport, on_event=self._on_domain_event,
         )
+        self._rebuild_relay()
         self._auth_mode = "login"
         self._connecting = True
         # 타임아웃을 걸어둬야 "연결도 실패도 안 되고 매달려 있는" 경우에 다음 시도로 넘어감
@@ -750,6 +848,7 @@ class MainWindow(QMainWindow):
         self.session = build_session(
             "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
         )
+        self._rebuild_relay()
         self.chat_page.reset()
         self._probe_ctl.reset()   # 서버가 바뀌면 사람도 프로그램도 다른 세상이다
         self.login_page.show_status("")
@@ -840,6 +939,8 @@ class MainWindow(QMainWindow):
         new_nickname = dlg.result_nickname
         if new_nickname != current_nickname and (new_nickname or not is_irc):
             self.session.set_nickname(new_nickname)
+        # 채팅 통로로 보내는 것과 **별개로** 서버에도 올린다(내가 없을 때도 보이게)
+        self.publish_my_profile()
     def play_cheat(self, cheat_id: str):
         """치트 효과 재생. 모르는 치트는 조용히 무시한다."""
         import gui_client  # 지연 import - 이유는 파일 맨 위 docstring 참고
@@ -973,6 +1074,10 @@ class MainWindow(QMainWindow):
         # 중계 연결을 확실히 닫는다. 프로세스가 죽으면 어차피 닫히지만, 먼저 인사하고
         # 나가야 서버가 방을 바로 치운다
         self.stop_battle()
+        # 모아둔 대화를 마지막으로 밀어낸다. 안 하면 방금 나눈 이야기가 통째로 안 올라가서
+        # 그 사이에 없던 사람이 그만큼을 영영 못 본다
+        if getattr(self, "log_sync", None) is not None:
+            self.log_sync.stop()
         self.close()
         QApplication.instance().quit()
     def _resize_edges_at(self, local_pos: QPoint) -> Qt.Edges:

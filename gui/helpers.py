@@ -7,11 +7,13 @@ import hashlib
 import os
 import re
 import sys
+import urllib.parse
 
 import app_paths
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import (QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap,
+                           QPolygonF)
 
 from gui.theme import AVATAR_GRID_SIZE
 
@@ -68,6 +70,30 @@ def extract_urls(text: str) -> list[str]:
     return urls
 
 
+def _display_url(url: str) -> str:
+    """화면에 보여줄 주소. 마지막 칸이 %로 뒤덮여 있으면 사람이 읽게 되돌린다.
+
+    한글 이름으로 올린 파일은 주소가 `.../%EC%98%AC%EB%A6%B0%20%EC%82%AC%EC%A7%84.png`가
+    되어 채팅 세 줄을 잡아먹고 무엇인지 알아볼 수도 없다(위키백과 한글 주소도 마찬가지).
+
+    **누르면 가는 곳(href)은 절대 안 바꾼다 - 보이는 글자만 바꾼다.** 그래서 되돌린 글자가
+    주소처럼 보이거나(`/` `:`) 화면 태그로 샐 수 있는 글자를 담고 있으면 그냥 둔다. 안 그러면
+    `evil.com/%68%74%74%70%73%3A%2F%2Fbank.com` 같은 주소가 은행 주소인 척할 수 있다.
+    """
+    head, sep, last = url.rpartition("/")
+    if not sep or "%" not in last:
+        return url
+    try:
+        decoded = urllib.parse.unquote(last, errors="strict")
+    except (UnicodeDecodeError, ValueError):
+        return url
+    if decoded == last:
+        return url
+    if any(bad in decoded for bad in '/:\\<>&"\'') or any(ord(c) < 32 for c in decoded):
+        return url
+    return head + sep + decoded
+
+
 def _linkify(escaped_text: str) -> str:
     """이미 &lt;/&gt;로 이스케이프된 텍스트 안의 URL을 클릭 가능한 링크로 감쌈."""
 
@@ -80,7 +106,8 @@ def _linkify(escaped_text: str) -> str:
         if not raw:
             return match.group(0)
         href = raw if raw.startswith("http") else f"http://{raw}"
-        return f'<a href="{href}" style="color:#7ec8ff; text-decoration:underline;">{raw}</a>{trailing}'
+        return (f'<a href="{href}" style="color:#7ec8ff; text-decoration:underline;">'
+                f'{_display_url(raw)}</a>{trailing}')
 
     return _URL_PATTERN.sub(repl, escaped_text)
 
@@ -184,6 +211,64 @@ def _smiley_icon(size: int = 20, color: str = "#c8cad8") -> QIcon:
     painter.setBrush(Qt.BrushStyle.NoBrush)
     mouth = QRectF(size * 0.26, size * 0.36, size * 0.48, size * 0.42)
     painter.drawArc(mouth, 200 * 16, 140 * 16)
+    painter.end()
+    return QIcon(pixmap)
+
+
+
+def _photo_icon(size: int = 20, color: str = "#c8cad8") -> QIcon:
+    """사진 올리기 버튼. 글꼴 기호(🖼)를 쓰면 글꼴에 없는 환경에서 두부(네모)로 나온다
+    - 실제로 그렇게 나왔다. 웃는 얼굴과 같은 이유로 직접 그린다."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.4, size / 13))
+    painter.setPen(pen)
+    inset = pen.widthF()
+    frame = QRectF(inset, size * 0.16, size - inset * 2, size * 0.68)
+    painter.drawRoundedRect(frame, size * 0.08, size * 0.08)
+    # 해 하나와 산 하나 - 이 둘이면 '사진'으로 읽힌다
+    painter.setBrush(QColor(color))
+    sun = size * 0.13
+    painter.drawEllipse(QRectF(frame.left() + size * 0.18, frame.top() + size * 0.14, sun, sun))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    hill = QPolygonF([
+        QPointF(frame.left() + size * 0.12, frame.bottom() - size * 0.06),
+        QPointF(frame.left() + size * 0.36, frame.top() + size * 0.30),
+        QPointF(frame.right() - size * 0.10, frame.bottom() - size * 0.06),
+    ])
+    painter.drawPolyline(hill)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _clip_icon(size: int = 20, color: str = "#c8cad8") -> QIcon:
+    """파일 올리기 버튼(클립). 직접 그리는 이유는 _photo_icon과 같다."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    pen = QPen(QColor(color))
+    pen.setWidthF(max(1.5, size / 11))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(pen)
+    # 클립은 한 획이다 - 내려가서 아래를 돌고, 올라가서 위를 돌고, 다시 조금 내려온다.
+    # arcTo의 각도는 3시가 0도이고 반시계가 +다. 그래서 0에서 -180이면 아래를 돌고,
+    # 180에서 -180이면 위를 돈다(여기를 +로 주면 반대로 돌아 알약처럼 뭉개진다)
+    path = QPainterPath()
+    outer_left, outer_right = size * 0.28, size * 0.72
+    bottom, top = size * 0.72, size * 0.26
+    radius = (outer_right - outer_left) / 2
+    path.moveTo(outer_right, size * 0.30)
+    path.arcTo(QRectF(outer_left, bottom - radius, radius * 2, radius * 2), 0, -180)
+    path.lineTo(outer_left, top)
+    inner_radius = size * 0.14
+    path.arcTo(QRectF(outer_left, top - inner_radius, inner_radius * 2, inner_radius * 2),
+               180, -180)
+    path.lineTo(outer_left + inner_radius * 2, size * 0.66)
+    painter.drawPath(path)
     painter.end()
     return QIcon(pixmap)
 

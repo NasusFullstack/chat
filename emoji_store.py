@@ -7,8 +7,13 @@
 50줄 넘게 쪼개져 나가고, 그건 서버가 폭주로 보고 연결을 끊어버린다. 남이 알아야 하는 건
 '내가 방금 쓴 그 하나'뿐이므로, 쓸 때 그 주소만 메시지에 실어 보낸다.
 
-항목 하나는 {"url": 주소, "name": 내가 붙인 이름}. 이름은 보관함에서 찾기 쉬우라고 붙이는
-것이고 비어 있어도 된다(이름은 내 PC에만 있고 남에게 전달되지 않는다).
+항목 하나는 {"url": 주소, "name": 내가 붙인 이름, "from": 원래 주소}. 이름은 보관함에서
+찾기 쉬우라고 붙이는 것이고 비어 있어도 된다(이름은 내 PC에만 있고 남에게 전달되지 않는다).
+
+`from`은 **이 이모티콘이 원래 어디 있던 그림인가**다. 지금은 이모티콘을 저장하면 중계
+서버에 등록되고 `url`은 거기를 가리키는데, 같은 그림을 다시 우클릭했을 때 "이미 보관함에
+있음"이라고 알아보려면 원래 주소도 알고 있어야 한다. 채팅에 뜬 그림의 주소는 하루가 지나면
+사라지므로 그것만으로는 못 찾는다.
 저장 위치는 avatars.json / login_prefs.json과 같은 앱 폴더의 emojis.json.
 """
 import json
@@ -57,7 +62,9 @@ def load_emojis() -> list[dict]:
         if isinstance(item, str) and item:
             out.append({"url": item, "name": ""})
         elif isinstance(item, dict) and item.get("url"):
-            out.append({"url": item["url"], "name": str(item.get("name", ""))[:MAX_NAME_LEN]})
+            out.append({"url": item["url"],
+                        "name": str(item.get("name", ""))[:MAX_NAME_LEN],
+                        "from": str(item.get("from", ""))})
     return out
 
 
@@ -70,25 +77,50 @@ def _save(items: list[dict]) -> None:
 
 
 def _index_of(items: list[dict], url: str) -> int:
+    """그 주소로 보관함 자리를 찾는다. 등록된 주소와 원래 주소 **둘 다** 본다."""
     for i, item in enumerate(items):
-        if item["url"] == url:
+        if item["url"] == url or (item.get("from") and item["from"] == url):
             return i
     return -1
 
 
-def add_emoji(url: str, name: str = "") -> tuple[bool, str]:
-    """보관함에 추가. (성공 여부, 사용자에게 보여줄 말)"""
+def add_emoji(url: str, name: str = "", source: str = "") -> tuple[bool, str]:
+    """보관함에 추가. (성공 여부, 사용자에게 보여줄 말)
+
+    source는 **원래 어디 있던 그림인가**. 중계 서버에 등록하고 나면 url은 서버 주소가
+    되는데, 같은 그림을 또 우클릭했을 때 알아보려면 원래 주소도 같이 적어둬야 한다.
+    """
     url = (url or "").strip()
     if not is_valid_emoji_url(url):
         return False, "이모티콘으로 쓸 수 없는 주소입니다."
     items = load_emojis()
     if _index_of(items, url) >= 0:
         return False, "이미 보관함에 있습니다."
+    if source and _index_of(items, source.strip()) >= 0:
+        return False, "이미 보관함에 있습니다."
     if len(items) >= MAX_EMOJIS:
         return False, f"보관함이 가득 찼습니다(최대 {MAX_EMOJIS}개)."
-    items.append({"url": url, "name": (name or "").strip()[:MAX_NAME_LEN]})
+    items.append({"url": url, "name": (name or "").strip()[:MAX_NAME_LEN],
+                  "from": (source or "").strip()})
     _save(items)
     return True, "이모티콘 보관함에 저장했습니다."
+
+
+def replace_url(old_url: str, new_url: str) -> bool:
+    """보관함 항목이 가리키는 주소를 바꾼다(중계 서버로 옮겨 담을 때 쓴다).
+
+    원래 주소는 `from`에 남긴다 - 그림이 어디서 왔는지 잃지 않게, 그리고 같은 그림을
+    다시 저장하려 할 때 알아보게.
+    """
+    items = load_emojis()
+    index = _index_of(items, (old_url or "").strip())
+    if index < 0 or not new_url:
+        return False
+    if not items[index].get("from"):
+        items[index]["from"] = items[index]["url"]
+    items[index]["url"] = new_url
+    _save(items)
+    return True
 
 
 def rename_emoji(url: str, name: str) -> bool:

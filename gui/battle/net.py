@@ -14,7 +14,9 @@ from PySide6.QtWebSockets import QWebSocket
 
 import battle_protocol as bp
 
-RELAY_URL = "wss://jsserv.pdlab.kr/battle/ws"
+import relay
+
+RELAY_URL = relay.BATTLE_URL
 
 # 이 안에 못 붙으면 포기한다. 방화벽이 조용히 버리면 성공도 실패도 안 오고 매달린다
 CONNECT_TIMEOUT_MS = 12_000

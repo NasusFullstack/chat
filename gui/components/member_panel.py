@@ -195,6 +195,14 @@ class MemberPanel(QWidget):
         if self._active_channel:
             self._redraw()
 
+    def has_avatar(self, user_id: str) -> bool:
+        """그 사람 아이콘을 이미 알고 있는가.
+
+        중계 서버에서 받아온 것으로 **덮어쓰지 않으려고** 쓴다. 채팅 통로로 방금 받은
+        것이 더 최신이다(그 사람이 지금 바꾼 것이므로).
+        """
+        return user_id in self._avatars
+
     def set_nickname(self, user_id: str, nickname):
         if not nickname:
             self._nicknames.pop(user_id, None)

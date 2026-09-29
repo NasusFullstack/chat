@@ -157,6 +157,8 @@ class ChatPage(QWidget):
         self.message_input = MessageInput(self._completion_candidates)
         self.message_input.submitted.connect(self._on_input_submitted)
         self.message_input.emoji_requested.connect(self._open_emoji_picker)
+        self.message_input.photo_requested.connect(lambda: self._upload("photo"))
+        self.message_input.file_requested.connect(lambda: self._upload("file"))
         self.message_input.clicked.connect(self._close_emoji_picker)
         center.addWidget(self.message_input)
         center_widget = QWidget()
@@ -198,6 +200,9 @@ class ChatPage(QWidget):
 
         # 지금 프로토콜이 지원하는 슬래시 명령 목록 - 세션이 알려주면 갱신됨
         self._command_tokens: list[str] = []
+        # 파일 올리기 담당(처음 누를 때 만든다 - 안 쓰면 아무것도 안 만들어진다)
+        self._uploader = None
+        self._uploading_channel = ""
 
 
     def _open_emoji_picker(self):
@@ -235,6 +240,65 @@ class ChatPage(QWidget):
                 break
         self.message_input.insert_emoji(url, name)
         self._close_emoji_picker()
+        self.message_input.focus()
+
+    # ---------------- 파일·사진 올리기 ----------------
+    def _upload(self, kind: str):
+        """파일을 골라 올리고, 끝나면 **주소를 입력줄에 넣는다.**
+
+        바로 보내지 않고 입력줄에 넣는 이유: 사람이 한마디 덧붙이거나("이거 봐") 잘못
+        고른 것을 지울 수 있어야 한다. 주소가 들어가면 그 뒤는 이미 있는 길이 알아서
+        한다 - 사진이면 미리보기가 뜨고, 파일이면 눌러서 받는 링크가 된다.
+        """
+        import gui_client  # 지연 import - 이유는 CLAUDE.md 1번
+
+        from PySide6.QtWidgets import QFileDialog
+
+        if self._uploader is None:
+            from gui.uploader import Uploader
+
+            self._uploader = Uploader(self)
+            self._uploader.refresh_limits()
+            self._uploader.finished.connect(self._on_upload_done)
+            self._uploader.progress.connect(self._on_upload_progress)
+
+        if kind == "photo":
+            title, filters = "사진 고르기", "사진 (*.png *.jpg *.jpeg *.gif *.webp *.bmp)"
+        else:
+            title, filters = "파일 고르기", "모든 파일 (*.*)"
+        path, _chosen = QFileDialog.getOpenFileName(self, title, "", filters)
+        if not path:
+            return
+        channel = self.active_channel()
+        if channel:
+            self.append_system(channel, "올리는 중입니다...")
+        self._uploading_channel = channel
+        self._uploader.upload(path)
+
+    def _on_upload_progress(self, sent: int, total: int):
+        # 큰 파일은 한참 걸린다 - 아무 표시가 없으면 멈춘 줄 안다
+        if total > 0 and self._uploading_channel:
+            self.message_input.line.setPlaceholderText(
+                f"올리는 중... {sent * 100 // total}%")
+
+    def _on_upload_done(self, url: str, note: str):
+        import gui_client  # 지연 import - 이유는 CLAUDE.md 1번
+
+        self.message_input.line.setPlaceholderText(
+            "메시지 입력 후 Enter (@닉네임으로 호출 가능)")
+        channel, self._uploading_channel = self._uploading_channel, ""
+        if not url:
+            # 조용히 실패하면 사람이 이유를 모른다
+            if channel:
+                self.append_system(channel, f"올리지 못했습니다: {note}")
+            else:
+                gui_client.themed_warning(self, "올리기 실패", note)
+            return
+        if channel:
+            self.append_system(channel, note)
+        # 이미 쓰던 글이 있으면 뒤에 붙인다(덮어쓰면 쓰던 글이 날아간다)
+        current = self.message_input.line.text()
+        self.message_input.line.setText(f"{current} {url}".strip())
         self.message_input.focus()
 
     def show_resource_cheat(self):
@@ -543,6 +607,9 @@ class ChatPage(QWidget):
 
     def set_avatar(self, user_id: str, avatar_b64: str | None):
         self.member_panel.set_avatar(user_id, avatar_b64)
+
+    def has_avatar(self, user_id: str) -> bool:
+        return self.member_panel.has_avatar(user_id)
 
     def set_client_version(self, user_id: str, version: str):
         """그 사람이 무슨 프로그램으로 접속했는지 - 참여자 목록에 작은 로고로 표시된다."""
