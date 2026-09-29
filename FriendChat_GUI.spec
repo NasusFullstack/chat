@@ -78,7 +78,10 @@ def _keep(entry):
 
 _before = len(a.binaries)
 a.binaries = [entry for entry in a.binaries if _keep(entry)]
-print(f"[chupchat] 안 쓰는 Qt 파일 {_before - len(a.binaries)}개 제외")
+# **여기 한글을 쓰면 안 된다.** CI 콘솔은 cp1252라 한글을 못 찍고, print 한 줄 때문에
+# UnicodeEncodeError로 빌드가 통째로 죽는다(v2.3.4에서 실제로 그렇게 실패했다).
+# 로컬은 UTF-8이라 멀쩡히 통과해서 CI에서만 터진다 - CLAUDE.md 1번과 같은 종류의 함정
+print("[chupchat] dropped %d unused Qt binaries" % (_before - len(a.binaries)))
 
 pyz = PYZ(a.pure)
 
