@@ -11,10 +11,11 @@
 창(MainWindow)이 정한다. 그래야 서버 사정이 바뀌어도 이 파일은 안 건드린다
 (gui/components/ 규칙과 같다).
 """
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QHBoxLayout, QLabel, QListWidget,
-                               QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QHBoxLayout, QLabel,
+                               QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
+                               QWidget)
 
 import battle_protocol as bp
 from gui.helpers import _find_image_in_app_dirs
@@ -200,6 +201,7 @@ class BattleLobby(ThemedDialog):
 
         old.addWidget(body)
         self._refresh()
+        self._watch_keys()
 
     @staticmethod
     def _build_title_image():
@@ -309,20 +311,35 @@ class BattleLobby(ThemedDialog):
         return len(self._players)
 
     # ------------------------------------------------------------------
-    def keyPressEvent(self, event):
+    def eventFilter(self, obj, event):
         """방향키를 순서대로 누르면 숨겨진 무지개가 열린다.
 
-        **ESC로 창을 닫는 건 그대로 둔다** - 커맨드 때문에 나가지도 못하면 안 된다.
-        방향키는 목록/콤보가 먼저 먹을 수도 있어서 여기(창)에서 가로채 센다.
+        **창의 keyPressEvent로는 못 잡는다.** 포커스가 색/정원 콤보나 참가자 목록에
+        있으면 그쪽이 방향키를 먼저 먹어버려서 창까지 안 온다(그래서 커맨드가 안
+        먹혔다). 그래서 이 창과 그 안의 부품들에 필터를 걸어 먼저 본다.
+
+        **먹어치우지는 않는다**(False를 돌려준다) - 커맨드를 넣는 동안에도 색 고르기가
+        평소대로 움직여야 한다. ESC로 닫는 것도 그대로다.
         """
-        if event.key() in KONAMI and not self._rainbow_open:
+        # **처음 받은 위젯에서만 센다.** 콤보가 안 먹는 키(←/→)는 부모로 전파되는데
+        # 부모에도 필터가 걸려 있어서 같은 입력이 두세 번 세어진다. 그러면 순서가
+        # '←←←→→→'처럼 돼서 커맨드가 영영 안 맞는다(실제로 그래서 안 먹혔다).
+        # 포커스를 가진 위젯이 곧 처음 받는 위젯이다
+        first_receiver = obj is (QApplication.focusWidget() or self)
+        if (first_receiver and event.type() == QEvent.Type.KeyPress
+                and not self._rainbow_open and event.key() in KONAMI):
             self._konami.append(event.key())
             # 마지막 몇 개만 본다 - 중간에 틀려도 이어서 다시 넣으면 되게
             self._konami = self._konami[-len(KONAMI):]
             if tuple(self._konami) == KONAMI:
                 self._unlock_rainbow()
-                return
-        super().keyPressEvent(event)
+        return super().eventFilter(obj, event)
+
+    def _watch_keys(self):
+        """이 창과 안쪽 부품 전부에 필터를 건다(어디에 포커스가 있든 커맨드가 먹히게)."""
+        self.installEventFilter(self)
+        for child in self.findChildren(QWidget):
+            child.installEventFilter(self)
 
     def _unlock_rainbow(self):
         if self._rainbow_open:

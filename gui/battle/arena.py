@@ -138,7 +138,10 @@ class BattleArena(QWidget):
         self._names = {slot: name for slot, (name, _c) in players.items()}
         self._colors = {slot: color for slot, (_n, color) in players.items()}
         self._ai_slots = {slot for slot in ai_slots if slot in players}
-        self._battle = sim.Battle(sorted(players))
+        # **내가 판정하는 배는 내 배와 연습 상대뿐이다.** 남의 배까지 여기서 깎으면
+        # 그 사람이 보낸 신고와 겹쳐 두 배로 닳는다(자세한 이유는 battle_sim.judged)
+        self._battle = sim.Battle(sorted(players),
+                                  judged={my_slot} | self._ai_slots)
         self._pressed.clear()
         self._peer_keys.clear()
         self._crashes.clear()
@@ -257,13 +260,16 @@ class BattleArena(QWidget):
         for ai_slot in self._ai_slots:
             all_keys[ai_slot] = battle_ai.decide(self._battle, ai_slot, self._tick)
         for event in self._battle.advance(all_keys):
-            # **내 배에 대한 것만 내가 판단한다.** 남의 배는 그 사람 말을 따른다
-            if event["slot"] != self._my_slot:
-                continue
-            if event["t"] == "hit":
-                self.i_was_hit.emit(event["by"])
-            else:
-                self.i_died.emit(event["by"])
+            # 계산이 내주는 건 **내가 판정하는 배**(내 배 + 연습 상대)에 대한 것뿐이다.
+            # 내 배 일은 중계로 알려야 남들 화면에서도 체력이 맞고, 연습 상대는 내 화면에만
+            # 있으므로 알릴 곳이 없다
+            if event["slot"] == self._my_slot:
+                if event["t"] == "hit":
+                    self.i_was_hit.emit(event["by"])
+                else:
+                    self.i_died.emit(event["by"])
+                    self.killed.emit(event["slot"], event["by"])
+            elif event["slot"] in self._ai_slots and event["t"] == "dead":
                 self.killed.emit(event["slot"], event["by"])
 
         self._step_crashes()
@@ -365,40 +371,43 @@ class BattleArena(QWidget):
         painter.drawEllipse(center, radius * 3.2, radius * 3.2)
 
     @staticmethod
-    def _tinted(pixmap, color: QColor):
-        """배 그림을 그 사람 색으로 물들인다(음영은 그대로 살린다).
+    def _team_colored(pixmap, mask, color: QColor):
+        """**팀 컬러 자리만** 그 사람 색으로 칠한 배 그림.
 
-        곱하기로 칠하는 이유: 그림이 밝은 회색/흰색 계열이라 색을 곱하면 밝은 곳은
-        그 색으로, 어두운 곳은 어둡게 남아 **입체감이 살아 있다.** 통째로 덮어칠하면
-        배 모양만 남은 색종이가 된다.
-        마지막에 원본을 다시 얹어 투명한 곳을 되살린다(안 하면 네모가 통째로 물든다).
+        스타 유닛 그림은 팀 컬러 자리를 분홍으로 칠해두고 플레이어 색으로 바꾸는 구조다
+        (gui/ship/sprite.py가 그 자리를 따로 담아둔다). 처음에는 배 전체를 물들였는데,
+        선체까지 색종이가 돼서 배로 안 보였다 - 실제 게임처럼 그 자리만 칠한다.
 
         같은 색·같은 프레임은 다시 안 만든다 - 30fps로 네 척이면 초당 120번이라
         매번 만들면 그게 곧 렉이다.
         """
+        if mask is None or mask.isNull():
+            return pixmap
         key = (id(pixmap), color.rgb())
         cached = _TINT_CACHE.get(key)
         if cached is not None:
             return cached
-        tinted = QPixmap(pixmap.size())
-        tinted.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(tinted)
-        painter.drawPixmap(0, 0, pixmap)
-        # **색을 밝혀서 곱한다.** 원본이 중간 밝기라 색을 그대로 곱하면 배가 시커멓게
-        # 가라앉는다(실제로 그렇게 나왔다). 밝힌 색으로 곱하면 색은 확실히 보이면서
-        # 원래 밝기가 유지된다
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Multiply)
-        painter.fillRect(tinted.rect(), color.lighter(TINT_LIGHTEN))
-        # 그래도 어두운 부분이 죽으므로 색을 옅게 한 번 더 얹어 살려준다
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
-        painter.fillRect(tinted.rect(), color.darker(TINT_LIFT))
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-        painter.drawPixmap(0, 0, pixmap)
+
+        # 팀 컬러 자리를 그 색으로 칠한다(담아둔 밝기가 알파라 음영이 살아 있다)
+        patch = QPixmap(mask.size())
+        patch.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(patch)
+        painter.drawPixmap(0, 0, mask)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.fillRect(patch.rect(), color)
         painter.end()
+
+        result = QPixmap(pixmap.size())
+        result.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(result)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.drawPixmap(0, 0, patch)
+        painter.end()
+
         if len(_TINT_CACHE) > TINT_CACHE_LIMIT:
             _TINT_CACHE.clear()      # 무지개는 색이 계속 바뀌므로 한도를 두고 통째로 비운다
-        _TINT_CACHE[key] = tinted
-        return tinted
+        _TINT_CACHE[key] = result
+        return result
 
     @staticmethod
     def _paint_ship(painter, center, facing_index: int, size: float, color=None):
@@ -414,12 +423,15 @@ class BattleArena(QWidget):
         painter.translate(center)
         if sprite is not None:
             if sprite.directional:
-                pixmap = sprite.pick(facing_index * sim.TURN_STEP_DEG)
+                facing_deg = facing_index * sim.TURN_STEP_DEG
+                pixmap = sprite.pick(facing_deg)
+                mask = sprite.team_mask(facing_deg)
             else:
                 painter.rotate(facing_index * sim.TURN_STEP_DEG)
                 pixmap = sprite.frames[0]
+                mask = sprite.team_frames[0] if sprite.team_frames else None
             if color is not None:
-                pixmap = BattleArena._tinted(pixmap, color)
+                pixmap = BattleArena._team_colored(pixmap, mask, color)
             scaled = pixmap.scaled(
                 int(size), int(size), Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation)

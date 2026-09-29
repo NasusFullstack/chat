@@ -86,6 +86,26 @@ if IS_WINDOWS:
     import ctypes  # 작업표시줄 아이콘 그룹핑(AppUserModelID)에만 사용
 
 
+def _close_splash():
+    """켜는 동안 떠 있던 시작 그림을 닫는다.
+
+    이 그림은 **파이썬이 시작되기도 전에** PyInstaller 부트로더가 띄운 것이라,
+    우리 코드로는 만들 수 없고 닫기만 할 수 있다. 실측(2026-09-29): 설치본이 129MB에
+    파일 244개라 백신이 매번 훑느라 창이 뜨기까지 21초가 걸렸고, 그 동안 화면에
+    아무것도 없어서 "켜지고 있는지조차 모르겠다"는 말을 들었다.
+
+    소스로 실행하거나 옛 빌드에는 이 모듈이 없다 - 그때는 그냥 넘어간다.
+    """
+    try:
+        import pyi_splash
+    except ImportError:
+        return
+    try:
+        pyi_splash.close()
+    except Exception:  # noqa: BLE001 - 그림 닫기가 실패했다고 앱이 안 켜지면 안 된다
+        pass
+
+
 def main():
     # 배포된 앱은 콘솔이 없어서 예외 트레이스백이 어디에도 안 남는다. PySide6는 슬롯 안에서
     # 예외가 나도 앱을 죽이지 않고 넘어가기 때문에, 화면 갱신이 중간에 끊겨 "채팅과 참여자가
@@ -124,6 +144,7 @@ def main():
     if icon_path:
         window.set_window_icon(QIcon(icon_path))
     window.show()
+    _close_splash()
 
     # 창(시작화면)을 먼저 띄운 뒤에 업데이트를 확인/적용함. 반대로 하면 업데이트가 계속
     # 실패하는 환경에서 앱 화면을 한 번도 못 보여주고 끝남(실제 사고 이력).
