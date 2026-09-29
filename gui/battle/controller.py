@@ -93,6 +93,7 @@ class BattleController(QObject):
         self._lobby = BattleLobby(is_host=is_host, my_nick=nick, parent=self._page.window())
         self._lobby.color_chosen.connect(self._on_color_chosen)
         self._lobby.capacity_chosen.connect(self._on_capacity_chosen)
+        self._lobby.bots_chosen.connect(self._on_bots_chosen)
         self._lobby.start_pressed.connect(self._on_start_pressed)
         self._lobby.closed.connect(self._on_lobby_closed)
 
@@ -109,19 +110,31 @@ class BattleController(QObject):
 
         self._lobby.show()
         self._link.join(room, nick, color=self._lobby.color.currentData() or 0,
-                        cap=self._lobby.capacity.currentData() or bp.MAX_PLAYERS)
+                        cap=self._lobby.capacity.currentData() or bp.MAX_HUMANS,
+                        bots=self._lobby.bot_count_now())
 
     # ---------------- 대기방에서 오는 것 ----------------
     def _on_color_chosen(self, color: int):
-        # 색을 바꾸려면 자리를 다시 잡아야 한다(서버가 색을 자리에 매어둔다).
-        # 아직 전투 전이므로 조용히 다시 들어가면 된다
+        """색을 바꾸면 자리를 다시 잡는다(서버가 색을 자리에 매어두기 때문).
+
+        **끊었다 다시 붙는 것이라 그 사이의 '끊김'을 사고로 보면 안 된다.** 예전에는
+        그걸 연결 실패로 읽어 전투가 통째로 취소됐다 - link.rejoin()이 그 구간을
+        표시해 두고 조용히 넘어간다.
+        """
         if self._link is None or self._arena is not None:
             return
-        self._link.leave()
-        self._link.join(self._room, self._nick, color=color,
-                        cap=self._lobby.capacity.currentData() or bp.MAX_PLAYERS)
+        self._link.rejoin(self._room, self._nick, color=color,
+                          cap=self._lobby.capacity.currentData() or bp.MAX_HUMANS,
+                          bots=self._lobby.bot_count_now())
 
     def _on_capacity_chosen(self, _capacity: int):
+        self._resettle()
+
+    def _on_bots_chosen(self, _count: int):
+        self._resettle()
+
+    def _resettle(self):
+        """정원/연습 상대 수가 바뀌면 서버에 다시 알린다(방장만 정할 수 있다)."""
         if self._link is None or not self._is_host or self._arena is not None:
             return
         self._on_color_chosen(self._lobby.color.currentData() or 0)
@@ -136,10 +149,11 @@ class BattleController(QObject):
             self._teardown()
 
     # ---------------- 중계에서 오는 것 ----------------
-    def _on_joined(self, slot, color, capacity, players):
+    def _on_joined(self, slot, color, capacity, players, bots):
         if self._lobby is None:
             return
         self._lobby.set_me(slot, color, capacity)
+        self._lobby.set_bots(bots)     # 손님도 몇 대인지 알아야 같은 배를 그린다
         self._lobby.set_players(players)
 
     def _on_peer_joined(self, slot, nick, color):
@@ -156,14 +170,24 @@ class BattleController(QObject):
         if self._lobby is None or self._arena is not None:
             return
         players = dict(self._lobby._players)          # 자리 -> (이름, 색)
-        ai_slots = self._lobby.empty_slots()
-        for slot in ai_slots:
-            players[slot] = (f"연습 상대 {slot}", slot % bp.COLOR_COUNT)
+        # **연습 상대는 방장만 굴린다.** 손님도 같은 자리에 같은 배를 그리지만, 그 배의
+        # 조작은 방장이 보내준 것을 받아 쓴다(각자 계산하면 위치가 갈린다)
+        ai_slots = self._lobby.bot_slots() if self._is_host else []
+        taken = {color for _n, color in players.values()}
+        for index, slot in enumerate(self._lobby.all_bot_slots()):
+            color = next((c for c in range(bp.COLOR_COUNT - 1) if c not in taken),
+                         index % (bp.COLOR_COUNT - 1))
+            taken.add(color)
+            players[slot] = (f"연습 상대 {index + 1}", color)
 
         self._arena = BattleArena(self._page.battle_host())
         self._arena.setGeometry(self._page.battle_host().rect())
         self._arena.attach_input(self._page.message_input.line)
         self._arena.input_ready.connect(self._on_my_input)
+        # 연습 상대는 방장만 굴린다 - 손님 쪽에서는 이 신호가 아예 안 나온다
+        self._arena.bot_input.connect(self._link.send_bot_input)
+        self._arena.bot_hit.connect(self._link.send_bot_hit)
+        self._arena.bot_dead.connect(self._link.send_bot_dead)
         self._arena.i_was_hit.connect(self._link.send_hit)
         self._arena.i_died.connect(self._link.send_dead)
         self._arena.killed.connect(self._on_kill)
@@ -184,9 +208,9 @@ class BattleController(QObject):
         if self._arena is not None:
             self._arena.apply_peer_input(slot, tick, keys)
 
-    def _on_peer_hit(self, slot, by):
+    def _on_peer_hit(self, slot, by, hp):
         if self._arena is not None:
-            self._arena.apply_peer_hit(slot, by)
+            self._arena.apply_peer_hit(slot, by, hp)
 
     def _on_peer_dead(self, slot, by):
         if self._arena is not None:

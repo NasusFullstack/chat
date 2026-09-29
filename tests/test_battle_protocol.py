@@ -52,20 +52,25 @@ for bad in ("", "hello", "\x01CHUPBATTLE ROOM\x01", "\x01CHUPBATTLE ROOM 없는�
 moved = bp.decode(line({"t": "in", "tick": 10, "keys": bp.KEY_LEFT, "slot": 3}))
 check(f"조작에는 자리 번호가 안 담긴다({moved})", moved is not None and "slot" not in moved, moved)
 
-reported = bp.decode(line({"t": "dead", "by": 1, "slot": 2}))
+reported = bp.decode(line({"t": "dead", "by": 1, "slot": 2, "hp": 0}))
 check(f"'죽었다'도 자리 번호를 안 받는다({reported})",
       reported is not None and "slot" not in reported, reported)
+check(f"대신 남은 체력을 싣는다({reported})", reported.get("hp") == 0, reported)
+check("체력이 빠진 보고는 버린다",
+      bp.decode(line({"t": "hit", "by": 1})) is None)
+check("말도 안 되는 체력은 버린다",
+      bp.decode(line({"t": "hit", "by": 1, "hp": -1})) is None)
 
-relayed = bp.decode(line({"t": "peerdead", "slot": 2, "by": 1}))
+relayed = bp.decode(line({"t": "peerdead", "slot": 2, "by": 1, "hp": 0}))
 check(f"중계 서버가 붙여 보낸 것에는 자리 번호가 있다({relayed})",
-      relayed == {"t": bp.PEER_DEAD, "slot": 2, "by": 1}, relayed)
+      relayed == {"t": bp.PEER_DEAD, "slot": 2, "by": 1, "hp": 0}, relayed)
 
 # ---------- 3) 이상한 값은 통과 못 한다 ----------
 BAD = [
     ("모르는 종류", {"t": "quit_everyone"}),
     ("종류가 없음", {"tick": 1, "keys": 1}),
     ("JSON이 아님", None),
-    ("자리 번호가 범위 밖", {"t": "peer", "slot": 9, "tick": 1, "keys": 1}),
+    ("자리 번호가 범위 밖", {"t": "peer", "slot": bp.MAX_PLAYERS, "tick": 1, "keys": 1}),
     ("자리 번호가 음수", {"t": "peer", "slot": -1, "tick": 1, "keys": 1}),
     ("틱이 너무 큼", {"t": "in", "tick": bp.MAX_TICK + 1, "keys": 1}),
     ("키 값이 범위 밖", {"t": "in", "tick": 1, "keys": 999}),
@@ -98,23 +103,26 @@ check(f"평범한 조작은 한 줄로 나간다({len(good)}바이트)",
 # ---------- 3-1) 대기방 설정(정원/색) ----------
 joined_room = bp.decode(line({"t": "join", "room": room, "nick": "Mong", "color": 3, "cap": 2}))
 check(f"정원과 색을 담아 들어간다({joined_room})",
-      joined_room == {"t": bp.JOIN, "room": room, "nick": "Mong", "color": 3, "cap": 2},
+      joined_room == {"t": bp.JOIN, "room": room, "nick": "Mong", "color": 3, "cap": 2,
+                      "bots": 0},
       joined_room)
 
 plain_join = bp.decode(line({"t": "join", "room": room, "nick": "Mong"}))
 check(f"안 적으면 기본값이 채워진다({plain_join})",
-      plain_join["color"] == 0 and plain_join["cap"] == bp.MAX_PLAYERS, plain_join)
+      plain_join["color"] == 0 and plain_join["cap"] == bp.MAX_HUMANS, plain_join)
 
 for bad_setting, why in (
     ({"color": bp.COLOR_COUNT}, "없는 색"),
     ({"color": -1}, "음수 색"),
     ({"cap": 1}, "혼자서는 전투가 안 됨"),
-    ({"cap": bp.MAX_PLAYERS + 1}, "정원 초과"),
+    ({"cap": bp.MAX_HUMANS + 1}, "정원 초과"),
+    ({"bots": bp.MAX_BOTS + 1}, "연습 상대 초과"),
 ):
     got = bp.decode(line({"t": "join", "room": room, "nick": "a", **bad_setting}))
     # 값이 이상하면 기본값으로 떨어질 뿐, 그 값이 그대로 통과하면 안 된다
     check(f"{why}: 그대로 통과하지 않는다({bad_setting} -> color={got['color']}, cap={got['cap']})",
-          0 <= got["color"] < bp.COLOR_COUNT and bp.MIN_PLAYERS <= got["cap"] <= bp.MAX_PLAYERS,
+          0 <= got["color"] < bp.COLOR_COUNT and bp.MIN_PLAYERS <= got["cap"] <= bp.MAX_HUMANS
+          and 0 <= got["bots"] <= bp.MAX_BOTS,
           got)
 
 welcome = bp.decode(line({"t": "welcome", "slot": 1, "tick": 0, "cap": 3, "color": 2,
@@ -140,7 +148,23 @@ check("빈 이름도 뭔가는 된다", bp.safe_nick("   ") == "손님")
 check("줄바꿈을 끼워 넣을 수 없다", "\n" not in bp.safe_nick("a\nb"))
 
 # ---------- 5) 정원과 속도 제한 ----------
-check(f"정원은 {bp.MAX_PLAYERS}명", bp.MAX_PLAYERS == 4)
+check(f"사람은 {bp.MAX_HUMANS}명까지, 연습 상대 {bp.MAX_BOTS}대까지 = {bp.MAX_PLAYERS}대",
+      bp.MAX_HUMANS == 6 and bp.MAX_BOTS == 6 and bp.MAX_PLAYERS == 12)
+check("자리 번호로 사람과 연습 상대가 갈린다",
+      not bp.is_bot_slot(0) and not bp.is_bot_slot(bp.MAX_HUMANS - 1)
+      and bp.is_bot_slot(bp.MAX_HUMANS) and bp.is_bot_slot(bp.MAX_PLAYERS - 1)
+      and not bp.is_bot_slot(bp.MAX_PLAYERS))
+check(f"색이 20가지 + 무지개({bp.COLOR_COUNT})", bp.COLOR_COUNT == 21)
+
+# 연습 상대를 대신 조종하는 길은 **AI 자리에만** 열린다
+check("방장은 연습 상대 자리를 움직일 수 있다",
+      bp.decode(line({"t": "botin", "slot": bp.MAX_HUMANS, "tick": 1, "keys": 1}))
+      == {"t": bp.BOT_INPUT, "slot": bp.MAX_HUMANS, "tick": 1, "keys": 1})
+for human_slot in (0, 1, bp.MAX_HUMANS - 1):
+    check(f"사람 자리({human_slot})는 대신 못 움직인다",
+          bp.decode(line({"t": "botin", "slot": human_slot, "tick": 1, "keys": 1})) is None)
+check("없는 자리도 안 된다",
+      bp.decode(line({"t": "botin", "slot": bp.MAX_PLAYERS, "tick": 1, "keys": 1})) is None)
 check("정원 밖 자리는 안 받는다",
       bp.decode(line({"t": "joined", "slot": bp.MAX_PLAYERS, "nick": "a"})) is None)
 

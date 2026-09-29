@@ -67,7 +67,7 @@ link = BattleLink()
 check("처음에는 연결이 없다", link.is_open() is False)
 check("아직 자리가 없다", link.my_slot == -1)
 link.send_input(1, bp.KEY_FIRE)          # 연결 없이 보내도 안 터져야 한다
-link.send_hit(0)
+link.send_hit(0, 240)
 link.start_battle()
 check("연결이 없을 때 보내도 안 터진다", True)
 
@@ -86,7 +86,7 @@ else:
 
     host = BattleLink()
     host_state = {"joined": None, "peers": [], "started": False, "inputs": [],
-                  "dead": [], "left": [], "refused": None, "failed": None}
+                  "dead": [], "hits": [], "left": [], "refused": None, "failed": None}
     host.joined.connect(lambda slot, color, cap, players:
                         host_state.update(joined=(slot, color, cap, players)))
     host.peer_joined.connect(lambda slot, nick, color: host_state["peers"].append(
@@ -95,6 +95,7 @@ else:
     host.started.connect(lambda: host_state.update(started=True))
     host.peer_input.connect(lambda slot, tick, keys: host_state["inputs"].append(
         (slot, tick, keys)))
+    host.peer_hit.connect(lambda slot, by, hp: host_state["hits"].append((slot, by, hp)))
     host.peer_dead.connect(lambda slot, by: host_state["dead"].append((slot, by)))
     host.refused.connect(lambda why: host_state.update(refused=why))
     host.failed.connect(lambda why: host_state.update(failed=why))
@@ -153,6 +154,11 @@ else:
         check(f"조작이 상대에게 도착한다({host_state['inputs']}, {elapsed:.0f}ms)",
               host_state["inputs"] == [(1, 42, bp.KEY_FIRE | bp.KEY_LEFT)],
               host_state["inputs"])
+
+        guest.send_hit(0, 300)
+        wait_for(lambda: host_state["hits"])
+        check(f"맞았다가 남은 체력과 함께 도착한다({host_state['hits']})",
+              host_state["hits"] == [(1, 0, 300)], host_state["hits"])
 
         guest.send_dead(0)
         wait_for(lambda: host_state["dead"])

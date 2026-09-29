@@ -38,6 +38,18 @@ SHIP_COLORS = (
     ("갈색", "#8d6e63"),
     ("연두", "#7cb342"),
     ("노랑", "#fdd835"),
+    ("분홍", "#ec407a"),
+    ("하늘", "#4fc3f7"),
+    ("남색", "#3949ab"),
+    ("자주", "#6a1b9a"),
+    ("초록", "#2e7d32"),
+    ("올리브", "#9e9d24"),
+    ("주홍", "#d84315"),
+    ("연보라", "#b39ddb"),
+    ("민트", "#26a69a"),
+    ("살구", "#ffab91"),
+    ("회색", "#90a4ae"),
+    ("검정", "#455a64"),
     ("무지개", "#ff0066"),      # 견본용 대표색. 실제로는 계속 바뀐다
 )
 assert len(SHIP_COLORS) == bp.COLOR_COUNT, "색 개수가 규약과 다르면 서버와 말이 안 통한다"
@@ -101,7 +113,7 @@ class BattleLobby(ThemedDialog):
     start_pressed = Signal()        # 시작을 눌렀다
     closed = Signal()               # 창을 닫았다(= 전투를 그만둠)
     rainbow_unlocked = Signal()     # 숨겨진 색을 열었다
-    practice_toggled = Signal(bool)  # 연습 상대로 빈 자리를 채울지
+    bots_chosen = Signal(int)        # 연습 상대를 몇 대 넣을지
 
     def __init__(self, is_host: bool, my_nick: str, parent=None):
         # ThemedDialog 는 글/버튼을 미리 채우는 팝업이라, 여기서는 틀만 빌리고
@@ -112,6 +124,7 @@ class BattleLobby(ThemedDialog):
         self._my_slot = -1
         self._taken_colors = set()
         self._players = {}          # 자리 -> (이름, 색)
+        self._bots = 0              # 연습 상대 수
         self._konami = []           # 방금 누른 방향키들(숨겨진 색을 여는 커맨드)
         self._rainbow_open = False
 
@@ -173,15 +186,27 @@ class BattleLobby(ThemedDialog):
         # 연습 상대 - 혼자 있을 때 시험해 보라고 둔다.
         # **내 화면에서만 도는 상대**라는 걸 분명히 적는다(남들에겐 안 보인다)
         self.practice_row = QHBoxLayout()
-        self.practice = QCheckBox("연습 상대 채우기")
-        self.practice.setToolTip("빈 자리를 연습 상대로 채웁니다. 내 화면에서만 보입니다.")
-        self.practice.toggled.connect(self.practice_toggled.emit)
-        self.practice.toggled.connect(lambda _on: self._refresh())
-        self.practice.setVisible(is_host)     # 방을 연 사람만 정한다
-        self.practice_row.addWidget(self.practice)
-        self.practice_hint = QLabel("내 화면에서만 보입니다")
+        self.practice_row.addWidget(QLabel("연습 상대"))
+        self.bot_less = QPushButton("−")
+        self.bot_less.setObjectName("secondary")
+        self.bot_less.setFixedWidth(30)
+        self.bot_less.clicked.connect(lambda: self._change_bots(-1))
+        self.practice_row.addWidget(self.bot_less)
+        self.bot_count = QLabel("0")
+        self.bot_count.setObjectName("battleBotCount")
+        self.bot_count.setFixedWidth(22)
+        self.bot_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.practice_row.addWidget(self.bot_count)
+        self.bot_more = QPushButton("+")
+        self.bot_more.setFixedWidth(30)
+        self.bot_more.clicked.connect(lambda: self._change_bots(1))
+        self.practice_row.addWidget(self.bot_more)
+        # 방을 연 사람만 정한다. 손님에게는 **보이되 못 바꾸게** 한다 - 몇 대가 있는지는
+        # 알아야 한다
+        for widget in (self.bot_less, self.bot_more):
+            widget.setEnabled(is_host)
+        self.practice_hint = QLabel(f"최대 {bp.MAX_BOTS}대")
         self.practice_hint.setObjectName("battlePracticeHint")
-        self.practice_hint.setVisible(is_host)
         self.practice_row.addWidget(self.practice_hint)
         self.practice_row.addStretch(1)
         layout.addLayout(self.practice_row)
@@ -285,23 +310,39 @@ class BattleLobby(ThemedDialog):
                 item.setEnabled(self.color.itemData(index) not in self._taken_colors)
 
         # 연습 상대를 켜두면 혼자서도 시작할 수 있다(그게 이 기능을 넣은 이유다)
-        practice = self.practice.isChecked()
-        enough = len(self._players) >= bp.MIN_PLAYERS or practice
+        # 연습 상대를 넣어뒀으면 혼자서도 시작할 수 있다
+        enough = len(self._players) + self._bots >= bp.MIN_PLAYERS
         self.start_button.setEnabled(self._is_host and enough)
         if self._is_host:
             self.start_button.setToolTip(
                 "" if enough
-                else f"{bp.MIN_PLAYERS}명 이상 모이거나 '연습 상대 채우기'를 켜야 합니다")
+                else f"{bp.MIN_PLAYERS}명 이상 모이거나 연습 상대를 넣어야 합니다")
 
-    def practice_enabled(self) -> bool:
-        return self.practice.isChecked()
+    def _change_bots(self, delta: int):
+        wanted = max(0, min(bp.MAX_BOTS, self._bots + delta))
+        if wanted == self._bots:
+            return
+        self._bots = wanted
+        self.bot_count.setText(str(wanted))
+        self.bots_chosen.emit(wanted)
+        self._refresh()
 
-    def empty_slots(self):
-        """연습 상대가 채울 빈 자리들. 정원에서 사람 수를 뺀 만큼이다."""
-        if not self.practice.isChecked():
-            return []
-        capacity = self.capacity.currentData() or bp.MAX_PLAYERS
-        return [slot for slot in range(capacity) if slot not in self._players]
+    def set_bots(self, count: int):
+        """서버가 알려준 연습 상대 수(손님도 몇 대인지 알아야 같은 배를 그린다)."""
+        self._bots = max(0, min(bp.MAX_BOTS, int(count)))
+        self.bot_count.setText(str(self._bots))
+        self._refresh()
+
+    def bot_count_now(self) -> int:
+        return self._bots
+
+    def all_bot_slots(self):
+        """연습 상대가 앉을 자리들 - **모두가 같은 자리에 같은 배를 그린다.**"""
+        return list(range(bp.MAX_HUMANS, bp.MAX_HUMANS + self._bots))
+
+    def bot_slots(self):
+        """내가 굴려야 할 연습 상대 자리(방장일 때만 있다)."""
+        return self.all_bot_slots() if self._is_host else []
 
     def taken_colors(self):
         """남이 쓰고 있어서 못 고르는 색들(검사와 창이 같은 값을 본다)."""

@@ -13,6 +13,7 @@ _REPO = _os.path.dirname(_HERE)
 _os.environ["QT_QPA_PLATFORM"] = "offscreen"
 _sys.path.insert(0, _REPO)
 
+import io  # noqa: E402
 import time  # noqa: E402
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -168,10 +169,12 @@ check(f"이미 참여 중이면 알려준다({notices})",
 # 서버 없이도 흐름을 볼 수 있게, 중계에서 오는 신호를 직접 흘려 넣는다
 lobby = controller._lobby
 lobby.set_me(0, color=0, capacity=2)
-lobby.practice.setChecked(True)          # 혼자서도 시작할 수 있게(연습 상대)
+# 연습 상대를 한 대 넣으면 혼자서도 시작할 수 있다(+ 버튼과 같은 길)
+lobby._change_bots(1)
 for _ in range(4):
     app.processEvents()
-check("연습 상대를 켜면 혼자서도 시작할 수 있다", lobby.start_button.isEnabled() is True)
+check(f"연습 상대를 넣으면 혼자서도 시작할 수 있다({lobby.bot_count_now()}대)",
+      lobby.start_button.isEnabled() is True)
 
 controller._on_started()
 for _ in range(6):
@@ -201,6 +204,34 @@ notices.clear()
 controller._arena.killed.emit(1, 0)
 check(f"격추되면 채팅에 남는다({notices})",
       notices and "격추" in notices[-1][1], notices)
+
+# ---------- 5-1) 색을 바꿔도 전투가 취소되지 않는가 ----------
+# 색을 바꾸면 자리를 다시 잡느라 잠깐 끊는데, 그 끊김을 사고로 읽으면 전투가 통째로
+# 취소된다(리뷰에서 나온 실제 결함). 링크가 그 구간을 표시해 두는지 확인한다
+from gui.battle.net import BattleLink  # noqa: E402
+
+link = BattleLink()
+failures = []
+link.failed.connect(failures.append)
+link._rejoining = True
+link._on_disconnected()
+link._on_error(0)
+check(f"자리를 다시 잡는 중의 끊김은 사고로 안 본다({failures})", not failures, failures)
+link._rejoining = False
+link._closing = False
+link._on_disconnected()
+check(f"진짜 끊김은 알린다({failures})", len(failures) == 1, failures)
+check("다시 잡기 창구가 있다", hasattr(link, "rejoin"))
+
+# ---------- 5-2) 로그아웃하면 전투가 정리되는가 ----------
+# 안 그러면 전투 화면이 로그인 화면 위에 남고, 중계 연결이 살아 있어 **서버에 빈 방이
+# 남는다**(사람들이 채팅을 꺼도 방이 안 닫히는 원인)
+check("창에 전투를 멈추는 창구가 있다", hasattr(window, "stop_battle"))
+source_window = io.open(_os.path.join(_REPO, "gui/main_window.py"), encoding="utf-8").read()
+logout_block = source_window.split("_say_goodbye(\"로그아웃\")", 1)[1].split("def ", 1)[0]
+check("로그아웃할 때 전투를 멈춘다", "stop_battle()" in logout_block, logout_block[:120])
+quit_block = source_window.split("def quit_app", 1)[1].split("def ", 1)[0]
+check("종료할 때도 멈춘다", "stop_battle()" in quit_block, quit_block[:120])
 
 # ESC -> 물어보고 이탈
 import gui_client  # noqa: E402

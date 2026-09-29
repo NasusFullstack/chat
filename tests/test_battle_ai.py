@@ -70,11 +70,18 @@ first = [battle_ai.decide(same, 0, t) for t in range(200)]
 second = [battle_ai.decide(same, 0, t) for t in range(200)]
 check("같은 상황·같은 틱이면 같은 판단", first == second)
 
-# 여럿이 똑같이 움직이지 않는다
+# 여럿이 똑같이 움직이지 않는다.
+# **실제로 돌아가는 판에서 봐야 한다** - 가만히 세워두고 비교하면 자리만 대칭이어도
+# 같은 답이 나와서, 정작 판이 돌 때 갈리는지는 확인이 안 된다
 crowd = sim.Battle((0, 1, 2, 3))
-one = [battle_ai.decide(crowd, 1, t) for t in range(300)]
-two = [battle_ai.decide(crowd, 2, t) for t in range(300)]
-check("여럿을 넣어도 똑같이 움직이진 않는다", one != two)
+one, two = [], []
+for t in range(300):
+    keys = {slot: battle_ai.decide(crowd, slot, t) for slot in list(crowd.ships)}
+    one.append(keys.get(1, 0))
+    two.append(keys.get(2, 0))
+    crowd.advance(keys)
+check(f"여럿을 넣어도 똑같이 움직이진 않는다(다른 틱 {sum(1 for a, b in zip(one, two) if a != b)}번)",
+      one != two)
 
 # ---------- 6) 실제로 싸우는가(핵심) ----------
 match = sim.Battle((0, 1))

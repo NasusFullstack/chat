@@ -81,12 +81,17 @@ mine = arena._battle.ships[0]
 theirs = arena._battle.ships[1]
 check("처음엔 모두 체력이 가득", mine.hp == sim.MAX_HP and theirs.hp == sim.MAX_HP)
 
-arena.apply_peer_hit(1, 0)
-check(f"남이 '맞았다'고 하면 그만큼 깎는다({theirs.hp})",
-      theirs.hp == sim.MAX_HP - sim.SHELL_DAMAGE, theirs.hp)
+# **남은 체력을 그대로 따른다.** 예전에는 최대 데미지를 깎았는데, 기를 모은 정도에
+# 따라 70~260으로 달라져서 약하게 맞은 배가 내 화면에서만 죽어 유령이 됐다
+arena.apply_peer_hit(1, 0, sim.MAX_HP - 70)
+check(f"남이 알려준 체력을 그대로 쓴다({theirs.hp})",
+      theirs.hp == sim.MAX_HP - 70, theirs.hp)
+arena.apply_peer_hit(1, 0, 123)
+check(f"약하게 맞아도 그 값이 그대로 온다({theirs.hp})", theirs.hp == 123, theirs.hp)
+check("한 줄을 놓쳐도 다음 보고로 맞춰진다(값을 덮어쓰므로)", True)
 
 before = mine.hp
-arena.apply_peer_hit(0, 1)          # 내 배에 대한 남의 주장 - 무시해야 한다
+arena.apply_peer_hit(0, 1, 1)       # 내 배에 대한 남의 주장 - 무시해야 한다
 check(f"내 배에 대한 남의 주장은 안 듣는다({mine.hp})", mine.hp == before, mine.hp)
 
 killed = []

@@ -743,6 +743,9 @@ class MainWindow(QMainWindow):
         self._intentional_close = True  # 일부러 끊는 것이므로 자동 재접속 대상이 아님
         self._stop_connecting()
         self._say_goodbye("로그아웃")
+        # 전투 중이었다면 먼저 정리한다. 안 하면 전투 화면이 로그인 화면 위에 남고,
+        # 30fps 타이머와 중계 연결이 계속 살아 있어 **서버에 빈 방이 남는다**
+        self.stop_battle()
         self.client.abort()
         self.session = build_session(
             "custom", "", 0, transport=self.client.send_cmd, on_event=self._on_domain_event
@@ -860,7 +863,11 @@ class MainWindow(QMainWindow):
 
             self._battle = BattleController(self.chat_page, self)
             self._battle.system_notice.connect(self.chat_page.append_system)
-            self._battle.announce_room.connect(self.session.announce_battle_room)
+            # **지금 세션을 그때그때 본다.** 세션은 로그인/재접속/로그아웃마다 새로
+            # 만들어지므로(CLAUDE.md 10번), 만들 때의 세션에 묶어두면 재접속 뒤에
+            # 옛 세션·옛 프로토콜로 나간다
+            self._battle.announce_room.connect(
+                lambda channel, room: self.session.announce_battle_room(channel, room))
         return self._battle
 
     def _open_battle(self):
@@ -955,9 +962,17 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+    def stop_battle(self):
+        """전투를 정리한다(로그아웃/종료). 전투를 안 했으면 아무 일도 안 한다."""
+        if self._battle is not None:
+            self._battle.stop()
+
     def quit_app(self):
         """트레이 메뉴의 '종료' - 이제 진짜로 끝낸다."""
         self._quitting = True
+        # 중계 연결을 확실히 닫는다. 프로세스가 죽으면 어차피 닫히지만, 먼저 인사하고
+        # 나가야 서버가 방을 바로 치운다
+        self.stop_battle()
         self.close()
         QApplication.instance().quit()
     def _resize_edges_at(self, local_pos: QPoint) -> Qt.Edges:

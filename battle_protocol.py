@@ -42,17 +42,27 @@ import re
 import secrets
 
 # ---- 규모 상한 --------------------------------------------------------------
-MAX_PLAYERS = 4           # 한 방에 이만큼. 5번째는 거절한다
+# 사람은 6명까지, 연습 상대(AI)를 6대까지 더 넣어 한 방에 12대가 싸운다.
+# 자리 번호는 사람이 0~5, 연습 상대가 6~11로 나뉜다 - 번호만 보고도 누가 뭔지 알 수 있어야
+# 서버가 "이 자리를 누가 조종할 수 있는가"를 판단할 수 있다
+MAX_HUMANS = 6
+MAX_BOTS = 6
+MAX_PLAYERS = MAX_HUMANS + MAX_BOTS
+
+
+def is_bot_slot(slot: int) -> bool:
+    """연습 상대 자리인가(방장이 대신 조종한다)."""
+    return MAX_HUMANS <= slot < MAX_PLAYERS
 MAX_LINE_BYTES = 512      # 한 줄 상한(IRC와 같은 값으로 맞춰 둔다 - 넘을 이유가 없다)
 MAX_LINES_PER_SEC = 30    # 한 연결이 초당 보낼 수 있는 줄 수
 MAX_SESSION_BYTES = 4 * 1024 * 1024   # 한 연결이 한 판에 보낼 수 있는 전체 바이트
 MAX_NICK_LEN = 24
-MIN_PLAYERS = 2           # 혼자서는 전투가 안 된다
+MIN_PLAYERS = 2           # 혼자서는 전투가 안 된다(연습 상대를 넣으면 혼자서도 된다)
 
 # 배 색은 **번호로만** 주고받는다(자유 글자로 받으면 화면에 그대로 그려질 값이 되므로).
 # 실제 색은 화면 쪽 표에서 고른다 - 여기는 "몇 번인가"만 안다.
 # 마지막 번호는 숨겨진 무지개(색이 계속 바뀐다). 규약 입장에서는 그냥 색 하나다
-COLOR_COUNT = 9
+COLOR_COUNT = 21          # 20가지 + 숨겨진 무지개
 RAINBOW_COLOR = COLOR_COUNT - 1
 
 # ---- 조작 -------------------------------------------------------------------
@@ -67,6 +77,9 @@ KEY_MASK = KEY_LEFT | KEY_RIGHT | KEY_UP | KEY_DOWN | KEY_FIRE
 
 # 틱 번호 상한 - 한 판이 이보다 길어질 수 없다(약 60fps로 9시간)
 MAX_TICK = 2_000_000
+
+# 체력 상한 - 보고에 실린 값이 말이 되는지 보는 데 쓴다(실제 값은 battle_sim이 정한다)
+MAX_HP = 5000
 
 CTCP_DELIM = "\x01"
 BATTLE_TAG = "CHUPBATTLE"
@@ -119,6 +132,14 @@ def is_battle_notice(text: str) -> bool:
 JOIN, WELCOME, DENY, JOINED, LEFT = "join", "welcome", "deny", "joined", "left"
 START, STARTED = "start", "started"
 INPUT, PEER_INPUT = "in", "peer"
+# 연습 상대(AI) 자리를 대신 조종하는 것. **방을 연 사람만** 보낼 수 있고, **AI 자리에만**
+# 먹힌다(서버가 둘 다 확인한다). 남의 배를 못 움직인다는 규칙은 그대로다.
+#
+# 왜 이 예외가 필요한가: AI가 모두의 화면에서 **똑같이** 움직여야 한다. 각자 계산하면
+# 조작이 도착하는 시점이 사람마다 달라 AI 위치가 갈린다. 그래서 한 사람(방장)이
+# 계산해서 그 결과를 모두에게 넘긴다 - 사람 배를 다루는 방식과 같다
+BOT_INPUT = "botin"
+BOT_HIT, BOT_DEAD = "bothit", "botdead"
 HIT, PEER_HIT = "hit", "peerhit"
 DEAD, PEER_DEAD = "dead", "peerdead"
 BYE = "bye"
@@ -174,13 +195,16 @@ def _check_join(message):
     if not is_room_id(room):
         return None
     color = _as_int(message.get("color"), 0, COLOR_COUNT - 1)
-    cap = _as_int(message.get("cap"), MIN_PLAYERS, MAX_PLAYERS)
+    cap = _as_int(message.get("cap"), MIN_PLAYERS, MAX_HUMANS)
+    bots = _as_int(message.get("bots"), 0, MAX_BOTS)
     return {
         "t": JOIN,
         "room": room.lower(),
         "nick": safe_nick(message.get("nick", "")),
         "color": 0 if color is None else color,
-        "cap": MAX_PLAYERS if cap is None else cap,
+        # 사람 정원과 연습 상대 수는 **방을 연 사람만** 정한다(서버가 그렇게 다룬다)
+        "cap": MAX_HUMANS if cap is None else cap,
+        "bots": 0 if bots is None else bots,
     }
 
 
@@ -198,7 +222,7 @@ def _player_entry(entry):
 def _check_welcome(message):
     slot = _as_int(message.get("slot"), 0, MAX_PLAYERS - 1)
     tick = _as_int(message.get("tick"), 0, MAX_TICK)
-    cap = _as_int(message.get("cap"), MIN_PLAYERS, MAX_PLAYERS)
+    cap = _as_int(message.get("cap"), MIN_PLAYERS, MAX_HUMANS)
     color = _as_int(message.get("color"), 0, COLOR_COUNT - 1)
     players = message.get("players")
     if slot is None or tick is None or cap is None or color is None:
@@ -211,8 +235,9 @@ def _check_welcome(message):
         if parsed is None:
             return None
         cleaned.append(parsed)
+    bots = _as_int(message.get("bots"), 0, MAX_BOTS)
     return {"t": WELCOME, "slot": slot, "tick": tick, "cap": cap,
-            "color": color, "players": cleaned,
+            "color": color, "players": cleaned, "bots": 0 if bots is None else bots,
             "started": bool(message.get("started"))}
 
 
@@ -262,10 +287,18 @@ def _check_peer_input(message):
 
 
 def _own_report(kind):
-    """'내 배가 누구에게 당했다' - 자리 번호를 안 받는다(남의 배를 대신 신고 못 하게)."""
+    """'내 배가 누구에게 당했다' - 자리 번호를 안 받는다(남의 배를 대신 신고 못 하게).
+
+    **남은 체력을 같이 보낸다.** 처음에는 "맞았다"만 보냈는데, 받는 쪽이 얼마나
+    깎을지 몰라 최대치를 깎았다. 기를 모은 정도에 따라 70~260으로 달라지므로,
+    약하게 두 대 맞은 배가 남의 화면에서만 죽어 **보이지도 맞지도 않는 유령**이 됐다.
+    남은 체력을 그대로 실어 보내면 받는 쪽은 그 값으로 맞추기만 하면 되고,
+    중간에 한 줄을 놓쳐도 다음 보고에서 저절로 맞는다.
+    """
     def check(message):
         by = _as_int(message.get("by"), 0, MAX_PLAYERS - 1)
-        return None if by is None else {"t": kind, "by": by}
+        hp = _as_int(message.get("hp"), 0, MAX_HP)
+        return None if by is None or hp is None else {"t": kind, "by": by, "hp": hp}
     return check
 
 
@@ -274,7 +307,33 @@ def _relayed_report(kind):
     def check(message):
         slot = _as_int(message.get("slot"), 0, MAX_PLAYERS - 1)
         by = _as_int(message.get("by"), 0, MAX_PLAYERS - 1)
-        return None if slot is None or by is None else {"t": kind, "slot": slot, "by": by}
+        hp = _as_int(message.get("hp"), 0, MAX_HP)
+        if slot is None or by is None or hp is None:
+            return None
+        return {"t": kind, "slot": slot, "by": by, "hp": hp}
+    return check
+
+
+def _bot_report(kind, with_keys: bool):
+    """방장이 연습 상대 대신 보내는 것 - 여기서는 **AI 자리인지만** 본다.
+
+    보낸 사람이 정말 방장인지는 서버가 판단한다(연결을 아는 건 서버뿐이다).
+    """
+    def check(message):
+        slot = _as_int(message.get("slot"), 0, MAX_PLAYERS - 1)
+        if slot is None or not is_bot_slot(slot):
+            return None
+        if with_keys:
+            tick = _as_int(message.get("tick"), 0, MAX_TICK)
+            keys = _as_int(message.get("keys"), 0, KEY_MASK)
+            if tick is None or keys is None:
+                return None
+            return {"t": kind, "slot": slot, "tick": tick, "keys": keys}
+        by = _as_int(message.get("by"), 0, MAX_PLAYERS - 1)
+        hp = _as_int(message.get("hp"), 0, MAX_HP)
+        if by is None or hp is None:
+            return None
+        return {"t": kind, "slot": slot, "by": by, "hp": hp}
     return check
 
 
@@ -292,6 +351,9 @@ _CHECKERS = {
     STARTED: _check_started,
     INPUT: _check_input,
     PEER_INPUT: _check_peer_input,
+    BOT_INPUT: _bot_report(BOT_INPUT, with_keys=True),
+    BOT_HIT: _bot_report(BOT_HIT, with_keys=False),
+    BOT_DEAD: _bot_report(BOT_DEAD, with_keys=False),
     HIT: _own_report(HIT),
     PEER_HIT: _relayed_report(PEER_HIT),
     DEAD: _own_report(DEAD),
