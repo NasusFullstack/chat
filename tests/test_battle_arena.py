@@ -106,6 +106,37 @@ arena._advance()
 check(f"누른 키를 중계로 내보낸다({sent[-1] if sent else None})",
       sent and sent[-1][1] == (bp.KEY_LEFT | bp.KEY_FIRE), sent[-1] if sent else None)
 
+# **초당 몇 줄을 보내는가** - 여기가 규약 상한을 넘으면 시작하자마자 서버가 끊는다
+# (실제 신고 2026-09-29: "너무 빠르게 보내고 있습니다"가 뜨며 게임이 시작 안 됨).
+# 처음에는 매 틱 보냈는데 30fps여도 초당 30줄이라 상한에 딱 걸렸다
+counting, count_arena = make()
+lines = []
+count_arena.input_ready.connect(lambda t, k: lines.append(t))
+count_arena._pressed = {bp.KEY_RIGHT}
+one_second = max(1, round(1000 / sim.TICK_MS))
+for _ in range(one_second * 3):            # 3초어치
+    count_arena._advance()
+per_second = len(lines) / 3
+check(f"키를 계속 누르고 있어도 초당 줄 수가 적다({per_second:.1f}줄/초, "
+      f"상한 {bp.MAX_LINES_PER_SEC})",
+      per_second < bp.MAX_LINES_PER_SEC / 2, per_second)
+
+# 키를 바꾸면 그때는 바로 보내야 한다(안 보내면 상대 화면에서 안 움직인다)
+before_change = len(lines)
+count_arena._pressed = {bp.KEY_LEFT}
+count_arena._advance()
+check(f"키가 바뀌면 바로 보낸다({len(lines) - before_change}줄)",
+      len(lines) > before_change, len(lines) - before_change)
+
+# 가만히 있어도 아주 가끔은 보낸다(한 줄을 놓쳐 어긋난 채로 남지 않게)
+steady = len(lines)
+count_arena._pressed = set()
+for _ in range(one_second * 4):
+    count_arena._advance()
+check(f"키가 그대로여도 가끔은 다시 보낸다({len(lines) - steady}줄/4초)",
+      len(lines) - steady >= 2, len(lines) - steady)
+count_arena.stop()
+
 arena.apply_peer_input(1, 5, bp.KEY_RIGHT)
 check("남의 조작을 받아둔다", arena._peer_keys.get(1) == bp.KEY_RIGHT, arena._peer_keys)
 arena.apply_peer_input(0, 5, bp.KEY_UP)

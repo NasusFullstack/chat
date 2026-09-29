@@ -189,6 +189,21 @@ else:
         for member in seats:
             member.leave()
 
+        # **혼자서도 시작되는가** - 연습 상대(AI)와 하려는 사람이 여기서 막히면
+        # 시작을 눌러도 아무 일도 안 일어난다(실제 신고 2026-09-29).
+        # 연습 상대는 그 사람 화면에서만 돌아서 서버는 그 존재를 모른다
+        solo = BattleLink()
+        solo_state = {"joined": None, "started": False}
+        solo.joined.connect(lambda s, c, p, pl: solo_state.update(joined=s))
+        solo.started.connect(lambda: solo_state.update(started=True))
+        solo.join(bp.new_room(), "혼자")
+        wait_for(lambda: solo_state["joined"] is not None)
+        solo.start_battle()
+        wait_for(lambda: solo_state["started"], seconds=6)
+        check("혼자서도 전투를 시작할 수 있다(연습 상대와 하는 경우)",
+              solo_state["started"] is True, solo_state)
+        solo.leave()
+
         guest.leave()
         wait_for(lambda: host_state["left"])
         check(f"나가면 알려준다({host_state['left']})", host_state["left"] == [1],
