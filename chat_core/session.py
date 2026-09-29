@@ -198,6 +198,16 @@ class ChatSession:
             return
         self.protocol.reclaim_nickname(self)
 
+    def announce_battle_room(self, channel: str, room: str):
+        """이 채널에 배틀크루저 전투 방을 열었다고 알린다.
+
+        **방 번호만 나간다**(주소는 어디에도 안 실린다 - 중계 서버로 붙으므로).
+        어떻게 보낼지는 프로토콜마다 다르므로 여기서는 넘기기만 한다.
+        """
+        if not channel or not room:
+            return
+        self.protocol.announce_battle_room(self, channel, room)
+
     def keepalive(self):
         """연결이 살아 있는지 확인하는 한 줄을 보낸다(로그인 전에는 보낼 곳이 없다)."""
         if not self.my_id:
