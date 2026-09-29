@@ -6,7 +6,7 @@ gui/ship/painter.py가 직접 그린 그림으로 대체되므로 없어도 정�
 픽셀을 훑는 일이라 느려지기 쉽다 - 예전에 pixelColor()로 30만 픽셀을 돌다가 첫 소환 때
 화면이 멈췄다. 지금은 QImage.bits()로 원시 버퍼를 한 번에 다룬다.
 """
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QColor, QImage, QPixmap
 
 from gui.helpers import _find_image_in_app_dirs
@@ -77,6 +77,23 @@ def _convert_pixels(image: QImage) -> QImage:
                 mask_buf[j] = mask_buf[j + 1] = mask_buf[j + 2] = 255
                 mask_buf[j + 3] = min(255, level * 255 // max(1, TEAM_GRAY_MAX))
     return image, mask
+
+
+def _opaque_box(image: QImage):
+    """그림에서 실제로 무언가 그려진 사각형. 두 그림을 같은 자리로 자를 때 쓴다."""
+    image = image.convertToFormat(QImage.Format.Format_ARGB32)
+    left, top = image.width(), image.height()
+    right = bottom = -1
+    for y in range(image.height()):
+        for x in range(image.width()):
+            if image.pixelColor(x, y).alpha() > 8:
+                left = min(left, x)
+                right = max(right, x)
+                top = min(top, y)
+                bottom = max(bottom, y)
+    if right < 0:
+        return image.rect()
+    return QRect(left, top, right - left + 1, bottom - top + 1)
 
 
 def _trim_transparent(image: QImage) -> QImage:

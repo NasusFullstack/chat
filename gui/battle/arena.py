@@ -86,7 +86,10 @@ class BattleArena(QWidget):
     """전투가 벌어지는 칸. 소켓을 모르고 신호로만 대화한다."""
 
     input_ready = Signal(int, int)     # 틱, 누른 키 - 중계로 보내야 함
-    i_was_hit = Signal(int)            # 내가 맞았다(쏜 사람 자리)
+    bot_input = Signal(int, int, int)  # 연습 상대 자리, 틱, 키 - 방장이 중계로 보내야 함
+    bot_hit = Signal(int, int, int)    # 연습 상대 자리, 쏜 자리, 남은 체력
+    bot_dead = Signal(int, int)        # 연습 상대 자리, 쏜 자리
+    i_was_hit = Signal(int, int)       # 내가 맞았다(쏜 사람 자리, 내 남은 체력)
     i_died = Signal(int)               # 내가 격추됐다(쏜 사람 자리)
     escape_pressed = Signal()          # ESC - 이탈할지 물어봐야 함
     killed = Signal(int, int)          # 격추된 자리, 쏜 자리 - 채팅에 한 줄 남기려고
@@ -148,6 +151,8 @@ class BattleArena(QWidget):
         self._tick = 0
         self._last_sent_keys = -1
         self._last_sent_tick = 0
+        self._last_bot_keys = {}
+        self._last_bot_tick = {}
         self.show()
         self.raise_()
         self._timer.start(sim.TICK_MS)
@@ -176,13 +181,18 @@ class BattleArena(QWidget):
         if slot != self._my_slot:
             self._peer_keys[slot] = int(keys) & bp.KEY_MASK
 
-    def apply_peer_hit(self, slot: int, _by: int):
-        """남이 '나 맞았다'고 알려온 것. **그 사람 말이 맞다**(위 설명 참고)."""
+    def apply_peer_hit(self, slot: int, _by: int, hp: int):
+        """남이 맞았다고 알려온 것 - **남은 체력을 그대로 따른다.**
+
+        예전에는 최대 데미지를 깎았는데, 기를 모은 정도에 따라 70~260으로 달라지므로
+        약하게 맞은 배가 내 화면에서만 죽어 보이지도 맞지도 않는 유령이 됐다.
+        받은 값으로 맞추면 한 줄을 놓쳐도 다음 보고에서 저절로 복구된다.
+        """
         if self._battle is None or slot == self._my_slot:
             return
         ship = self._battle.ships.get(slot)
-        if ship is not None and ship.alive:
-            ship.hp = max(0, ship.hp - sim.SHELL_DAMAGE)
+        if ship is not None:
+            ship.hp = max(0, min(sim.MAX_HP, int(hp)))
 
     def apply_peer_dead(self, slot: int, by: int):
         if self._battle is None or slot == self._my_slot:
@@ -224,13 +234,16 @@ class BattleArena(QWidget):
         bit = KEY_BITS.get(event.key())
         if bit is None:
             return False
+        if event.type() == QEvent.Type.KeyRelease:
+            # **키를 뗀 건 무조건 반영한다.** 예전에는 입력창에 글자가 있으면 여기서
+            # 바로 돌아갔는데, 방향키를 누른 채 글자를 치면 그 키가 눌린 채로 박혀
+            # 배가 그쪽으로 계속 갔다. 떼는 건 막을 이유가 없다
+            self._pressed.discard(bit)
+            return not self._input.text()
         # 메시지를 쓰는 중이면 조작을 가로채지 않는다 - 전투 중에도 채팅이 우선
         if self._input.text():
             return False
-        if event.type() == QEvent.Type.KeyPress:
-            self._pressed.add(bit)
-        else:
-            self._pressed.discard(bit)
+        self._pressed.add(bit)
         return True
 
     # ---------- 한 틱 ----------
@@ -256,21 +269,36 @@ class BattleArena(QWidget):
         all_keys = dict(self._peer_keys)
         if self._my_slot >= 0:
             all_keys[self._my_slot] = keys
-        # 연습 상대는 내 화면에서만 돈다(중계로 내보내지 않는다)
-        for ai_slot in self._ai_slots:
-            all_keys[ai_slot] = battle_ai.decide(self._battle, ai_slot, self._tick)
+        # **연습 상대는 방장이 굴려서 모두에게 넘긴다.** 각자 계산하면 조작이 도착하는
+        # 시점이 달라 AI 위치가 사람마다 갈린다. 손님은 넘어온 조작을 받기만 한다
+        for ai_slot in sorted(self._ai_slots):
+            keys_for_bot = battle_ai.decide(self._battle, ai_slot, self._tick)
+            all_keys[ai_slot] = keys_for_bot
+            changed = keys_for_bot != self._last_bot_keys.get(ai_slot, -1)
+            stale = self._tick - self._last_bot_tick.get(ai_slot, 0) >= RESEND_TICKS
+            if changed or stale:
+                self._last_bot_keys[ai_slot] = keys_for_bot
+                self._last_bot_tick[ai_slot] = self._tick
+                self.bot_input.emit(ai_slot, self._tick, keys_for_bot)
+
         for event in self._battle.advance(all_keys):
             # 계산이 내주는 건 **내가 판정하는 배**(내 배 + 연습 상대)에 대한 것뿐이다.
-            # 내 배 일은 중계로 알려야 남들 화면에서도 체력이 맞고, 연습 상대는 내 화면에만
-            # 있으므로 알릴 곳이 없다
+            # 그 결과를 중계로 알려야 남들 화면에서도 체력이 같아진다
             if event["slot"] == self._my_slot:
+                mine = self._battle.ships.get(self._my_slot)
                 if event["t"] == "hit":
-                    self.i_was_hit.emit(event["by"])
+                    self.i_was_hit.emit(event["by"], mine.hp if mine else 0)
                 else:
                     self.i_died.emit(event["by"])
                     self.killed.emit(event["slot"], event["by"])
-            elif event["slot"] in self._ai_slots and event["t"] == "dead":
-                self.killed.emit(event["slot"], event["by"])
+            elif event["slot"] in self._ai_slots:
+                # 연습 상대가 맞은 것도 모두에게 알려야 체력이 같아진다
+                hurt = self._battle.ships.get(event["slot"])
+                if event["t"] == "hit":
+                    self.bot_hit.emit(event["slot"], event["by"], hurt.hp if hurt else 0)
+                else:
+                    self.bot_dead.emit(event["slot"], event["by"])
+                    self.killed.emit(event["slot"], event["by"])
 
         self._step_crashes()
         self.update()

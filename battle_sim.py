@@ -199,14 +199,18 @@ class Battle:
         self.judged = set(self.ships) if judged is None else set(judged)
 
     def _start_position(self, slot: int):
-        """네 귀퉁이에서 시작한다 - 자리 번호만으로 정해지므로 모두에게 같다."""
-        corners = (
-            (self.width // 5, self.height // 5),
-            (self.width * 4 // 5, self.height // 5),
-            (self.width // 5, self.height * 4 // 5),
-            (self.width * 4 // 5, self.height * 4 // 5),
-        )
-        return corners[slot % len(corners)]
+        """자리 번호로 정해지는 시작 자리 - 모두에게 같아야 하므로 계산으로 정한다.
+
+        12대가 붙을 수 있으므로 귀퉁이 네 곳으로는 모자란다. 전투장 한가운데를 중심으로
+        **원을 그리며** 늘어놓는다. 미리 계산한 정수표를 쓰므로 어느 PC에서나 같은 자리다
+        (sin/cos를 여기서 부르면 계산에 부동소수가 끼어든다 - 위 설명 참고).
+        """
+        step = DIRECTIONS // bp.MAX_PLAYERS          # 12대면 32방향을 2~3칸씩 건너뛴다
+        ux, uy = DIRECTION_TABLE[(slot * step) % DIRECTIONS]
+        radius_x = self.width * 7 // 20              # 벽에 딱 붙지는 않게
+        radius_y = self.height * 7 // 20
+        return (self.width // 2 + ux * radius_x // SCALE,
+                self.height // 2 + uy * radius_y // SCALE)
 
     # ------------------------------------------------------------------
     def advance(self, keys_by_slot: dict) -> list[dict]:
