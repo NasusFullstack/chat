@@ -46,10 +46,14 @@ HP_BAR_WIDTH = 46
 HP_BAR_HEIGHT = 7
 HP_BAR_GAP = 8             # 배 아래로 이만큼 떨어뜨린다(스타1처럼 아래에 붙는다)
 
-CRASH_TICKS = 60           # 추락 연출 길이(약 1초)
-BOOM_TICKS = 24            # 폭발이 보이는 시간
+CRASH_TICKS = 29           # 추락 연출 길이(약 1초)
+BOOM_TICKS = 12            # 폭발이 보이는 시간
 # 추락하며 도는 빠르기(틱마다 방향 프레임을 이만큼씩 넘긴다)
 CRASH_SPIN_STEP = 2
+
+# 키가 그대로여도 이만큼마다 한 번은 다시 보낸다(약 1초). 규약 상한(초당 30줄) 아래로
+# 넉넉히 들어가면서, 한 줄을 놓쳐 어긋난 상태가 오래 남지 않게 하는 값
+RESEND_TICKS = 29
 
 
 class _Crash:
@@ -94,6 +98,9 @@ class BattleArena(QWidget):
         self._crashes = []
         self._ai_slots = set()
         self._tick = 0
+        # 마지막으로 중계에 보낸 키. -1은 "아직 아무것도 안 보냄"(0도 유효한 값이라 구분이 필요)
+        self._last_sent_keys = -1
+        self._last_sent_tick = 0
         self._input = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._advance)
@@ -126,6 +133,8 @@ class BattleArena(QWidget):
         self._peer_keys.clear()
         self._crashes.clear()
         self._tick = 0
+        self._last_sent_keys = -1
+        self._last_sent_tick = 0
         self.show()
         self.raise_()
         self._timer.start(sim.TICK_MS)
@@ -220,8 +229,16 @@ class BattleArena(QWidget):
         for bit in self._pressed:
             keys |= bit
 
-        # 내 조작은 중계로 보내고(남들이 같은 걸 계산하도록), 내 화면에도 바로 반영한다
-        self.input_ready.emit(self._tick, keys)
+        # **바뀔 때만 보낸다.** 처음에는 매 틱(60fps) 보냈는데, 규약 상한이 초당 30줄이라
+        # 시작하자마자 "너무 빠르게 보내고 있습니다"로 끊겼다(실제 신고 2026-09-29).
+        # 어차피 같은 키를 60번 보낼 이유가 없다 - 받는 쪽은 '지금 눌린 키'만 알면 된다.
+        # 키를 누르고 떼는 건 사람 손이라 초당 몇 번을 넘지 않는다.
+        # 아주 가끔(아래 주기) 같은 값이라도 한 번 보내, 늦게 들어온 사람이나
+        # 중간에 한 줄을 놓친 경우가 영영 어긋난 채로 남지 않게 한다
+        if keys != self._last_sent_keys or self._tick - self._last_sent_tick >= RESEND_TICKS:
+            self._last_sent_keys = keys
+            self._last_sent_tick = self._tick
+            self.input_ready.emit(self._tick, keys)
 
         all_keys = dict(self._peer_keys)
         if self._my_slot >= 0:

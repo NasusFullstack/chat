@@ -26,9 +26,9 @@ TOO_FAR = 420 * sim.SCALE
 # 조준이 이 정도 맞으면 쏜다(1.0이 정확히 정면). 너무 빡빡하면 영영 안 쏜다
 AIM_TOLERANCE = 0.74
 # 옆으로 도는 주기 - 직선으로만 오면 너무 쉽게 맞는다
-STRAFE_PERIOD = 96
+STRAFE_PERIOD = 46
 # 예측 조준을 이 틱 이상으로는 안 한다 - 멀수록 상대가 방향을 바꿔 오히려 빗나간다
-LEAD_LIMIT_TICKS = 45
+LEAD_LIMIT_TICKS = 22
 
 
 def _nearest_enemy(battle, slot):

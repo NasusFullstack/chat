@@ -97,15 +97,40 @@ def number_in(text, name):
     return float(match.group(1)) if match else None
 
 
-for name, ours, theirs in (
-    ("가속", sim.ACCEL / sim.SCALE, number_in(overlay, "ACCEL")),
-    ("최고속", sim.MAX_SPEED / sim.SCALE, number_in(overlay, "MAX_SPEED")),
-    ("관성", sim.DRAG_NUM / sim.DRAG_DEN, number_in(overlay, "DRAG")),
-    ("틱", sim.TICK_MS, number_in(overlay, "TICK_MS")),
-    ("방향 단위", sim.TURN_STEP_DEG, number_in(overlay, "TURN_STEP_DEG")),
+# **틱당 숫자를 그대로 비교하면 안 된다.** 두 곳의 틱 길이가 다르기 때문이다
+# (혼자 날 때는 60fps, 전투는 30fps - 전투는 그리는 게 훨씬 무거워 60fps로 돌릴 이유가 없다).
+# 사람이 느끼는 건 '초당 얼마나 빠른가'이므로 그 기준으로 맞춘다
+their_tick = number_in(overlay, "TICK_MS") / 1000.0
+our_tick = sim.TICK_MS / 1000.0
+
+for name, ours, theirs, tolerance in (
+    ("초당 가속",
+     sim.ACCEL / sim.SCALE / our_tick ** 2,
+     number_in(overlay, "ACCEL") / their_tick ** 2, 0.04),
+    ("초당 최고속",
+     sim.MAX_SPEED / sim.SCALE / our_tick,
+     number_in(overlay, "MAX_SPEED") / their_tick, 0.02),
+    ("1초 뒤 남는 속도(관성)",
+     (sim.DRAG_NUM / sim.DRAG_DEN) ** (1 / our_tick),
+     number_in(overlay, "DRAG") ** (1 / their_tick), 0.05),
 ):
-    check(f"{name}이 화면 쪽과 같다(계산 {ours} / 화면 {theirs})",
-          theirs is not None and abs(ours - theirs) < 0.02, (ours, theirs))
+    gap = abs(ours - theirs) / max(1e-9, abs(theirs))
+    check(f"{name}이 화면 쪽과 같다(계산 {ours:.1f} / 화면 {theirs:.1f}, 차이 {gap:.1%})",
+          gap < tolerance, (ours, theirs))
+
+check(f"방향 단위가 같다({sim.TURN_STEP_DEG})",
+      abs(sim.TURN_STEP_DEG - number_in(overlay, "TURN_STEP_DEG")) < 0.01)
+check(f"전투는 30fps로 돈다({sim.TICK_MS}ms)", 30 <= sim.TICK_MS <= 36, sim.TICK_MS)
+
+# 시간으로 정해진 값들이 실제로 그 시간인가(틱을 바꾸면 여기가 먼저 깨진다)
+for name, ticks, seconds, tolerance in (
+    ("재장전", sim.RELOAD_TICKS, 0.72, 0.1),
+    ("포탄 수명", sim.SHELL_LIFE_TICKS, 1.44, 0.1),
+    ("부활", sim.RESPAWN_TICKS, 2.88, 0.1),
+):
+    actual = ticks * our_tick
+    check(f"{name}이 약 {seconds}초({actual:.2f}초)", abs(actual - seconds) < tolerance,
+          actual)
 
 # ---------- 3) 움직임 ----------
 battle = sim.Battle((0,))

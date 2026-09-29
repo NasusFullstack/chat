@@ -189,9 +189,12 @@ controller._arena.input_ready.connect(lambda t, k: outgoing_inputs.append((t, k)
 for _ in range(30):
     controller._arena._advance()
 app.processEvents()
-# 화면이 스스로 60fps로 돌고 있으므로 내가 돌린 것보다 많을 수 있다(적으면 안 이어진 것)
-check(f"조작이 중계로 나간다({len(outgoing_inputs)}번)", len(outgoing_inputs) >= 30,
+# 조작은 **키가 바뀔 때만** 나간다(매 틱 보내면 서버가 "너무 빠르다"며 끊는다).
+# 그러니 30틱을 돌려도 몇 줄이면 정상이고, 0줄이면 안 이어진 것이다
+check(f"조작이 중계로 나간다({len(outgoing_inputs)}번)", len(outgoing_inputs) >= 1,
       len(outgoing_inputs))
+check(f"매 틱 보내지는 않는다({len(outgoing_inputs)}번 / 30틱)",
+      len(outgoing_inputs) < 10, len(outgoing_inputs))
 
 # 격추되면 채팅에 한 줄
 notices.clear()
