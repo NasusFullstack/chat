@@ -35,6 +35,8 @@ tests/*.png
 
 # 이모티콘 보관함(주소 목록) - 로컬 전용
 emojis.json
+# 내 프로필을 나만 고칠 수 있게 해주는 표. 남에게 넘어가면 안 된다
+profile_tokens.json
 tests/_ui_snapshots/
 app_prefs.json
 client_logos.json

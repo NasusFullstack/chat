@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QCompleter, QHBoxLayout, QLineEdit, QPushButton, Q
 from PySide6.QtCore import QEvent
 
 from chat_core.commands import COMMAND_PREFIX, format_emoji
-from gui.helpers import _smiley_icon
+from gui.helpers import _clip_icon, _photo_icon, _smiley_icon
 
 # 입력창과 같은 높이의 정사각형 버튼. 글자 버튼("이모티콘")은 폭을 많이 먹고 높이도 안 맞았음
 EMOJI_BTN_PX = 34
@@ -37,6 +37,8 @@ class MessageInput(QWidget):
 
     submitted = Signal(str)
     emoji_requested = Signal()
+    photo_requested = Signal()   # 사진 올리기 버튼
+    file_requested = Signal()    # 파일 올리기 버튼
     clicked = Signal()
 
     def __init__(self, candidate_source, parent=None):
@@ -60,6 +62,26 @@ class MessageInput(QWidget):
         self.emoji_btn.clicked.connect(self.emoji_requested.emit)
         row.addWidget(self.emoji_btn)
 
+        # 사진과 파일을 따로 둔다 - 고르는 창에서 걸러주는 게 다르고(사진은 그림만 보임),
+        # 무엇이 올라갈지 누르기 전에 알 수 있다
+        self.photo_btn = QPushButton()
+        self.photo_btn.setObjectName("attachBtn")
+        self.photo_btn.setIcon(_photo_icon(EMOJI_BTN_ICON_PX))
+        self.photo_btn.setIconSize(QSize(EMOJI_BTN_ICON_PX, EMOJI_BTN_ICON_PX))
+        self.photo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.photo_btn.setToolTip("사진 올리기")
+        self.photo_btn.clicked.connect(self.photo_requested.emit)
+        row.addWidget(self.photo_btn)
+
+        self.file_btn = QPushButton()
+        self.file_btn.setObjectName("attachBtn")
+        self.file_btn.setIcon(_clip_icon(EMOJI_BTN_ICON_PX))
+        self.file_btn.setIconSize(QSize(EMOJI_BTN_ICON_PX, EMOJI_BTN_ICON_PX))
+        self.file_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.file_btn.setToolTip("파일 올리기")
+        self.file_btn.clicked.connect(self.file_requested.emit)
+        row.addWidget(self.file_btn)
+
         self.line = QLineEdit()
         self.line.setPlaceholderText("메시지 입력 후 Enter (@닉네임으로 호출 가능)")
         self.line.returnPressed.connect(self.submit)
@@ -71,6 +93,8 @@ class MessageInput(QWidget):
         input_height = max(EMOJI_BTN_PX, self.line.sizeHint().height() + 4)
         self.line.setMinimumHeight(input_height)
         self.emoji_btn.setFixedSize(input_height, input_height)
+        for button in (self.photo_btn, self.file_btn):
+            button.setFixedSize(input_height, input_height)
 
         self.send_btn = QPushButton("전송")
         self.send_btn.clicked.connect(self.submit)

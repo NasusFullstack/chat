@@ -38,6 +38,11 @@ def _logged_in(view, event):
     view.save_login_prefs()
     # 예전에 이 아이디로 설정해둔 아이콘을 되살림(로컬 저장분)
     view.session.restore_my_profile(avatar_store.load_avatars().get(event.user_id))
+    # 그 아이콘을 중계 서버에도 올려둔다(내가 꺼져 있어도 남에게 보이게)
+    view.publish_my_profile()
+    # 예전부터 쓰던 이모티콘을 서버로 옮겨 담는다(주소만 갖고 있으면 원본이 사라질 때
+    # 같이 깨진다). 조용히 천천히 하고, 옮길 게 없으면 시작도 안 한다
+    view.back_up_emojis()
 
 
 def _register_succeeded(view, event):
@@ -84,6 +89,8 @@ def _channel_joined(view, event):
         return
     view.chat_page.append_system(event.channel, event.text)
     view.chat_page.load_history(event.channel, event.history)
+    # 여기 기록이 끝난 뒤로 오간 이야기를 중계 서버에서 받아온다
+    view.fetch_missed(event.channel, event.history)
     # 업데이트 직후라면 무엇이 바뀌었는지 한 줄 남긴다(창을 닫아도 여기 남아 있게).
     # 나에게만 보이는 안내라 채널 사람들에게는 안 간다
     update_note = view.take_update_note()
@@ -121,6 +128,9 @@ def _message_received(view, event):
         event.channel, event.sender, event.text, event.mine, event.ts,
         is_mention=event.is_mention, kind=event.kind,
     )
+    # 받아본 줄을 중계 서버에 올린다 - 앱을 꺼둔 사람이 나중에 따라잡을 수 있게.
+    # 내가 보낸 것도 올린다(빠지면 남이 받아갈 기록에 구멍이 생긴다)
+    view.record_chat_line(event.channel, event.sender, event.text, event.ts)
     if not event.mine:
         # 내가 보낸 건 알릴 이유가 없다. 창을 보고 있는지 판단은 창이 한다
         view.notify_new_message(event.sender, event.text, event.channel)
@@ -148,6 +158,9 @@ def _userlist_updated(view, event):
     view.chat_page.update_userlist(event.channel, event.users)
     # 새로 보이는 사람들에게 "무슨 프로그램 쓰세요?"를 천천히 물어본다(gui/version_prober.py)
     view.probe_client_versions(event.channel)
+    # 얼굴은 채팅 통로로 오기를 기다리지 않고 중계 서버에도 물어본다 - 그 사람이 지금
+    # 접속해 있지 않아도 보이게(gui/profile_sync.py)
+    view.want_profiles(event.channel)
 
 
 def _client_version_updated(view, event):

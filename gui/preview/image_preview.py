@@ -81,6 +81,7 @@ class ImagePreview(QLabel):
         # 원본을 들고 있어야 창 크기가 바뀔 때 다시 줄일 수 있음(한 번 줄인 걸 또 줄이면
         # 화질이 계속 나빠지고, 창을 다시 넓혀도 작은 채로 남음)
         self._source = None
+        self._data = None
         # 움짤은 QMovie가 원본을 안 돌려주므로(scaledSize를 주면 그 크기로만 답함)
         # 처음 읽은 원본 프레임 크기를 따로 기억해둠
         self._source_size = None
@@ -131,12 +132,16 @@ class ImagePreview(QLabel):
         if not pixmap.loadFromData(data) or pixmap.isNull():
             return False
         self._source = pixmap
+        # 받은 바이트를 들고 있는다 - 이모티콘으로 저장할 때 다시 받지 않아도 되고,
+        # 원본 주소가 하루 뒤 사라져도 그 순간에는 등록할 수 있다
+        self._data = data
         self._apply_size()
         return True
 
     def _set_animated(self, data: bytes) -> bool:
         # QMovie는 파일이나 QIODevice에서 읽으므로 메모리 버퍼를 물려줌.
         # 버퍼를 self에 붙들어두지 않으면 GC돼서 재생 중 끊김
+        self._data = data
         self._buffer = QBuffer(self)
         self._buffer.setData(QByteArray(data))
         if not self._buffer.open(QIODevice.OpenModeFlag.ReadOnly):
@@ -180,6 +185,10 @@ class ImagePreview(QLabel):
             return
         menu = QMenu(self)
         already = emoji_store.has_emoji(self._url)
+        # 한때 여기를 잠가뒀었다. 채팅에 뜬 그림의 주소는 오래 안 가는데(우리 서버에 올린
+        # 것은 하루 뒤 지워진다) 보관함은 그 주소를 영원히 들고 있어서, 어느 날 이모티콘이
+        # 통째로 깨지기 때문이었다. 지금은 저장할 때 **그림을 서버에 등록**하고 그 주소를
+        # 적으므로 그 문제가 없다(gui/emoji_register.py)
         save_action = menu.addAction("이미 보관함에 있음" if already else "내 이모티콘으로 저장")
         save_action.setEnabled(not already)
         copy_action = menu.addAction("이미지 주소 복사")
@@ -193,6 +202,28 @@ class ImagePreview(QLabel):
             self, "이모티콘 저장", "이 이모티콘의 이름을 입력하세요 (나중에 검색할 때 씀)")
         if not ok:
             return
-        saved, text = emoji_store.add_emoji(self._url, name)
-        if not saved:
-            gui_client.themed_warning(self, "이모티콘 저장", text)
+        self._register_emoji(name)
+
+    def _register_emoji(self, name: str):
+        """그림을 서버에 등록하고, 받은 주소를 보관함에 넣는다.
+
+        등록이 끝나야 주소가 나오므로 결과를 기다린다. 기다리는 동안 창을 막지는 않는다 -
+        큰 그림이면 몇 초 걸린다.
+        """
+        import gui_client
+        import emoji_store
+
+        from gui import emoji_register
+
+        source = self._url
+
+        def done(url, note):
+            if not url:
+                gui_client.themed_warning(self, "이모티콘 저장",
+                                          note or "이모티콘으로 등록하지 못했습니다.")
+                return
+            saved, text = emoji_store.add_emoji(url, name, source=source)
+            if not saved:
+                gui_client.themed_warning(self, "이모티콘 저장", text)
+
+        emoji_register.register(self._data, name, done)

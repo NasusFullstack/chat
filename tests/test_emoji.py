@@ -56,8 +56,13 @@ checks.append(("이름과 함께 저장됨",
 checks.append(("이름 바꾸기", emoji_store.rename_emoji(GIF, "댕댕이")
                and emoji_store.load_emojis()[0]["name"] == "댕댕이"))
 saved_raw = json.load(open(emoji_store.EMOJI_STORE_FILE, encoding="utf-8"))
-checks.append(("파일에는 주소만 저장(그림 데이터 없음)",
-               all(set(item) <= {"url", "name"} for item in saved_raw)))
+# 키 이름을 박아두지 말 것 - 항목이 하나 늘 때마다 이 검사가 깨지는데 정작 보려던 것은
+# "그림 자체를 로컬에 쌓지 않는가"다(주소만 몇 KB인 것이 이 보관함의 전제)
+checks.append(("파일에는 주소와 이름만 저장(그림 데이터 없음)",
+               all(set(item) <= {"url", "name", "from"} for item in saved_raw)))
+checks.append(("어느 값도 그림 데이터가 아님(전부 짧은 글자)",
+               all(isinstance(value, str) and len(value) < 500
+                   for item in saved_raw for value in item.values())))
 
 # ---------- 2) 전송 형식 ----------
 message = "이거 봐 " + format_emoji(GIF) + " 귀엽지"

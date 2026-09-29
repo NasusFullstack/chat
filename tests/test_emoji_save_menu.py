@@ -67,7 +67,7 @@ checks.append(("이름 입력 창이 떴음", bool(asked.get("title"))))
 checks.append(("입력한 이름으로 저장됨",
                emoji_store.load_emojis()[0]["name"] == "친구 짤"))
 checks.append(("주소만 저장(그림 파일 없음)",
-               set(emoji_store.load_emojis()[0]) == {"url", "name"}))
+               set(emoji_store.load_emojis()[0]) <= {"url", "name", "from"}))
 
 # 두 번째 저장 시도는 막히고 안내가 떠야 함
 again = save_via_menu(preview)
