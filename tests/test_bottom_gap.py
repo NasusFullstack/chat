@@ -110,6 +110,18 @@ def emoji_message(count):
                    for i in range(count))
 
 
+def squeezed_emoji(view):
+    """이모티콘 칸이 필요한 높이보다 눌려 있으면 그 차이(= 잘린 만큼)."""
+    from gui.emoji_view import EmojiRow
+
+    worst = 0
+    for row in view.findChildren(EmojiRow):
+        needed = row.layout().heightForWidth(row.width())
+        if needed > 0:
+            worst = max(worst, needed - row.height())
+    return worst
+
+
 # ---------- 1) 이모티콘(신고가 들어온 경우) ----------
 for label, per_message, rows, width in (
     ("이모티콘 1개 x 4줄", 1, 4, 700),
@@ -121,6 +133,9 @@ for label, per_message, rows, width in (
     view = build(emoji_message(per_message), rows, width)
     gap = bottom_gap(view)
     check(f"{label}: 아래 빈 공간 없음({gap}px)", gap <= 4, gap)
+    # 빈 공간을 없애려다 반대로 눌리면 이모티콘이 잘린다 - 둘 다 봐야 한다
+    cut = squeezed_emoji(view)
+    check(f"{label}: 이모티콘이 잘리지 않음({cut}px 모자람)", cut <= 0, cut)
     view.deleteLater()
     pump(0.05)
 

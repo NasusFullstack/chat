@@ -4,7 +4,7 @@
 배치와 어긋나면 그 차이가 그대로 채팅 맨 아래 빈 공간이 되고, 심하면 맨 아래에서 메시지가
 하나도 안 보인다. 자세한 사고 이력과 실측값은 _ChatLogContent 주석과 CLAUDE.md 참고.
 """
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
 
@@ -43,10 +43,6 @@ class _ChatLogContent(QWidget):
     _on_layout_request = None
     _handling_layout_request = False
 
-    # 지금까지 실측한 '정말로 필요한 높이'. minimumSizeHint가 이 값을 답하므로,
-    # 스크롤 영역이 안쪽 위젯을 이 아래로 누르지 못한다(minimumSizeHint 설명 참고)
-    _min_height = 0
-
     def event(self, event):
         """안쪽 어딘가의 크기가 바뀌면 높이를 다시 잰다.
 
@@ -75,24 +71,11 @@ class _ChatLogContent(QWidget):
             return super().sizeHint()
         return layout.sizeHint()
 
-    def minimumSizeHint(self):  # noqa: N802 - Qt 규약
-        """최소 높이도 **실측값**으로 답한다(계산식으로 답하면 안 된다).
-
-        스크롤 영역(widgetResizable)은 안쪽 위젯을 여기서 답한 최소치 아래로는 못 줄인다.
-        그래서 이 값이 틀리면 우리가 실측으로 맞춰놓은 높이가 곧바로 되돌려진다.
-
-        이걸 구현하지 않으면 Qt가 레이아웃의 `totalMinimumSize()`를 대신 쓰는데, 그 값은
-        '창을 최대한 좁혔을 때'를 가정한다 - 글자는 줄이 늘고 이모티콘은 한 줄에 하나씩
-        내려가므로 실제보다 훨씬 크게 나온다. 실측(2026-08-27, 이모티콘 6개 x 4줄):
-        실제 필요 3039px인데 최소치 4223px -> 그 차이 1184px이 그대로 채팅 맨 아래
-        빈 공간이었다("이모티콘을 여러 개 넣으면 아래가 빈다"는 신고).
-
-        그렇다고 0을 답하면 반대로 눌린다 - 스크롤 영역이 화면 높이까지 줄여버려서,
-        긴 글 한 줄(실측 736px)이 398px 안에 갇히고 스크롤도 안 생겼다. 최소치는
-        **없애는 게 아니라 옳게 답해야** 하는 값이다.
-        """
-        hint = super().minimumSizeHint()
-        return QSize(hint.width(), self._min_height)
+    # 최소 크기(minimumSizeHint)는 **건드리지 않는다.** v2.2.5에서 여기에 '마지막
+    # 실측값'을 답하게 했더니 창 가로를 줄일 때 앱이 죽었다(스택 오버플로). Qt는 크기
+    # 힌트가 한 배치 안에서 변하지 않는다고 보는데, 그 값은 배치의 *결과*로 바뀌므로
+    # 배치 -> 힌트 변화 -> 다시 배치가 끝없이 돌았다. 힌트가 부풀어 있으면 그 힌트를
+    # 만드는 쪽을 고칠 것(이번 경우는 gui/emoji_view.py의 _FlowLayout.sizeHint).
 
     def measured_height(self) -> int:
         """지금 실제로 배치된 마지막 위젯의 아랫끝(= 정말로 필요한 높이).
@@ -117,10 +100,7 @@ class _ChatLogContent(QWidget):
         if layout is None:
             return 0
         if self._measuring:
-            # 재는 도중에 다시 물어온 것 - 지금 놓인 자리를 그대로 답한다.
-            # 여기서 _min_height를 갱신하면 안 된다: 지금은 자리를 넓히는 중이라
-            # 아직 눌린 값이고, 그걸 최소치로 기억하면 스크롤 영역이 곧바로 도로
-            # 눌러버려서 영영 안 늘어난다(자기 오답을 다시 재는 셈)
+            # 재는 도중에 다시 물어온 것 - 지금 놓인 자리를 그대로 답한다
             return self._bottom_edge(layout)
         self._measuring = True
         try:
@@ -134,17 +114,11 @@ class _ChatLogContent(QWidget):
             if needed <= 0:
                 needed = layout.sizeHint().height()
             if needed > self.height():
-                # 넓히는 동안에도 스크롤 영역이 도로 누르지 않게 최소치를 같이 올린다.
-                # (resize 자체가 스크롤 영역의 크기 재계산을 부르고, 그때 이 값을 본다)
-                self._min_height = needed
                 self.resize(self.width(), needed)
             layout.activate()
             measured = self._bottom_edge(layout)
         finally:
             self._measuring = False
-        # 다 재고 나면 **실측값이 최소치**다. 넓히려고 잠깐 올려둔 계산값은 여기서
-        # 실측값으로 내려앉으므로, 계산식이 크게 부른 만큼이 빈 공간으로 남지 않는다
-        self._min_height = measured
         return measured
 
     @staticmethod
