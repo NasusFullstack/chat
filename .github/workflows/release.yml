@@ -31,18 +31,13 @@ jobs:
       #
       # 치트 연출용 이미지(battlecruiser/mineral/gas)는 저장소에 있으면 같이 넣고, 없으면
       # 그냥 건너뜀 - 앱이 파일 없을 때는 직접 그리는 쪽으로 폴백하므로 빌드가 깨지지 않음
+      # **spec 파일로 빌드한다.** 예전에는 여기에 옵션을 늘어놓았는데, 그러면 spec과
+      # 워크플로가 두 벌이 되어 한쪽만 고치면 CI 빌드에서만 달라진다(1번 규칙의
+      # 순환참조 사고가 정확히 그 차이에서 났다). 같이 넣을 파일, 시작 그림, 빼는
+      # Qt 모듈은 전부 FriendChat_GUI.spec 한 곳에 있다
       - name: Build GUI
         shell: pwsh
-        run: |
-          # CHANGELOG.md도 넣는다 - 업데이트 뒤 "뭐가 바뀌었는지" 창이 이 파일을 읽는다
-          $data = @("icon.ico", "icon.png", "CHANGELOG.md")
-          foreach ($name in @("battlecruiser.png", "mineral.png", "gas.png", "battle_title.jpg")) {
-            if (Test-Path $name) { $data += $name } else { Write-Host "skip (없음): $name" }
-          }
-          # $args는 PowerShell 자동 변수라 덮어쓰면 안 됨 - 다른 이름을 씀
-          $dataArgs = @()
-          foreach ($name in $data) { $dataArgs += @("--add-data", "$name;.") }
-          pyinstaller --noconfirm --clean --onedir --windowed --icon=icon.ico @dataArgs --name FriendChat_GUI gui_client.py
+        run: pyinstaller --noconfirm --clean FriendChat_GUI.spec
 
       # 앱 내부 자동 업데이트가 받는 패키지 - 설치 폴더 내용물을 통째로 교체하는 용도
       - name: Package update archive

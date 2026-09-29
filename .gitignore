@@ -24,7 +24,11 @@ __pycache__/
 build/
 dist/
 installer_output/
+# PyInstaller가 자동 생성하는 spec은 안 올린다. 다만 GUI spec은 우리가 손으로 관리하는
+# **빌드 설정의 유일한 출처**다(같이 넣을 파일, 시작 그림, 빼는 Qt 모듈).
+# 워크플로가 이 파일을 부르므로, 저장소에 없으면 CI 빌드가 통째로 실패한다
 *.spec
+!FriendChat_GUI.spec
 
 # 테스트가 만들어내는 결과물(캡처 등)
 tests/*.png
@@ -35,3 +39,9 @@ tests/_ui_snapshots/
 app_prefs.json
 client_logos.json
 client_versions.json
+
+# 빌드 시험용 결과물(로컬에서만 씀)
+dist_try/
+build_try/
+dist_beta/
+build_beta/

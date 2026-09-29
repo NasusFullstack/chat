@@ -49,11 +49,19 @@ def _convert_pixels(image: QImage) -> QImage:
     이상)에서 수 초씩 걸려 첫 소환 때 화면이 멈춤. 원시 버퍼를 직접 훑어서 피함.
     """
     image = image.convertToFormat(QImage.Format.Format_ARGB32)
+    # 팀 컬러 자리만 따로 담아두는 그림(그 밖은 투명). 전투에서는 이 부분만 사람 색으로
+    # 칠한다 - 배 전체를 물들이면 선체까지 색종이가 된다(실제로 그렇게 나왔다)
+    mask = QImage(image.size(), QImage.Format.Format_ARGB32)
+    mask.fill(0)
+    mask_buf = mask.bits()
+
     buf = image.bits()  # ARGB32는 리틀엔디안에서 B,G,R,A 순으로 저장됨
     stride = image.bytesPerLine()
+    mask_stride = mask.bytesPerLine()
     width, height = image.width(), image.height()
     for y in range(height):
         row = y * stride
+        mask_row = y * mask_stride
         for x in range(width):
             i = row + x * 4
             if buf[i + 3] == 0:
@@ -64,7 +72,11 @@ def _convert_pixels(image: QImage) -> QImage:
             elif r > 90 and b > 90 and g + 60 < min(r, b):
                 level = max(r, b) * TEAM_GRAY_MAX // 255
                 buf[i] = buf[i + 1] = buf[i + 2] = level
-    return image
+                # 밝기를 그대로 담아둔다. 나중에 색을 곱하면 음영이 살아 있는 채로 물든다
+                j = mask_row + x * 4
+                mask_buf[j] = mask_buf[j + 1] = mask_buf[j + 2] = 255
+                mask_buf[j + 3] = min(255, level * 255 // max(1, TEAM_GRAY_MAX))
+    return image, mask
 
 
 def _trim_transparent(image: QImage) -> QImage:
@@ -96,8 +108,20 @@ class _Sprite:
     회전시키면 각도가 어긋나 보이므로, 프레임이 있으면 회전을 아예 하지 않는다.
     """
 
-    def __init__(self, frames: list[QPixmap]):
+    def __init__(self, frames, team_frames=None):
         self.frames = frames
+        # 팀 컬러 자리만 담긴 그림(프레임과 같은 순서). 전투에서 이 부분만 사람 색으로 칠한다
+        self.team_frames = team_frames or []
+
+    def team_mask(self, facing_deg: float):
+        """이 방향 프레임의 팀 컬러 자리. 없으면 None."""
+        if not self.team_frames:
+            return None
+        count = len(self.team_frames)
+        if count == 1:
+            return self.team_frames[0]
+        step = 360.0 / count
+        return self.team_frames[int(round(facing_deg / step)) % count]
 
     @property
     def directional(self) -> bool:
@@ -148,15 +172,18 @@ def _load_sprite() -> "_Sprite | None":
         if not image.isNull():
             image = _downscale(image)
             # 순서 주의: 흰 배경을 먼저 투명하게 만들어야 여백 잘라내기가 제대로 먹음
-            image = _convert_pixels(image)
+            image, team = _convert_pixels(image)
             frames = _slice_strip(image)
+            team_frames = _slice_strip(team)
             if len(frames) > 1:
                 # 스트립은 칸마다 따로 여백을 자르면 방향이 바뀔 때 배 위치가 튀므로
                 # 칸 크기를 그대로 유지함(원본 격자의 상대 위치가 곧 정렬 기준)
                 pixmaps = [QPixmap.fromImage(f) for f in frames]
+                team_maps = [QPixmap.fromImage(f) for f in team_frames]
             else:
                 pixmaps = [QPixmap.fromImage(_trim_transparent(frames[0]))]
-            sprite = _Sprite(pixmaps)
+                team_maps = [QPixmap.fromImage(_trim_transparent(team_frames[0]))]
+            sprite = _Sprite(pixmaps, team_maps)
     _sprite_cache.append(sprite)
     return sprite
 

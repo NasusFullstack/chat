@@ -21,14 +21,9 @@ jobs:
       - name: Build GUI
         shell: pwsh
         run: |
-          $data = @("icon.ico", "icon.png")
-          foreach ($name in @("battlecruiser.png", "mineral.png", "gas.png")) {
-            if (Test-Path $name) { $data += $name }
-          }
-          # $args는 PowerShell 자동 변수라 덮어쓰면 안 됨 - 다른 이름을 씀
-          $dataArgs = @()
-          foreach ($name in $data) { $dataArgs += @("--add-data", "$name;.") }
-          pyinstaller --noconfirm --onedir --windowed --icon=icon.ico @dataArgs --name FriendChat_GUI gui_client.py
+          # spec 하나로 빌드한다 - 옵션을 여기 늘어놓으면 spec과 두 벌이 되어
+          # 한쪽만 고쳤을 때 CI 빌드에서만 달라진다
+          pyinstaller --noconfirm FriendChat_GUI.spec
       - run: pyinstaller --noconfirm --onefile --console --name FriendChat_Server server.py
       - uses: actions/upload-artifact@v4
         with:

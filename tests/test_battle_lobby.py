@@ -189,8 +189,12 @@ check("아무 방향키나 누른다고 열리지는 않는다", secret.rainbow_
 # 제대로 된 순서 - 진짜 키 입력으로 넣는다
 unlocked = []
 secret.rainbow_unlocked.connect(lambda: unlocked.append(True))
+# **색 콤보에 포커스를 두고 넣는다** - 실제로 그 상태라서 커맨드가 안 먹혔다.
+# 콤보가 방향키를 먼저 먹어 창까지 안 오기 때문(창에서만 받으면 이 검사가 실패한다)
+secret.color.setFocus()
+pump()
 for key in KONAMI:
-    QTest.keyClick(secret, key)
+    QTest.keyClick(secret.color, key)
 pump()
 check("커맨드를 넣으면 열린다", secret.rainbow_available() is True)
 check("열렸다고 알린다", unlocked == [True], unlocked)
@@ -202,10 +206,13 @@ check(f"바로 골라준다({secret.color.currentData()})", secret.color.current
 again = BattleLobby(is_host=False, my_nick="Gil")
 again.show()
 pump()
+# 실제로는 늘 어딘가에 포커스가 있다(여기서는 참가자 목록)
+again.players.setFocus()
+pump()
 for key in (Qt.Key.Key_Left, Qt.Key.Key_Left, Qt.Key.Key_Right):
-    QTest.keyClick(again, key)
+    QTest.keyClick(again.players, key)
 for key in KONAMI:
-    QTest.keyClick(again, key)
+    QTest.keyClick(again.players, key)
 pump()
 check("중간에 틀려도 이어서 넣으면 열린다", again.rainbow_available() is True)
 

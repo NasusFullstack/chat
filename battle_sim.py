@@ -179,7 +179,7 @@ class Battle:
     """
 
     def __init__(self, slots, width: int = FIELD_WIDTH, height: int = FIELD_HEIGHT,
-                 seed_facing: int = 0):
+                 seed_facing: int = 0, judged=None):
         # 크기를 인자로 받긴 하지만 **평소에는 기본값을 그대로 쓴다.** 다르게 주면
         # 그 판에 있는 모두가 같은 값을 써야 한다(안 그러면 배 위치가 갈린다)
         self.width = int(width) * SCALE
@@ -190,6 +190,13 @@ class Battle:
         for slot in sorted(slots):
             x, y = self._start_position(slot)
             self.ships[slot] = Ship(slot, x, y, seed_facing)
+
+        # **내가 맞았는지 판정할 배들.** 이걸 안 나누면 같은 피격이 두 번 깎인다 -
+        # 내 화면에서 한 번(로컬 계산), 그 사람이 "나 맞았다"고 알려와서 또 한 번.
+        # 실제로 "남은 한 방에 죽고 나는 안 죽는" 증상이 났다(2026-09-29 신고).
+        # 그래서 자기 배(와 자기 화면에서만 도는 연습 상대)만 판정하고, 남의 배 체력은
+        # 그 사람이 보낸 것만 따른다. 아무 것도 안 주면 전부 판정한다(혼자 시험할 때)
+        self.judged = set(self.ships) if judged is None else set(judged)
 
     def _start_position(self, slot: int):
         """네 귀퉁이에서 시작한다 - 자리 번호만으로 정해지므로 모두에게 같다."""
@@ -333,6 +340,12 @@ class Battle:
                     break
             if struck is None:
                 alive_shells.append(shell)
+                continue
+
+            # 포탄은 어느 배에 닿든 여기서 사라진다(그래야 관통하는 것처럼 안 보인다).
+            # 다만 **체력을 깎는 건 내가 판정하는 배뿐이다** - 남의 배는 그 사람이
+            # "나 맞았다"고 알려줄 때만 깎인다. 둘 다 하면 두 배로 닳는다
+            if struck.slot not in self.judged:
                 continue
 
             damage = SHELL_DAMAGE_MIN + (SHELL_DAMAGE_MAX - SHELL_DAMAGE_MIN) * shell.power // 100
