@@ -57,6 +57,8 @@ class CheatSpec:
 CHEAT_RESOURCES = "resources"
 CHEAT_BATTLECRUISER_SUMMON = "battlecruiser_summon"
 CHEAT_BATTLECRUISER_DISMISS = "battlecruiser_dismiss"
+CHEAT_BATTLE_OPEN = "battle_open"
+CHEAT_BATTLE_JOIN = "battle_join"
 
 CHEAT_SPECS = (
     # 자원 오버레이는 보여주는 연출이라 채널 전원 화면에 뜸
@@ -65,6 +67,15 @@ CHEAT_SPECS = (
     CheatSpec(CHEAT_BATTLECRUISER_SUMMON, "배틀크루저 소환", 60, for_everyone=False),
     # 해제는 소환한 걸 치우는 동작이라 쿨타임을 두면 화면에 박제됨
     CheatSpec(CHEAT_BATTLECRUISER_DISMISS, "배틀크루저 소환해제", 0, for_everyone=False),
+    # --- 사람끼리 하는 전투. '소환'(혼자 날기)과는 **다른 동작**이라 문구를 따로 둔다 ---
+    # 방을 여는 것이라 소환과 같은 쿨타임(도배하면 채널에 방 알림이 계속 뿌려짐).
+    # for_everyone=False 인 이유: 방이 열렸다는 알림은 치트 효과가 아니라 CTCP로 따로
+    # 나간다(battle_protocol.format_room_notice). 치트 효과를 전원에게 띄우면 남이 친 것
+    # 때문에 내 화면에 대기방이 멋대로 뜬다
+    CheatSpec(CHEAT_BATTLE_OPEN, "배틀크루저 전투", 60, for_everyone=False),
+    # 참가는 이미 열린 방에 들어가는 것뿐이라 쿨타임 0 - 기다리게 하면 답답하고,
+    # 방이 없으면 어차피 아무 일도 안 일어난다
+    CheatSpec(CHEAT_BATTLE_JOIN, "배틀크루저 전투 참가", 0, for_everyone=False),
 )
 
 _CHEATS_BY_PHRASE = {spec.phrase: spec for spec in CHEAT_SPECS}
