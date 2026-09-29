@@ -28,6 +28,20 @@ def check(name, ok, detail=""):
     checks.append((name, ok, detail))
 
 
+def fire_once(battle, slot, others=(), ticks=None):
+    """기를 모았다가 떼서 한 방 쏜다(그게 곧 발사다). 일어난 일을 돌려준다."""
+    ticks = sim.CHARGE_FULL_TICKS if ticks is None else ticks
+    events = []
+    for _ in range(ticks):
+        keys = {slot: bp.KEY_FIRE}
+        keys.update({other: 0 for other in others})
+        events.extend(battle.advance(keys))
+    keys = {slot: 0}
+    keys.update({other: 0 for other in others})
+    events.extend(battle.advance(keys))      # 손을 뗀 순간 나간다
+    return events
+
+
 def run(script, slots=(0, 1)):
     """script: [ {자리: 키}, ... ] 틱마다 누른 키. 끝난 판과 일어난 일들을 돌려준다."""
     battle = sim.Battle(slots)
@@ -124,7 +138,8 @@ check(f"전투는 30fps로 돈다({sim.TICK_MS}ms)", 30 <= sim.TICK_MS <= 36, si
 
 # 시간으로 정해진 값들이 실제로 그 시간인가(틱을 바꾸면 여기가 먼저 깨진다)
 for name, ticks, seconds, tolerance in (
-    ("재장전", sim.RELOAD_TICKS, 0.72, 0.1),
+    ("다시 모으기까지", sim.RELOAD_TICKS, 0.40, 0.1),
+    ("기를 꽉 모으기", sim.CHARGE_FULL_TICKS, 1.00, 0.1),
     ("포탄 수명", sim.SHELL_LIFE_TICKS, 1.44, 0.1),
     ("부활", sim.RESPAWN_TICKS, 2.88, 0.1),
 ):
@@ -178,25 +193,53 @@ firing = sim.Battle((0,), 4000, 4000)
 # 포탄이 전투장 밖으로 나가버리지 않게 배를 한가운데로 옮긴다
 firing.ships[0].x = firing.width // 2
 firing.ships[0].y = firing.height // 2
-firing.advance({0: bp.KEY_FIRE})
-check(f"쏘면 포탄이 생긴다({len(firing.shells)}발)", len(firing.shells) == 1, firing.shells)
-check(f"쏘면 재장전이 걸린다({firing.ships[0].reload_left}틱)",
-      firing.ships[0].reload_left > 0, firing.ships[0].reload_left)
+# **누르고 있는 동안은 안 나간다 - 기를 모으는 것이다**
 for _ in range(10):
     firing.advance({0: bp.KEY_FIRE})
-check(f"누르고 있어도 연사가 안 된다({len(firing.shells)}발)", len(firing.shells) == 1,
+check(f"누르고 있는 동안은 안 나간다({len(firing.shells)}발)", not firing.shells,
       len(firing.shells))
-for _ in range(sim.RELOAD_TICKS + 2):
-    firing.advance({0: 0})
-check(f"재장전이 끝난다({firing.ships[0].reload_left}틱)",
-      firing.ships[0].reload_left == 0, firing.ships[0].reload_left)
-firing.advance({0: bp.KEY_FIRE})
-check(f"재장전되면 또 쏜다({len(firing.shells)}발)", len(firing.shells) >= 2, len(firing.shells))
+check(f"대신 기가 모인다({firing.ships[0].charge}틱)", firing.ships[0].charge == 10,
+      firing.ships[0].charge)
+
+firing.advance({0: 0})            # 손을 뗀다
+check(f"떼면 나간다({len(firing.shells)}발)", len(firing.shells) == 1, firing.shells)
+check(f"쏘면 모은 것이 비워진다({firing.ships[0].charge})", firing.ships[0].charge == 0)
+check(f"쏘면 잠깐 못 모은다({firing.ships[0].reload_left}틱)",
+      firing.ships[0].reload_left > 0, firing.ships[0].reload_left)
+
+# 꽉 채우면 더 세고 더 빠르다
+weak_shell = firing.shells[0]
+full = sim.Battle((0,), 4000, 4000)
+full.ships[0].x, full.ships[0].y = full.width // 2, full.height // 2
+fire_once(full, 0)
+strong_shell = full.shells[0]
+check(f"꽉 채우면 힘이 더 세다(약 {weak_shell.power} / 꽉 {strong_shell.power})",
+      strong_shell.power > weak_shell.power, (weak_shell.power, strong_shell.power))
+weak_speed = abs(weak_shell.vx) + abs(weak_shell.vy)
+strong_speed = abs(strong_shell.vx) + abs(strong_shell.vy)
+check(f"꽉 채우면 더 빠르다(약 {weak_speed} / 꽉 {strong_speed})",
+      strong_speed > weak_speed, (weak_speed, strong_speed))
+check(f"힘이 0~100 안에 있다({strong_shell.power})", 0 <= strong_shell.power <= 100)
+
+# 스치듯 누른 건 오발로 보고 안 쏜다
+graze = sim.Battle((0,), 4000, 4000)
+for _ in range(sim.CHARGE_MIN - 1):
+    graze.advance({0: bp.KEY_FIRE})
+graze.advance({0: 0})
+check(f"스치듯 누르면 안 쏜다({len(graze.shells)}발)", not graze.shells, len(graze.shells))
+
+# 다 모은 뒤 계속 눌러도 더는 안 쌓인다
+held = sim.Battle((0,), 4000, 4000)
+for _ in range(sim.CHARGE_FULL_TICKS * 3):
+    held.advance({0: bp.KEY_FIRE})
+check(f"다 모으면 거기서 멈춘다({held.ships[0].charge}/{sim.CHARGE_FULL_TICKS})",
+      held.ships[0].charge == sim.CHARGE_FULL_TICKS, held.ships[0].charge)
+check("계속 누르고 있으면 안 나간다", not held.shells, len(held.shells))
 
 # 포탄은 언젠가 사라진다(영원히 쌓이면 안 된다)
 lonely = sim.Battle((0,), 4000, 4000)
 lonely.ships[0].x, lonely.ships[0].y = lonely.width // 2, lonely.height // 2
-lonely.advance({0: bp.KEY_FIRE})
+fire_once(lonely, 0)
 for _ in range(sim.SHELL_LIFE_TICKS + 5):
     lonely.advance({0: 0})
 check(f"포탄은 수명이 끝나면 사라진다({len(lonely.shells)}발 남음)", not lonely.shells,
@@ -209,7 +252,7 @@ duel.ships[1].x, duel.ships[1].y = 400 * sim.SCALE, 300 * sim.SCALE
 duel.ships[0].facing = 8          # 오른쪽(32방향 중 1/4)
 duel.ships[0].vx = duel.ships[0].vy = 0
 events = []
-events += duel.advance({0: bp.KEY_FIRE})
+events += fire_once(duel, 0, others=(1,))
 for _ in range(80):
     events += duel.advance({0: 0, 1: 0})
 hits = [e for e in events if e["t"] == "hit"]
@@ -221,7 +264,7 @@ check(f"맞으면 체력이 깎인다({duel.ships[1].hp}/{sim.MAX_HP})",
 # 자기 포탄엔 안 맞는다
 selfshot = sim.Battle((0,))
 selfshot.ships[0].vx = selfshot.ships[0].vy = 0
-got = selfshot.advance({0: bp.KEY_FIRE})
+got = fire_once(selfshot, 0)
 for _ in range(120):
     got += selfshot.advance({0: 0})
 check(f"자기 포탄에는 안 맞는다({got})", not got, got)
@@ -234,7 +277,7 @@ kill.ships[0].x, kill.ships[0].y = 100 * sim.SCALE, 300 * sim.SCALE
 kill.ships[1].x, kill.ships[1].y = 400 * sim.SCALE, 300 * sim.SCALE
 kill.ships[0].facing = 8
 kill.ships[0].vx = kill.ships[0].vy = 0
-kill_events = kill.advance({0: bp.KEY_FIRE})
+kill_events = fire_once(kill, 0, others=(1,))
 for _ in range(80):
     kill_events += kill.advance({0: 0, 1: 0})
 dead = [e for e in kill_events if e["t"] == "dead"]
@@ -250,7 +293,7 @@ before = len([e for e in kill_events if e["t"] == "hit"])
 extra = []
 for _ in range(sim.RELOAD_TICKS + 2):
     extra += kill.advance({0: 0, 1: 0})
-extra += kill.advance({0: bp.KEY_FIRE})
+extra += fire_once(kill, 0, others=(1,))
 for _ in range(80):
     extra += kill.advance({0: 0, 1: 0})
 check(f"격추된 배는 포탄이 통과한다({extra})", not any(e["slot"] == 1 for e in extra), extra)
@@ -285,7 +328,7 @@ gone.ships[0].x, gone.ships[0].y = 100 * sim.SCALE, 300 * sim.SCALE
 gone.ships[1].x, gone.ships[1].y = 400 * sim.SCALE, 300 * sim.SCALE
 gone.ships[0].facing = 8
 gone.ships[0].vx = gone.ships[0].vy = 0
-gone_events = gone.advance({0: bp.KEY_FIRE})
+gone_events = fire_once(gone, 0, others=(1,))
 gone.remove(1)
 for _ in range(80):
     gone_events += gone.advance({0: 0})
@@ -297,7 +340,7 @@ left_shell.ships[1].x, left_shell.ships[1].y = 400 * sim.SCALE, 300 * sim.SCALE
 left_shell.ships[0].x, left_shell.ships[0].y = 100 * sim.SCALE, 300 * sim.SCALE
 left_shell.ships[1].facing = 24        # 왼쪽
 left_shell.ships[1].vx = left_shell.ships[1].vy = 0
-left_shell.advance({1: bp.KEY_FIRE})
+fire_once(left_shell, 1, others=(0,))
 check("떠나기 전에 쏜 포탄이 있다", len(left_shell.shells) == 1)
 left_shell.remove(1)
 after_leave = []

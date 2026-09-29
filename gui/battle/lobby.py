@@ -49,9 +49,9 @@ KONAMI = (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Up, Qt.Key.Key_Up,
           Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right,
           Qt.Key.Key_Up, Qt.Key.Key_Down)
 
-# 무지개가 한 바퀴 도는 데 걸리는 틱 수(60fps 기준 약 2초).
+# 무지개가 한 바퀴 도는 데 걸리는 틱 수(전투는 30fps라 약 2초).
 # 너무 빠르면 눈이 아프고 너무 느리면 안 바뀌는 것처럼 보인다
-RAINBOW_PERIOD_TICKS = 120
+RAINBOW_PERIOD_TICKS = 60
 
 SWATCH_PX = 14
 

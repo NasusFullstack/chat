@@ -210,8 +210,9 @@ pump()
 check("중간에 틀려도 이어서 넣으면 열린다", again.rainbow_available() is True)
 
 # 색이 실제로 계속 바뀌는가
-hues = {ship_color(RAINBOW, tick).hue() for tick in range(0, RAINBOW_PERIOD_TICKS, 4)}
-check(f"무지개는 틱마다 색이 바뀐다(한 바퀴에 {len(hues)}가지)", len(hues) > 20, len(hues))
+hues = {ship_color(RAINBOW, tick).hue() for tick in range(RAINBOW_PERIOD_TICKS)}
+check(f"무지개는 틱마다 색이 바뀐다(한 바퀴 {RAINBOW_PERIOD_TICKS}틱에 {len(hues)}가지)",
+      len(hues) >= RAINBOW_PERIOD_TICKS // 2, len(hues))
 check("한 바퀴 돌면 처음 색으로 돌아온다",
       ship_color(RAINBOW, 0).hue() == ship_color(RAINBOW, RAINBOW_PERIOD_TICKS).hue())
 check("보통 색은 틱이 바뀌어도 그대로다",

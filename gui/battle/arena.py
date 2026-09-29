@@ -20,7 +20,7 @@
 import math
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QRadialGradient
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
 import battle_ai
@@ -40,10 +40,12 @@ KEY_BITS = {
     Qt.Key.Key_Space: bp.KEY_FIRE,
 }
 
-SHIP_DRAW_PX = 68          # 전투장(1200x800) 기준 배 한 척 크기
-SHELL_DRAW_PX = 7
-HP_BAR_WIDTH = 46
-HP_BAR_HEIGHT = 7
+SHIP_DRAW_PX = 110         # 전투장(1200x800) 기준 배 한 척 크기(작으면 뭘 하는지 안 보인다)
+# 야마토포 불덩이 기본 크기(모은 만큼 커진다)
+SHELL_CORE_PX = 9
+TRAIL_STEPS = 5           # 뒤로 남는 불꼬리 마디 수
+HP_BAR_WIDTH = 60
+HP_BAR_HEIGHT = 8
 HP_BAR_GAP = 8             # 배 아래로 이만큼 떨어뜨린다(스타1처럼 아래에 붙는다)
 
 CRASH_TICKS = 29           # 추락 연출 길이(약 1초)
@@ -54,6 +56,14 @@ CRASH_SPIN_STEP = 2
 # 키가 그대로여도 이만큼마다 한 번은 다시 보낸다(약 1초). 규약 상한(초당 30줄) 아래로
 # 넉넉히 들어가면서, 한 줄을 놓쳐 어긋난 상태가 오래 남지 않게 하는 값
 RESEND_TICKS = 29
+
+# 물들인 배 그림을 보관해 두는 한도. 무지개는 색이 계속 바뀌어 끝없이 쌓이므로 상한을 둔다
+# 색을 얼마나 밝혀서 곱할지(100이 원래 색). 원본이 중간 밝기라 그냥 곱하면 시커메진다
+TINT_LIGHTEN = 185
+# 어두운 부분을 얼마나 살릴지(클수록 옅게 얹는다)
+TINT_LIFT = 280
+TINT_CACHE_LIMIT = 256
+_TINT_CACHE = {}
 
 
 class _Crash:
@@ -311,19 +321,87 @@ class BattleArena(QWidget):
         painter.end()
 
     def _draw_shell(self, painter, box, shell, scale):
+        """야마토포 - 총알이 아니라 **붉은 불덩이**다.
+
+        실제 야마토포는 기를 모아 쏘는 큰 불덩어리라, 작은 점으로 그리면 전혀 다른
+        무기처럼 보인다. 모은 만큼 커지고 뒤로 불꼬리가 길게 남는다.
+        """
         center = self._to_screen(box, shell.x, shell.y)
-        radius = SHELL_DRAW_PX * scale / 2
-        glow = QRadialGradient(center, radius * 2.2)
-        color = ship_color(self._colors.get(shell.owner, 0), self._tick)
-        glow.setColorAt(0.0, QColor(255, 255, 220))
-        glow.setColorAt(0.45, color)
-        glow.setColorAt(1.0, QColor(color.red(), color.green(), color.blue(), 0))
+        power = max(0, min(100, getattr(shell, "power", 100)))
+        radius = (SHELL_CORE_PX * (0.55 + 0.45 * power / 100)) * scale
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(glow)
-        painter.drawEllipse(center, radius * 2.2, radius * 2.2)
+
+        # 불꼬리 - 날아온 쪽으로 점점 작아지며 옅어진다
+        speed = max(1, abs(shell.vx) + abs(shell.vy))
+        step_x = -shell.vx / speed
+        step_y = -shell.vy / speed
+        for index in range(1, TRAIL_STEPS + 1):
+            fade = 1.0 - index / (TRAIL_STEPS + 1)
+            tail = QPointF(center.x() + step_x * index * radius * 1.5,
+                           center.y() + step_y * index * radius * 1.5)
+            flame = QRadialGradient(tail, radius * fade * 1.6)
+            flame.setColorAt(0.0, QColor(255, 170, 40, int(150 * fade)))
+            flame.setColorAt(1.0, QColor(160, 30, 0, 0))
+            painter.setBrush(flame)
+            painter.drawEllipse(tail, radius * fade * 1.6, radius * fade * 1.6)
+
+        # 불덩이 본체 - 가운데는 하얗게 타고 밖으로 갈수록 붉다
+        core = QRadialGradient(center, radius * 2.4)
+        core.setColorAt(0.0, QColor(255, 255, 235))
+        core.setColorAt(0.25, QColor(255, 226, 120))
+        core.setColorAt(0.55, QColor(255, 120, 20))
+        core.setColorAt(0.8, QColor(200, 40, 10, 190))
+        core.setColorAt(1.0, QColor(120, 10, 0, 0))
+        painter.setBrush(core)
+        painter.drawEllipse(center, radius * 2.4, radius * 2.4)
+
+        # 누가 쏜 것인지 알 수 있게 바깥에 그 사람 색을 옅게 두른다
+        owner = ship_color(self._colors.get(shell.owner, 0), self._tick)
+        halo = QRadialGradient(center, radius * 3.2)
+        halo.setColorAt(0.0, QColor(owner.red(), owner.green(), owner.blue(), 0))
+        halo.setColorAt(0.75, QColor(owner.red(), owner.green(), owner.blue(), 70))
+        halo.setColorAt(1.0, QColor(owner.red(), owner.green(), owner.blue(), 0))
+        painter.setBrush(halo)
+        painter.drawEllipse(center, radius * 3.2, radius * 3.2)
 
     @staticmethod
-    def _paint_ship(painter, center, facing_index: int, size: float):
+    def _tinted(pixmap, color: QColor):
+        """배 그림을 그 사람 색으로 물들인다(음영은 그대로 살린다).
+
+        곱하기로 칠하는 이유: 그림이 밝은 회색/흰색 계열이라 색을 곱하면 밝은 곳은
+        그 색으로, 어두운 곳은 어둡게 남아 **입체감이 살아 있다.** 통째로 덮어칠하면
+        배 모양만 남은 색종이가 된다.
+        마지막에 원본을 다시 얹어 투명한 곳을 되살린다(안 하면 네모가 통째로 물든다).
+
+        같은 색·같은 프레임은 다시 안 만든다 - 30fps로 네 척이면 초당 120번이라
+        매번 만들면 그게 곧 렉이다.
+        """
+        key = (id(pixmap), color.rgb())
+        cached = _TINT_CACHE.get(key)
+        if cached is not None:
+            return cached
+        tinted = QPixmap(pixmap.size())
+        tinted.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(tinted)
+        painter.drawPixmap(0, 0, pixmap)
+        # **색을 밝혀서 곱한다.** 원본이 중간 밝기라 색을 그대로 곱하면 배가 시커멓게
+        # 가라앉는다(실제로 그렇게 나왔다). 밝힌 색으로 곱하면 색은 확실히 보이면서
+        # 원래 밝기가 유지된다
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Multiply)
+        painter.fillRect(tinted.rect(), color.lighter(TINT_LIGHTEN))
+        # 그래도 어두운 부분이 죽으므로 색을 옅게 한 번 더 얹어 살려준다
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+        painter.fillRect(tinted.rect(), color.darker(TINT_LIFT))
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.end()
+        if len(_TINT_CACHE) > TINT_CACHE_LIMIT:
+            _TINT_CACHE.clear()      # 무지개는 색이 계속 바뀌므로 한도를 두고 통째로 비운다
+        _TINT_CACHE[key] = tinted
+        return tinted
+
+    @staticmethod
+    def _paint_ship(painter, center, facing_index: int, size: float, color=None):
         """배 한 대를 그린다 - 그림 파일이 있으면 그걸, 없으면 직접 그린 배를.
 
         방향별 프레임이 있는 그림은 **회전시키지 않는다.** 아이소메트릭 그림을 돌리면
@@ -334,15 +412,15 @@ class BattleArena(QWidget):
         sprite = _load_sprite()
         painter.save()
         painter.translate(center)
-        if sprite is not None and sprite.directional:
-            pixmap = sprite.pick(facing_index * sim.TURN_STEP_DEG)
+        if sprite is not None:
+            if sprite.directional:
+                pixmap = sprite.pick(facing_index * sim.TURN_STEP_DEG)
+            else:
+                painter.rotate(facing_index * sim.TURN_STEP_DEG)
+                pixmap = sprite.frames[0]
+            if color is not None:
+                pixmap = BattleArena._tinted(pixmap, color)
             scaled = pixmap.scaled(
-                int(size), int(size), Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation)
-            painter.drawPixmap(int(-scaled.width() / 2), int(-scaled.height() / 2), scaled)
-        elif sprite is not None:
-            painter.rotate(facing_index * sim.TURN_STEP_DEG)
-            scaled = sprite.frames[0].scaled(
                 int(size), int(size), Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation)
             painter.drawPixmap(int(-scaled.width() / 2), int(-scaled.height() / 2), scaled)
@@ -356,17 +434,25 @@ class BattleArena(QWidget):
         if not ship.alive:
             return                        # 격추된 배는 안 보인다(다시 살아나면 보인다)
         size = SHIP_DRAW_PX * scale
-        self._paint_ship(painter, center, ship.facing, size)
-
-        # 누구 배인지 - 색 고리를 두른다(배 그림 자체는 모두 같은 회색이라 구분이 안 된다)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(QPen(ship_color(self._colors.get(ship.slot, 0), self._tick), 2.0))
-        painter.drawEllipse(center, size * 0.46, size * 0.46)
+        # **배 자체를 그 사람 색으로 물들인다.** 예전에는 색 고리를 둘렀는데, 배는
+        # 그대로 흰색이라 "내 색"이라는 느낌이 안 나고 고리만 둥둥 떠 보였다
+        self._paint_ship(painter, center, ship.facing, size,
+                         ship_color(self._colors.get(ship.slot, 0), self._tick))
 
         bar = QRectF(center.x() - HP_BAR_WIDTH * scale / 2,
-                     center.y() + size * 0.46 + HP_BAR_GAP * scale,
+                     center.y() + size * 0.40 + HP_BAR_GAP * scale,
                      HP_BAR_WIDTH * scale, HP_BAR_HEIGHT * scale)
         draw_hp_bar(painter, bar, ship.hp / sim.MAX_HP, sim.HP_SEGMENTS)
+
+        # 기를 모으는 중이면 배 위에 얼마나 찼는지 보여준다 - 안 보이면 언제 떼야 할지 모른다
+        if ship.charge > 0:
+            ratio = min(1.0, ship.charge / sim.CHARGE_FULL_TICKS)
+            gauge = QRectF(center.x() - HP_BAR_WIDTH * scale / 2,
+                           center.y() - size * 0.40 - (HP_BAR_GAP + HP_BAR_HEIGHT) * scale,
+                           HP_BAR_WIDTH * scale * ratio, HP_BAR_HEIGHT * scale * 0.7)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(255, 196, 60) if ratio < 1.0 else QColor(255, 250, 200))
+            painter.drawRect(gauge)
 
     def _draw_crash(self, painter, box, crash, scale):
         center = self._to_screen(box, crash.x, crash.y)
@@ -386,7 +472,8 @@ class BattleArena(QWidget):
         # **그림을 돌리는 게 아니라 방향 프레임을 넘겨서** 돈다(아이소메트릭 그림은
         # 돌리면 각도가 어긋난다). 프레임이 없는 그림이면 그때만 실제로 회전한다
         spun = (crash.facing + (CRASH_TICKS - crash.left) * CRASH_SPIN_STEP) % sim.DIRECTIONS
-        self._paint_ship(painter, center, spun, SHIP_DRAW_PX * scale)
+        self._paint_ship(painter, center, spun, SHIP_DRAW_PX * scale,
+                         ship_color(crash.color, self._tick))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(90, 90, 100, 120))
         painter.drawEllipse(center, 10 * scale, 10 * scale)

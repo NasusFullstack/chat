@@ -29,6 +29,9 @@ AIM_TOLERANCE = 0.74
 STRAFE_PERIOD = 46
 # 예측 조준을 이 틱 이상으로는 안 한다 - 멀수록 상대가 방향을 바꿔 오히려 빗나간다
 LEAD_LIMIT_TICKS = 22
+# AI가 어느 정도까지 모아서 쏘는지. 꽉 채우면 세지만 그동안 못 움직여 쉽게 맞는다 -
+# 사람이 그러듯 적당히 모으고 쏘게 한다
+CHARGE_TARGET = int(sim.CHARGE_FULL_TICKS * 0.7)
 
 
 def _nearest_enemy(battle, slot):
@@ -77,6 +80,8 @@ def decide(battle, slot: int, tick: int) -> int:
     # 영영 못 쏜다(처음 만들었을 때 30초에 5대만 맞히고 격추가 한 번도 안 났다).
     # 그래서 리듬을 준다 - 장전이 끝나면 상대 쪽으로 붙어 조준하고, 쏘고 나면
     # 재장전하는 동안 옆으로 돌아 피한다
+    # 기를 모으는 무기라 '쏠 수 있나'는 '모으기 시작할 수 있나'다.
+    # 모으는 동안에는 조준을 유지해야 하므로 그때도 상대 쪽으로 붙는다
     ready_to_fire = me.reload_left == 0
     if distance_squared < TOO_CLOSE * TOO_CLOSE:
         move_x, move_y = -dx, -dy
@@ -99,7 +104,14 @@ def decide(battle, slot: int, tick: int) -> int:
     elif move_y < -threshold:
         keys |= bp.KEY_UP
 
-    # 조준: 지금 향한 쪽과 상대 쪽이 얼추 같으면 쏜다
+    # 기를 모으는 무기라 '누르고 있다가 뗀다'가 곧 발사다.
+    # 이미 모으는 중이면 다 찰 때까지 계속 누르고, 다 차면 손을 뗀다(= 그때 나간다).
+    if me.charge > 0:
+        if me.charge < CHARGE_TARGET:
+            keys |= bp.KEY_FIRE          # 더 모은다
+        return keys                      # 다 모았으면 이번 틱에 떼서 쏜다
+
+    # 아직 안 모으는 중 - 조준이 맞으면 모으기 시작한다
     if ready_to_fire and distance_squared <= (TOO_FAR * 2) ** 2:
         ux, uy = sim.DIRECTION_TABLE[me.facing]
         # 내적(정수). 길이로 나누는 대신 양변을 제곱해 비교하면 실수가 안 끼어든다

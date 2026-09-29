@@ -71,16 +71,26 @@ def _build_direction_table():
 DIRECTION_TABLE = _build_direction_table()
 
 # ---- 야마토포 ---------------------------------------------------------------
-SHELL_SPEED = 4800            # 배(최대 3px/tick)보다 세 배 빠르다 - 피하기 어렵지만 가능
+# **기를 모아 쏜다.** 스페이스를 누르고 있으면 차고, 떼면 나간다.
+# 바로 떼면 약하고 느리게, 꽉 채우면 세고 빠르게 - 실제 야마토포처럼 한 방을 노리는 무기.
+# (연발로 두면 그냥 총이 되고, 피하는 재미도 없다)
+CHARGE_FULL_TICKS = 30        # 약 1초면 꽉 찬다
+CHARGE_MIN = 6                # 이보다 짧게 누르면 발사 자체가 안 된다(오발 방지)
+
+SHELL_SPEED_MIN = 2200        # 바로 떼면 느리다
+SHELL_SPEED_MAX = 6600        # 꽉 채우면 세 배 빠르다
+SHELL_SPEED = SHELL_SPEED_MAX  # 옛 이름(검사/AI가 거리를 어림할 때 쓴다)
 SHELL_LIFE_TICKS = 43         # 약 1.5초. 화면을 가로지르고 사라진다
-RELOAD_TICKS = 22             # 약 0.7초. 야마토포는 아껴 쏘는 무기다
+RELOAD_TICKS = 12             # 쏜 뒤 다시 모으기 시작할 때까지(모으는 시간이 따로 있으므로 짧게)
 SHELL_RADIUS = 6 * SCALE      # 맞음 판정 반지름(포탄)
 SHIP_RADIUS = 26 * SCALE      # 맞음 판정 반지름(배). 그림(96px)보다 작게 - 스쳐도 맞는 건 억울하다
 
 # ---- 체력 -------------------------------------------------------------------
 MAX_HP = 500              # 스타1 배틀크루저와 같은 숫자(보는 재미)
 HP_SEGMENTS = 10          # 체력바를 몇 칸으로 나눠 그릴지(화면이 이 값을 쓴다)
-SHELL_DAMAGE = 260        # 스타1 야마토포와 같은 값 - **두 방이면 격추**
+SHELL_DAMAGE_MIN = 70     # 바로 떼면 약하다
+SHELL_DAMAGE_MAX = 260    # 꽉 채우면 스타1 야마토포와 같은 값 - **두 방이면 격추**
+SHELL_DAMAGE = SHELL_DAMAGE_MAX   # 옛 이름(검사가 최대치를 볼 때 쓴다)
 # 열 방을 맞아야 죽게 뒀더니 한 판이 1분을 넘어가 지루했다(실측: AI끼리 30초에 10대,
 # 격추 0번). 실제 값으로 맞추니 주고받는 맛이 산다
 
@@ -92,7 +102,7 @@ class Ship:
     """배 한 척. 좌표·속도는 전부 1/256 픽셀 단위 정수."""
 
     __slots__ = ("slot", "x", "y", "vx", "vy", "facing", "hp", "reload_left",
-                 "respawn_left", "kills", "deaths")
+                 "respawn_left", "kills", "deaths", "charge")
 
     def __init__(self, slot: int, x: int, y: int, facing: int = 0):
         self.slot = slot
@@ -103,6 +113,7 @@ class Ship:
         self.facing = facing          # DIRECTION_TABLE 의 번호
         self.hp = MAX_HP
         self.reload_left = 0
+        self.charge = 0            # 기를 모은 정도(스페이스를 누르고 있는 틱 수)
         self.respawn_left = 0
         self.kills = 0
         self.deaths = 0
@@ -124,7 +135,7 @@ class Ship:
 class Shell:
     """야마토포 포탄 하나."""
 
-    __slots__ = ("owner", "x", "y", "vx", "vy", "life")
+    __slots__ = ("owner", "x", "y", "vx", "vy", "life", "power")
 
     def __init__(self, owner: int, x: int, y: int, vx: int, vy: int):
         self.owner = owner
@@ -133,6 +144,7 @@ class Shell:
         self.vx = vx
         self.vy = vy
         self.life = SHELL_LIFE_TICKS
+        self.power = 100           # 얼마나 모아서 쏜 것인가(0~100)
 
     @property
     def px(self) -> float:
@@ -263,16 +275,39 @@ class Battle:
             ship.y, ship.vy = self.height, 0
 
     def _maybe_fire(self, ship: Ship, keys: int):
-        if not ship.alive or not (keys & bp.KEY_FIRE) or ship.reload_left > 0:
+        """기를 모으고, 손을 떼면 쏜다.
+
+        누르고 있는 동안 `charge`가 차고, 뗀 순간 그만큼의 힘으로 나간다.
+        꽉 채우면 세고 빠르게, 바로 떼면 약하고 느리게. 아주 짧게 눌린 건 오발로 보고
+        안 쏜다(움직이려다 스페이스가 스친 경우).
+        """
+        if not ship.alive:
+            ship.charge = 0
             return
+        holding = bool(keys & bp.KEY_FIRE)
+        if holding:
+            if ship.reload_left == 0 and ship.charge < CHARGE_FULL_TICKS:
+                ship.charge += 1
+            return
+        if ship.charge == 0:
+            return
+        charge, ship.charge = ship.charge, 0
+        if charge < CHARGE_MIN:
+            return                      # 스친 정도 - 안 쏜다
+
+        # 0~100으로 환산해서 힘을 정한다(정수라 모두에게 같은 값이 나온다)
+        power = min(100, charge * 100 // CHARGE_FULL_TICKS)
+        speed = SHELL_SPEED_MIN + (SHELL_SPEED_MAX - SHELL_SPEED_MIN) * power // 100
         ux, uy = DIRECTION_TABLE[ship.facing]
-        self.shells.append(Shell(
+        shell = Shell(
             ship.slot,
             ship.x + ux * SHIP_RADIUS // SCALE // SCALE * SCALE,
             ship.y + uy * SHIP_RADIUS // SCALE // SCALE * SCALE,
-            ux * SHELL_SPEED // SCALE,
-            uy * SHELL_SPEED // SCALE,
-        ))
+            ux * speed // SCALE,
+            uy * speed // SCALE,
+        )
+        shell.power = power
+        self.shells.append(shell)
         ship.reload_left = RELOAD_TICKS
 
     def _move_shells(self) -> list[dict]:
@@ -300,7 +335,8 @@ class Battle:
                 alive_shells.append(shell)
                 continue
 
-            struck.hp -= SHELL_DAMAGE
+            damage = SHELL_DAMAGE_MIN + (SHELL_DAMAGE_MAX - SHELL_DAMAGE_MIN) * shell.power // 100
+            struck.hp -= damage
             if struck.hp > 0:
                 events.append({"t": "hit", "slot": struck.slot, "by": shell.owner})
             else:
