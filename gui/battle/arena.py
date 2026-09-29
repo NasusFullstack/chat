@@ -29,6 +29,7 @@ import battle_sim as sim
 from gui.battle.hp_bar import draw_hp_bar
 from gui.battle.lobby import ship_color
 from gui.ship.painter import _draw_ship
+from gui.ship.sprite import _load_sprite
 
 # 조작 - 방향키 + 스페이스(야마토포)
 KEY_BITS = {
@@ -39,7 +40,7 @@ KEY_BITS = {
     Qt.Key.Key_Space: bp.KEY_FIRE,
 }
 
-SHIP_DRAW_PX = 54          # 전투장(1200x800) 기준 배 한 척 크기
+SHIP_DRAW_PX = 68          # 전투장(1200x800) 기준 배 한 척 크기
 SHELL_DRAW_PX = 7
 HP_BAR_WIDTH = 46
 HP_BAR_HEIGHT = 7
@@ -47,6 +48,8 @@ HP_BAR_GAP = 8             # 배 아래로 이만큼 떨어뜨린다(스타1처�
 
 CRASH_TICKS = 60           # 추락 연출 길이(약 1초)
 BOOM_TICKS = 24            # 폭발이 보이는 시간
+# 추락하며 도는 빠르기(틱마다 방향 프레임을 이만큼씩 넘긴다)
+CRASH_SPIN_STEP = 2
 
 
 class _Crash:
@@ -302,25 +305,49 @@ class BattleArena(QWidget):
         painter.setBrush(glow)
         painter.drawEllipse(center, radius * 2.2, radius * 2.2)
 
+    @staticmethod
+    def _paint_ship(painter, center, facing_index: int, size: float):
+        """배 한 대를 그린다 - 그림 파일이 있으면 그걸, 없으면 직접 그린 배를.
+
+        방향별 프레임이 있는 그림은 **회전시키지 않는다.** 아이소메트릭 그림을 돌리면
+        각도가 어긋나 보여서, 실제 게임처럼 방향에 맞는 프레임을 고른다
+        (혼자 날 때와 같은 규칙 - gui/ship/sprite.py).
+        계산의 32방향과 그림의 32프레임이 같은 기준(0=북, 시계방향)이라 번호가 그대로 맞는다.
+        """
+        sprite = _load_sprite()
+        painter.save()
+        painter.translate(center)
+        if sprite is not None and sprite.directional:
+            pixmap = sprite.pick(facing_index * sim.TURN_STEP_DEG)
+            scaled = pixmap.scaled(
+                int(size), int(size), Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
+            painter.drawPixmap(int(-scaled.width() / 2), int(-scaled.height() / 2), scaled)
+        elif sprite is not None:
+            painter.rotate(facing_index * sim.TURN_STEP_DEG)
+            scaled = sprite.frames[0].scaled(
+                int(size), int(size), Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation)
+            painter.drawPixmap(int(-scaled.width() / 2), int(-scaled.height() / 2), scaled)
+        else:
+            painter.rotate(facing_index * sim.TURN_STEP_DEG)
+            _draw_ship(painter, size)
+        painter.restore()
+
     def _draw_ship_at(self, painter, box, ship, scale):
         center = self._to_screen(box, ship.x, ship.y)
         if not ship.alive:
             return                        # 격추된 배는 안 보인다(다시 살아나면 보인다)
         size = SHIP_DRAW_PX * scale
-
-        painter.save()
-        painter.translate(center)
-        painter.rotate(ship.facing * sim.TURN_STEP_DEG)
-        _draw_ship(painter, size)
-        painter.restore()
+        self._paint_ship(painter, center, ship.facing, size)
 
         # 누구 배인지 - 색 고리를 두른다(배 그림 자체는 모두 같은 회색이라 구분이 안 된다)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.setPen(QPen(ship_color(self._colors.get(ship.slot, 0), self._tick), 2.0))
-        painter.drawEllipse(center, size * 0.62, size * 0.62)
+        painter.drawEllipse(center, size * 0.46, size * 0.46)
 
         bar = QRectF(center.x() - HP_BAR_WIDTH * scale / 2,
-                     center.y() + size * 0.62 + HP_BAR_GAP * scale,
+                     center.y() + size * 0.46 + HP_BAR_GAP * scale,
                      HP_BAR_WIDTH * scale, HP_BAR_HEIGHT * scale)
         draw_hp_bar(painter, bar, ship.hp / sim.MAX_HP, sim.HP_SEGMENTS)
 
@@ -338,13 +365,11 @@ class BattleArena(QWidget):
             painter.setBrush(glow)
             painter.drawEllipse(center, radius, radius)
             return
-        # 떨어지는 중 - 빙글 돌면서 연기를 낸다
-        spin = (CRASH_TICKS - crash.left) * 7
-        painter.save()
-        painter.translate(center)
-        painter.rotate(crash.facing * sim.TURN_STEP_DEG + spin)
-        _draw_ship(painter, SHIP_DRAW_PX * scale)
-        painter.restore()
+        # 떨어지는 중 - 빙글 돌면서 연기를 낸다.
+        # **그림을 돌리는 게 아니라 방향 프레임을 넘겨서** 돈다(아이소메트릭 그림은
+        # 돌리면 각도가 어긋난다). 프레임이 없는 그림이면 그때만 실제로 회전한다
+        spun = (crash.facing + (CRASH_TICKS - crash.left) * CRASH_SPIN_STEP) % sim.DIRECTIONS
+        self._paint_ship(painter, center, spun, SHIP_DRAW_PX * scale)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(90, 90, 100, 120))
         painter.drawEllipse(center, 10 * scale, 10 * scale)

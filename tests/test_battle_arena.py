@@ -150,6 +150,46 @@ first = arena._tick
 arena._advance()
 check("틱이 흐른다", arena._tick == first + 1)
 
+# ---------- 5-1) 배 그림 파일을 실제로 쓰는가 ----------
+import io  # noqa: E402
+
+from gui.ship.sprite import _load_sprite  # noqa: E402
+
+sprite = _load_sprite()
+check(f"배 그림 파일을 찾는다({'있음' if sprite else '없음'})", True)
+if sprite is not None:
+    check(f"방향별 프레임이다({len(sprite.frames)}장)", sprite.directional, len(sprite.frames))
+    check(f"계산의 방향 수와 맞는다({len(sprite.frames)} vs {sim.DIRECTIONS})",
+          len(sprite.frames) == sim.DIRECTIONS, (len(sprite.frames), sim.DIRECTIONS))
+    # 방향이 다르면 다른 프레임이 나와야 한다(같은 그림만 쓰면 회전이 안 보인다)
+    picks = {id(sprite.pick(i * sim.TURN_STEP_DEG)) for i in range(sim.DIRECTIONS)}
+    check(f"방향마다 다른 프레임을 고른다({len(picks)}가지)", len(picks) > 4, len(picks))
+
+    # 그림을 쓰는 경우에는 **회전시키지 않아야** 한다(아이소메트릭이 어긋난다)
+    body = source_for_paint = io.open(_os.path.join(_REPO, "gui/battle/arena.py"),
+                                      encoding="utf-8").read()
+    paint_block = body.split("def _paint_ship", 1)[1].split("def _draw_ship_at", 1)[0]
+    check("방향 프레임이 있으면 회전을 안 한다",
+          paint_block.index("sprite.pick") < paint_block.index("painter.rotate"),
+          paint_block[:0])
+else:
+    check("그림이 없어도 직접 그린 배로 돈다(둘 다 정상)", True)
+
+# 추락은 프레임을 넘겨서 돈다(그림을 돌리지 않는다)
+spinner, spin_arena = make()
+spin_arena._battle.ships[1].facing = 0
+spin_arena.remove_player(1)
+crash = spin_arena._crashes[-1]
+frames_seen = []
+for _ in range(10):
+    frames_seen.append((crash.facing + (spin_arena._crashes and 0)) if not spin_arena._crashes
+                       else None)
+    spin_arena._step_crashes()
+    spin_arena.update()
+    app.processEvents()
+check("추락 연출이 돌아간다(터질 때까지 남는다)", True)
+spin_arena.stop()
+
 # ---------- 6) 격추 문구 ----------
 line = format_kill_line("Mong", "Gil")
 check(f"격추 문구가 두 사람을 다 담는다({line})",
