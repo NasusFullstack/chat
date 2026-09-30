@@ -1,5 +1,7 @@
 """이모티콘 보관함 창 - 저장해둔 이모티콘을 미리보기로 보고 골라 쓴다.
 
+- **내 보관함**과 **다 같이 쓰는 것** 두 칸. 누가 저장한 이모티콘은 같은 채팅 서버를
+  쓰는 사람들이 다 꺼내 쓸 수 있다(혼자 보려고 저장하는 게 아니므로)
 - 격자로 작게 미리보기(움짤은 움직임)
 - 한 쪽에 3x4=12개씩, 화살표로 페이지 넘김
 - 내가 붙인 이름으로 검색
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (QDialog, QGridLayout, QHBoxLayout, QLabel, QLineE
                                QMenu, QPushButton, QVBoxLayout, QWidget)
 
 import emoji_store
+from gui.emoji_shared import SharedEmoji
 from gui.link_preview import ImagePreview
 from gui.theme import IS_WINDOWS
 from gui.themed_dialogs import _MiniTitleBar
@@ -28,12 +31,18 @@ class EmojiPicker(QDialog):
 
     emoji_chosen = Signal(str)
 
-    def __init__(self, parent=None, fetcher=None):
+    def __init__(self, parent=None, fetcher=None, group=""):
+        """group은 '누구와 같이 쓰는가' - 같은 채팅 서버를 쓰는 사람들(gui/emoji_shared.py).
+        비어 있으면 같이 쓰는 칸을 아예 안 보여준다(어디에 물어야 할지 모르므로)."""
         super().__init__(parent)
         self._fetcher = fetcher
+        self._group = group
         self._cache: dict[str, bytes] = {}
         self._page = 0
         self._items: list[dict] = []
+        self._shared_mode = False
+        self._shared = SharedEmoji(self)
+        self._shared.ready.connect(self._on_shared)
         if IS_WINDOWS:
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
 
@@ -46,6 +55,24 @@ class EmojiPicker(QDialog):
         body = QVBoxLayout(body_host)
         body.setContentsMargins(14, 10, 14, 12)
         body.setSpacing(8)
+
+        # 두 칸을 위에 둔다 - 탭처럼 생긴 버튼 둘이면 충분하다
+        tabs = QHBoxLayout()
+        tabs.setSpacing(6)
+        self.mine_btn = QPushButton("내 보관함")
+        self.shared_btn = QPushButton("다 같이 쓰는 것")
+        for button in (self.mine_btn, self.shared_btn):
+            button.setObjectName("emojiTabBtn")
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            tabs.addWidget(button, 1)
+        self.mine_btn.setChecked(True)
+        self.mine_btn.clicked.connect(lambda: self._switch(False))
+        self.shared_btn.clicked.connect(lambda: self._switch(True))
+        self.shared_btn.setToolTip("누가 저장한 이모티콘이든 여기서 꺼내 쓸 수 있습니다")
+        self.shared_btn.setVisible(bool(group))
+        self.mine_btn.setVisible(bool(group))
+        body.addLayout(tabs)
 
         top_row = QHBoxLayout()
         top_row.setSpacing(6)
@@ -96,12 +123,39 @@ class EmojiPicker(QDialog):
 
     # ---------------- 목록 ----------------
 
-    def reload(self):
+    def _switch(self, shared: bool):
+        """내 보관함 <-> 다 같이 쓰는 것."""
+        self._shared_mode = shared
+        self.mine_btn.setChecked(not shared)
+        self.shared_btn.setChecked(shared)
+        self.add_btn.setVisible(not shared)
+        self._page = 0
+        if shared:
+            # 받아오는 동안에도 기억해둔 것을 먼저 보여준다(빈 화면이 깜빡이지 않게)
+            self._items = self._filtered(self._shared.items)
+            self._render()
+            self._shared.fetch(self._group)
+            return
+        self.reload()
+
+    def _filtered(self, items: list[dict]) -> list[dict]:
         keyword = self.search_input.text().strip().lower()
-        items = emoji_store.load_emojis()
-        if keyword:
-            items = [it for it in items if keyword in it.get("name", "").lower()]
-        self._items = items
+        if not keyword:
+            return list(items)
+        return [it for it in items if keyword in it.get("name", "").lower()]
+
+    def _on_shared(self, items: list):
+        if not self._shared_mode:
+            return
+        self._items = self._filtered(items)
+        self._page = min(self._page, max(0, self.page_count() - 1))
+        self._render()
+
+    def reload(self):
+        if self._shared_mode:
+            self._items = self._filtered(self._shared.items)
+        else:
+            self._items = self._filtered(emoji_store.load_emojis())
         self._page = min(self._page, max(0, self.page_count() - 1))
         self._render()
 
@@ -126,11 +180,17 @@ class EmojiPicker(QDialog):
 
         start = self._page * PER_PAGE
         for index, entry in enumerate(self._items[start:start + PER_PAGE]):
-            cell = _EmojiCell(entry, self._fetcher, self._cache, self)
+            cell = _EmojiCell(entry, self._fetcher, self._cache, self,
+                              shared=self._shared_mode)
             cell.picked.connect(self._on_picked)
             cell.changed.connect(self.reload)
             self.grid.addWidget(cell, index // COLUMNS, index % COLUMNS)
 
+        self.empty_label.setText(
+            "아직 아무도 저장한 게 없습니다.\n채팅에 올라온 이미지를 우클릭해서 저장하면\n"
+            "여기에서 다 같이 쓸 수 있습니다."
+            if self._shared_mode else
+            "보관함이 비어 있습니다.\n채팅에 올라온 이미지를 우클릭해서 저장해 보세요.")
         self.empty_label.setVisible(not self._items)
         self.grid_host.setVisible(bool(self._items))
         self.page_label.setText(f"{self._page + 1} / {self.page_count()}")
@@ -208,11 +268,14 @@ class _EmojiCell(QWidget):
     picked = Signal(str)
     changed = Signal()
 
-    def __init__(self, entry: dict, fetcher, cache: dict, parent=None):
+    def __init__(self, entry: dict, fetcher, cache: dict, parent=None, shared=False):
         super().__init__(parent)
         self.setObjectName("emojiCell")
         self._url = entry["url"]
         self._name = entry.get("name", "")
+        # 같이 쓰는 것은 내 것이 아니다 - 이름을 바꾸거나 뺄 수 있으면 남의 목록을
+        # 내가 건드리는 셈이 된다
+        self._shared = shared
         self._cache = cache
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(self._name or self._url)
@@ -272,6 +335,18 @@ class _EmojiCell(QWidget):
         import gui_client  # 지연 import - 이유는 gui/pages.py 맨 위 설명 참고
 
         menu = QMenu(self)
+        if self._shared:
+            # 남들과 같이 쓰는 목록이라 여기서 이름을 바꾸거나 빼면 안 된다.
+            # 자주 쓰는 것만 내 보관함으로 가져다 둘 수 있게 한다
+            already = emoji_store.has_emoji(self._url)
+            keep = menu.addAction("이미 내 보관함에 있음" if already else "내 보관함에도 넣기")
+            keep.setEnabled(not already)
+            if menu.exec(event.globalPos()) is keep:
+                saved, text = emoji_store.add_emoji(self._url, self._name)
+                if not saved:
+                    gui_client.themed_warning(self, "이모티콘", text)
+            return
+
         rename = menu.addAction("이름 바꾸기")
         remove = menu.addAction("보관함에서 빼기")
         chosen = menu.exec(event.globalPos())

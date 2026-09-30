@@ -24,6 +24,23 @@ QPushButton#emojiBtn:hover {
     background: __BG_HOVER_SOFT__;
     color: __TEXT_STRONG__;
 }
+/* 두 칸 고르기 - 내 보관함 / 다 같이 쓰는 것. 고른 쪽이 눌린 것처럼 보여야 한다 */
+QPushButton#emojiTabBtn {
+    background: transparent;
+    color: __TEXT_SOFT__;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 6px 4px;
+}
+QPushButton#emojiTabBtn:hover {
+    background: __BG_HOVER_SOFT__;
+    color: __TEXT_STRONG__;
+}
+QPushButton#emojiTabBtn:checked {
+    background: __BG_CONTROL_ALT__;
+    color: __TEXT_STRONG__;
+    border: 1px solid __LINE_CONTROL__;
+}
 /* 이모티콘 보관함 창 */
 QWidget#emojiCell {
     background: __BG_CELL__;

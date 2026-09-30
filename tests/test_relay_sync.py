@@ -30,6 +30,8 @@ import emoji_store  # noqa: E402
 import relay  # noqa: E402
 from gui.chat_log_sync import ChatLogSync  # noqa: E402
 from gui.emoji_backup import needs_backup  # noqa: E402
+from gui.emoji_picker import EmojiPicker  # noqa: E402
+from gui.emoji_shared import SharedEmoji, _short  # noqa: E402
 from gui.profile_sync import ProfileSync, load_tokens  # noqa: E402
 
 checks = []
@@ -59,6 +61,49 @@ check("채널 이름이 그대로 서버에 나가지 않는다(남의 서버에
       "general" not in a.lower())
 check("사람 자리와 방 자리는 안 겹친다",
       relay.who_id("irc", "h", 1, "x") != relay.room_id("irc", "h", 1, "x"))
+
+check("무리 id도 24자다(같은 서버를 쓰는 사람들)",
+      len(relay.group_id("irc", "h", 6697)) == 24)
+check("서버가 다르면 이모티콘도 안 섞인다",
+      relay.group_id("irc", "a.kr", 6697) != relay.group_id("irc", "b.kr", 6697))
+
+# ---------- 1-2) 다 같이 쓰는 이모티콘 ----------
+check(f"이름에서 확장자를 뗀다({_short('웃음.png')})", _short("웃음.png") == "웃음")
+check("확장자가 없으면 그대로 둔다", _short("웃음") == "웃음")
+
+# 무리를 모르면 서버에 묻지도 않는다(어디에 물어야 할지 모른다)
+quiet = SharedEmoji()
+answered = {}
+quiet.ready.connect(lambda items: answered.update(items=items, done=True))
+quiet.fetch("")
+check("무리를 모르면 빈 목록으로 조용히 끝낸다",
+      answered.get("done") and answered["items"] == [], answered)
+
+# 이모티콘 창에 두 칸이 있는가
+picker = EmojiPicker(group="c" * 24)
+check("내 보관함 칸이 있다", not picker.mine_btn.isHidden())
+check("처음에는 내 보관함을 보여준다", not picker._shared_mode)
+picker._switch(True)
+check("다 같이 쓰는 칸으로 넘어간다",
+      picker._shared_mode and picker.shared_btn.isChecked(), picker._shared_mode)
+check("같이 쓰는 칸에서는 '+ 추가'를 숨긴다(남의 목록에 손대는 일이 아니므로)",
+      picker.add_btn.isHidden())
+picker._switch(False)
+check("내 보관함으로 되돌아온다", not picker._shared_mode and picker.mine_btn.isChecked())
+check("돌아오면 '+ 추가'가 다시 보인다", not picker.add_btn.isHidden())
+
+# 무리를 모르면 칸 자체를 안 보여준다
+plain = EmojiPicker(group="")
+check("무리를 모르면 같이 쓰는 칸이 아예 없다", plain.shared_btn.isHidden())
+plain.deleteLater()
+picker.deleteLater()
+
+# 같이 쓰는 이모티콘은 이름을 바꾸거나 뺄 수 없어야 한다(남의 목록이다)
+picker_source = io.open(_os.path.join(_REPO, "gui/emoji_picker.py"),
+                        encoding="utf-8").read()
+menu_part = picker_source.split("def contextMenuEvent", 1)[1]
+check("같이 쓰는 것은 내 보관함에 넣기만 된다",
+      "내 보관함에도 넣기" in menu_part and "if self._shared:" in menu_part)
 
 # ---------- 2) 이모티콘 백업 대상 고르기 ----------
 check("우리 서버에 이미 있는 것은 다시 안 옮긴다",

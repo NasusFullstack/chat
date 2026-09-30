@@ -217,7 +217,8 @@ class ChatPage(QWidget):
         if self._emoji_picker is not None and self._emoji_picker.isVisible():
             self._close_emoji_picker()
             return
-        picker = EmojiPicker(self, fetcher=self._image_fetcher)
+        picker = EmojiPicker(self, fetcher=self._image_fetcher,
+                             group=self.emoji_group())
         picker.emoji_chosen.connect(self._insert_emoji)
         picker.finished.connect(lambda _=0: setattr(self, "_emoji_picker", None))
         self._emoji_picker = picker
@@ -312,6 +313,17 @@ class ChatPage(QWidget):
     def dismiss_battlecruiser(self):
         """'배틀크루저 소환해제' - 순간 가속해서 화면 밖으로 빠져나가며 사라짐"""
         self._battlecruiser.dismiss()
+
+    def emoji_group(self) -> str:
+        """이모티콘을 누구와 같이 쓰는가 - 같은 채팅 서버를 쓰는 사람들.
+
+        화면은 접속 정보를 모르므로 바깥(창)에서 넣어준다. 못 받았으면 빈 값이고,
+        그러면 '다 같이 쓰는 것' 칸이 아예 안 보인다.
+        """
+        return getattr(self, "_emoji_group", "")
+
+    def set_emoji_group(self, group: str):
+        self._emoji_group = group
 
     def battle_host(self):
         """전투 화면이 올라갈 자리 - 혼자 나는 배틀크루저와 같은 곳(채팅 영역 위)."""

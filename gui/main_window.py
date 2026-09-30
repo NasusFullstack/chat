@@ -21,6 +21,7 @@ import app_prefs
 import error_log
 import trusted_certs
 import avatar_store
+import relay
 import client_version_store
 import irc_protocol
 import login_prefs
@@ -243,6 +244,14 @@ class MainWindow(QMainWindow):
         self.log_sync.missed.connect(self._show_missed)
         self.profile_sync = ProfileSync(protocol, host, port, self)
         self.profile_sync.profile_known.connect(self._on_server_profile)
+        # 이모티콘을 누구와 같이 쓰는지도 서버가 바뀌면 같이 바뀐다.
+        # **창을 조립하는 도중에도 불린다**(로그인 전에도 빈 세션을 하나 두기 때문) -
+        # 그때는 채팅 화면이 아직 없으므로 확인하고 넘어간다
+        group = relay.group_id(protocol, host, port) if host else ""
+        relay.set_current_group(group)
+        chat_page = getattr(self, "chat_page", None)
+        if chat_page is not None:
+            chat_page.set_emoji_group(group)
 
     def record_chat_line(self, channel: str, sender: str, text: str, ts: float):
         """받아본 줄을 중계 서버에 올릴 목록에 넣는다(놓친 사람이 따라잡을 수 있게)."""
