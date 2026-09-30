@@ -118,6 +118,11 @@ class Uploader(QObject):
         # 그대로 넣으면 아예 안 올라간다
         request.setRawHeader(b"X-File-Name", urllib.parse.quote(name).encode("ascii"))
         request.setRawHeader(b"X-File-Kind", kind.encode("ascii"))
+        # 이모티콘은 **같이 쓰는 것**이다. 지금 붙어 있는 채팅 서버를 알려주면 그 서버를
+        # 쓰는 사람들 목록에 같이 올라간다(안 알려주면 나만 쓴다)
+        group = relay.current_group()
+        if kind == "emoji" and group:
+            request.setRawHeader(b"X-Emoji-Group", group.encode("ascii"))
         return request
 
     def _watch(self):

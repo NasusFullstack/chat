@@ -44,3 +44,26 @@ def room_id(protocol: str, host: str, port: int, channel: str) -> str:
 def who_id(protocol: str, host: str, port: int, nick: str) -> str:
     """그 서버의 그 사람 프로필이 놓이는 자리."""
     return _place("who", protocol, host, port, nick)
+
+
+def group_id(protocol: str, host: str, port: int) -> str:
+    """이모티콘을 같이 쓰는 무리 - 같은 채팅 서버에 붙어 있는 사람들."""
+    return _place("group", protocol, host, port, "")
+
+
+# 지금 어느 채팅 서버에 붙어 있는가. **창이 접속할 때마다 여기에 적어둔다.**
+#
+# 모듈에 값을 두는 게 마뜩잖지만, 이모티콘을 저장하는 자리(채팅에 뜬 그림의 우클릭
+# 메뉴)는 화면 맨 끝에 있는 부품이라 접속 정보를 알 길이 없다. 거기까지 값을 들고
+# 내려가려면 부품 네댓 개의 생성자를 다 고쳐야 하는데, 그건 "부품은 자기 일만 안다"는
+# 규칙을 더 크게 어기는 일이다. 어차피 한 번에 한 서버에만 붙으므로 사실도 하나뿐이다.
+_current_group = ""
+
+
+def set_current_group(group: str):
+    global _current_group
+    _current_group = group or ""
+
+
+def current_group() -> str:
+    return _current_group
