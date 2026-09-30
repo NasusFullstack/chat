@@ -12,6 +12,8 @@ import link_meta
 from gui.components import relayout
 from gui.preview.fetcher import HTML_LIMIT_BYTES, UNKNOWN_LIMIT_BYTES
 from gui.preview import youtube
+import relay
+from gui.preview import file_card
 from gui.preview.image_preview import ImagePreview, is_image_url
 from gui.preview.link_card import CARD_MAX_WIDTH, LinkCard
 
@@ -46,6 +48,8 @@ class _PreviewLayout(QVBoxLayout):
 class LinkPreviewArea(QWidget):
     """메시지 하나에 딸린 미리보기들을 담는 칸. 받아오는 일까지 전부 여기서 한다.
 
+    - 우리 서버에 올린 파일: 이름·크기·언제까지 받을 수 있는지를 물어 **카드**로 보여줌
+      (주소만 보면 무슨 파일인지도, 아직 살아 있는지도 알 수 없다)
     - 이미지 직링크: 주소가 곧 그림이므로 바로 받아서 보여줌
     - 그 외 링크: HTML을 받아 og 태그를 읽고 카드를 만든 뒤, 거기 적힌 이미지 주소로
       그림을 한 번 더 받아 붙임
@@ -55,7 +59,7 @@ class LinkPreviewArea(QWidget):
     """
 
     def __init__(self, urls, fetcher: "ImageFetcher | None" = None, parent=None,
-                 on_preview_shown=None):
+                 on_preview_shown=None, on_url_shown=None):
         super().__init__(parent)
         self.setObjectName("linkPreviewArea")
         self.setStyleSheet("QWidget#linkPreviewArea { background: transparent; }")
@@ -63,6 +67,9 @@ class LinkPreviewArea(QWidget):
         # 미리보기가 실제로 하나라도 그려졌을 때 알려주는 콜백(메시지가 주소 문자열을
         # 지울지 판단하는 데 씀). 끝내 아무것도 못 받으면 호출되지 않으므로 주소가 남음
         self._on_preview_shown = on_preview_shown
+        # 파일 카드가 떴을 때 "이 주소는 이제 카드가 대신한다"고 알린다. 카드에 이름도
+        # 크기도 남은 기간도 다 적혀 있는데 그 위에 부호화된 주소가 또 있으면 지저분하다
+        self._on_url_shown = on_url_shown
         self._filled = set()
         # 채팅창에서 쓸 수 있는 폭. 나중에 도착하는 미리보기에도 그대로 적용해야
         # 좁은 창에서 이미지가 삐져나가지 않음
@@ -77,7 +84,13 @@ class LinkPreviewArea(QWidget):
         if fetcher is None:
             return
         for url in urls:
-            if youtube.is_youtube(url):
+            if relay.file_id_from(url) and not is_image_url(url):
+                # 우리가 올린 파일이다. **그림인지는 확장자로 못 가른다** - 이름이
+                # .dat여도 사진일 수 있다. 서버에 물어보고 그 답으로 정한다
+                # (그림이면 미리보기, 아니면 무엇인지 알 수 있게 카드)
+                fetcher.fetch(relay.meta_url(relay.file_id_from(url)),
+                              lambda data, u=url: self._on_file_meta(u, data))
+            elif youtube.is_youtube(url):
                 # 유튜브는 페이지에서 못 뽑는다(og 태그가 문서 한참 뒤에 있다).
                 # 공식으로 열어둔 oEmbed를 쓰면 제목/채널/그림을 작은 JSON 하나로 준다
                 fetcher.fetch(youtube.oembed_url(url),
@@ -111,6 +124,33 @@ class LinkPreviewArea(QWidget):
         for card in self.findChildren(LinkCard):
             card.setMaximumWidth(min(CARD_MAX_WIDTH, width))
             card.adjust_height()
+        for card in self.findChildren(file_card.FileCard):
+            card.setMaximumWidth(min(file_card.CARD_MAX_WIDTH, width))
+
+    def _on_file_meta(self, url: str, data):
+        """우리 서버 파일의 정보가 왔다 - 카드로 그린다.
+
+        못 받았거나 이미 사라진 파일이면 아무것도 안 그린다. 그러면 주소 글자가 그대로
+        남는데, 그게 '없는 파일 카드'를 그리는 것보다 낫다.
+        """
+        if url in self._filled or not data:
+            return
+        info = file_card.parse_meta(data)
+        if info is None:
+            return
+        if info.get("image"):
+            # 이름이 무엇이든 내용이 그림이면 그림으로 보여준다
+            if self._fetcher is not None:
+                self._fetcher.fetch(url, lambda got, u=url: self._on_direct_image(u, got))
+            return
+        card = file_card.FileCard(url, info, self)
+        card.setMaximumWidth(min(file_card.CARD_MAX_WIDTH, self._max_width or
+                                 file_card.CARD_MAX_WIDTH))
+        self._layout.addWidget(card)
+        self._filled.add(url)
+        if self._on_url_shown is not None:
+            self._on_url_shown(url)
+        self._notify_shown()
 
     def _on_direct_image(self, url: str, data):
         if url in self._filled or not data:

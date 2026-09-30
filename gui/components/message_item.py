@@ -80,7 +80,10 @@ class MessageWidget(QWidget):
         safe_text = _linkify(safe_text)
         # 글자 배치와 높이는 텍스트 엔진이 정한다(gui/components/message_text.py).
         # 우리가 추측하지 않으므로 "안 접힘 / 잘림 / 빈 공간"이 구조적으로 안 생긴다
-        text_label = MessageText(_message_html(sender, safe_text, mine, kind))
+        # 지금 그려져 있는 HTML을 들고 있는다. MessageText.text()는 태그를 뺀
+        # 글자를 주므로 거기서 링크 한 덩어리만 빼낼 수가 없다
+        self._html = _message_html(sender, safe_text, mine, kind)
+        text_label = MessageText(self._html)
         text_label.setCursor(Qt.CursorShape.IBeamCursor)
         body.addWidget(text_label)
         self._text_label = text_label
@@ -109,6 +112,7 @@ class MessageWidget(QWidget):
             self.preview_area = LinkPreviewArea(
                 self.preview_urls, image_fetcher, self,
                 on_preview_shown=self._hide_url_text if self._link_only else None,
+                on_url_shown=self._drop_url_text,
             )
             # 정렬을 주면 남는 세로 공간을 이 칸에 몰아주지 않는다(필요한 만큼만 차지)
             body.addWidget(self.preview_area, 0, Qt.AlignmentFlag.AlignTop)
@@ -131,6 +135,29 @@ class MessageWidget(QWidget):
         글자가 줄어들면 높이도 줄어드는데, 그걸 레이아웃에 알리지 않으면 예전 높이가
         그대로 남아 아래에 빈 공간이 생긴다."""
         self._text_label.setText(self._sender_only_html)
+        relayout.size_changed(self._text_label)
+
+    def _drop_url_text(self, url: str):
+        """파일 카드가 대신하게 된 주소를 글자에서 뺀다.
+
+        통째로 지우는 `_hide_url_text`와 다르다 - "자료 올렸어 <주소>"에서 사람이 쓴
+        말은 남기고 주소만 뺀다. 남는 말이 없으면 보낸 사람만 남긴다(주소만 보낸 경우).
+        """
+        current = self._html
+        # 링크는 <a href="주소">보이는 글자</a> 한 덩어리로 들어가 있다. 그 덩어리째 뺀다
+        marker = f'<a href="{url}"'
+        start = current.find(marker)
+        if start < 0:
+            return
+        end = current.find("</a>", start)
+        if end < 0:
+            return
+        left = current[:start].rstrip()
+        right = current[end + len("</a>"):].lstrip()
+        rest = f"{left} {right}".strip() if right else left
+        # 보낸 사람만 남고 할 말이 없어졌으면 이름만 보여준다
+        self._html = self._sender_only_html if rest.rstrip().endswith(":") else rest
+        self._text_label.setText(self._html)
         relayout.size_changed(self._text_label)
 
     def set_wrap_width(self, view_width: int):

@@ -199,6 +199,11 @@ class Uploader(QObject):
         if not url:
             self.finished.emit("", "서버가 주소를 돌려주지 않았습니다.")
             return
+        # 올린 사람만 도로 내릴 수 있는 표. 적어두지 않으면 내 파일도 못 지운다
+        if answer.get("token") and answer.get("id"):
+            import file_tokens
+
+            file_tokens.remember(answer["id"], answer["token"])
         self.finished.emit(SERVER + url, f"{answer.get('name', '파일')} 올렸습니다.")
 
 

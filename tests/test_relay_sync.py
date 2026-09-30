@@ -81,16 +81,58 @@ check("무리를 모르면 빈 목록으로 조용히 끝낸다",
 
 # 이모티콘 창에 두 칸이 있는가
 picker = EmojiPicker(group="c" * 24)
-check("내 보관함 칸이 있다", not picker.mine_btn.isHidden())
-check("처음에는 내 보관함을 보여준다", not picker._shared_mode)
+check(f"즐겨찾기 칸이 있다({picker.mine_btn.text()})",
+      picker.mine_btn.text() == "즐겨찾기", picker.mine_btn.text())
+check(f"전체 칸이 있다({picker.shared_btn.text()})",
+      picker.shared_btn.text() == "전체", picker.shared_btn.text())
+# 즐겨찾기가 비어 있으면 전체를 먼저 보여준다 - 빈 화면을 내밀면
+# 이모티콘이 아예 없는 줄 안다
+check("즐겨찾기가 비었으면 전체부터 보여준다", picker._shared_mode)
 picker._switch(True)
-check("다 같이 쓰는 칸으로 넘어간다",
+picker._switch(False)
+picker._switch(True)
+check("전체 칸으로 넘어간다",
       picker._shared_mode and picker.shared_btn.isChecked(), picker._shared_mode)
 check("같이 쓰는 칸에서는 '+ 추가'를 숨긴다(남의 목록에 손대는 일이 아니므로)",
       picker.add_btn.isHidden())
 picker._switch(False)
-check("내 보관함으로 되돌아온다", not picker._shared_mode and picker.mine_btn.isChecked())
+check("즐겨찾기로 되돌아온다", not picker._shared_mode and picker.mine_btn.isChecked())
 check("돌아오면 '+ 추가'가 다시 보인다", not picker.add_btn.isHidden())
+
+# 같은 그림이 주소만 달라서 둘로 들어와 있을 수 있다 - 서버로 옮기면 같은 주소가 되므로
+# 그제야 겹친다. 합칠 때 이름이 붙은 쪽을 남겨야 찾을 수 있다
+real_store = emoji_store.EMOJI_STORE_FILE
+emoji_store.EMOJI_STORE_FILE = _os.path.join(
+    _os.environ.get("TEMP", "."), "test_emojis_dedupe.json")
+try:
+    if _os.path.exists(emoji_store.EMOJI_STORE_FILE):
+        _os.remove(emoji_store.EMOJI_STORE_FILE)
+    same = f"{relay.SERVER}/files/aabbccddeeff00112233445a/웃음.png"
+    emoji_store.add_emoji(same, "", source="https://a.com/1.png")
+    emoji_store.add_emoji(f"{relay.SERVER}/files/bbccddeeff00112233445abc/딴것.png", "딴것")
+    # 같은 주소가 된 항목을 손으로 하나 더 넣는다(옛 보관함이 그런 상태다)
+    items = emoji_store.load_emojis()
+    items.append({"url": same, "name": "웃는얼굴", "from": "https://b.com/2.png"})
+    emoji_store._save(items)
+    check(f"합치기 전에는 셋({len(emoji_store.load_emojis())}개)",
+          len(emoji_store.load_emojis()) == 3, emoji_store.load_emojis())
+
+    merged = emoji_store.dedupe()
+    left = emoji_store.load_emojis()
+    check(f"같은 그림을 하나로 합친다({merged}개 합침 -> {len(left)}개 남음)",
+          merged == 1 and len(left) == 2, left)
+    check("이름이 붙은 쪽을 남긴다(빈 이름보다 쓸모 있다)",
+          [e["name"] for e in left if e["url"] == same] == ["웃는얼굴"], left)
+    check("다른 그림은 안 건드린다", any(e["name"] == "딴것" for e in left), left)
+    check("합칠 게 없으면 아무 일도 안 한다", emoji_store.dedupe() == 0)
+finally:
+    if _os.path.exists(emoji_store.EMOJI_STORE_FILE):
+        _os.remove(emoji_store.EMOJI_STORE_FILE)
+    emoji_store.EMOJI_STORE_FILE = real_store
+
+backup_source = io.open(_os.path.join(_REPO, "gui/emoji_backup.py"),
+                        encoding="utf-8").read()
+check("옮겨 담기가 끝나면 알아서 합친다", "emoji_store.dedupe()" in backup_source)
 
 # 무리를 모르면 칸 자체를 안 보여준다
 plain = EmojiPicker(group="")
@@ -102,8 +144,8 @@ picker.deleteLater()
 picker_source = io.open(_os.path.join(_REPO, "gui/emoji_picker.py"),
                         encoding="utf-8").read()
 menu_part = picker_source.split("def contextMenuEvent", 1)[1]
-check("같이 쓰는 것은 내 보관함에 넣기만 된다",
-      "내 보관함에도 넣기" in menu_part and "if self._shared:" in menu_part)
+check("전체 목록에서는 즐겨찾기에 넣기만 된다(남의 것을 건드리면 안 된다)",
+      "즐겨찾기에 넣기" in menu_part and "if self._shared:" in menu_part)
 
 # ---------- 2) 이모티콘 백업 대상 고르기 ----------
 check("우리 서버에 이미 있는 것은 다시 안 옮긴다",

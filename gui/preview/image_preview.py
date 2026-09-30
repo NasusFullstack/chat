@@ -189,7 +189,7 @@ class ImagePreview(QLabel):
         # 것은 하루 뒤 지워진다) 보관함은 그 주소를 영원히 들고 있어서, 어느 날 이모티콘이
         # 통째로 깨지기 때문이었다. 지금은 저장할 때 **그림을 서버에 등록**하고 그 주소를
         # 적으므로 그 문제가 없다(gui/emoji_register.py)
-        save_action = menu.addAction("이미 보관함에 있음" if already else "내 이모티콘으로 저장")
+        save_action = menu.addAction("이미 저장돼 있음" if already else "이모티콘으로 저장")
         save_action.setEnabled(not already)
         copy_action = menu.addAction("이미지 주소 복사")
         chosen = menu.exec(event.globalPos())
