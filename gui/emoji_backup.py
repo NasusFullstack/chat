@@ -78,6 +78,9 @@ class EmojiBackup(QObject):
     def _next(self):
         if not self._todo:
             self._running = False
+            # 옮겨 담고 나면 같은 그림이 둘이 될 수 있다 - 주소가 달라서 따로 들어와
+            # 있던 것들이 서버에서 같은 주소로 합쳐지기 때문이다
+            emoji_store.dedupe()
             self.finished.emit(self._moved, self._total)
             return
         self._current = self._todo.pop(0)

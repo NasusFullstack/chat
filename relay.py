@@ -67,3 +67,24 @@ def set_current_group(group: str):
 
 def current_group() -> str:
     return _current_group
+
+
+# 우리 서버에 올린 파일 주소인가, 그렇다면 그 파일의 id는 무엇인가.
+# 채팅에 뜬 주소를 보고 "이건 파일 카드로 그려야 한다"를 판단하는 데 쓴다
+_FILE_PREFIX = f"{SERVER}/files/"
+
+
+def file_id_from(url: str) -> str:
+    """우리 서버 파일 주소면 그 id, 아니면 빈 값."""
+    if not url or not url.startswith(_FILE_PREFIX):
+        return ""
+    rest = url[len(_FILE_PREFIX):]
+    file_id = rest.split("/", 1)[0].split("?", 1)[0]
+    # id는 24자리 16진수다. 여기서 걸러야 /files/emoji 같은 다른 경로를 파일로 오인하지 않는다
+    if len(file_id) != ID_CHARS or any(c not in "0123456789abcdef" for c in file_id):
+        return ""
+    return file_id
+
+
+def meta_url(file_id: str) -> str:
+    return f"{SERVER}/files/{file_id}/meta"

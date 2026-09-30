@@ -123,6 +123,38 @@ def replace_url(old_url: str, new_url: str) -> bool:
     return True
 
 
+def dedupe() -> int:
+    """같은 그림을 가리키는 항목을 하나로 합친다. 합친 개수를 돌려준다.
+
+    **왜 생기나**: 같은 그림이라도 올라온 주소가 다르면(누가 다시 올렸거나 다른
+    사이트에서 퍼왔거나) 보관함에는 서로 다른 항목으로 들어간다. 그러다 그림을 서버로
+    옮겨 담으면 서버가 내용으로 같은 것을 알아보고 **같은 주소**를 돌려주므로, 그제야
+    같은 것이 둘이 된다.
+
+    합칠 때 **이름이 붙은 쪽을 남긴다.** 이름은 내가 찾으려고 붙인 것이라 빈 이름보다
+    쓸모 있고, 둘 다 있으면 먼저 넣은 것을 남긴다(내가 처음 붙인 이름).
+    """
+    items = load_emojis()
+    kept: list[dict] = []
+    seen: dict[str, int] = {}
+    merged = 0
+    for item in items:
+        url = item["url"]
+        if url not in seen:
+            seen[url] = len(kept)
+            kept.append(item)
+            continue
+        merged += 1
+        first = kept[seen[url]]
+        if not first.get("name") and item.get("name"):
+            first["name"] = item["name"]
+        if not first.get("from") and item.get("from"):
+            first["from"] = item["from"]
+    if merged:
+        _save(kept)
+    return merged
+
+
 def rename_emoji(url: str, name: str) -> bool:
     """이름 바꾸기(빈 이름이면 이름을 지움)."""
     items = load_emojis()

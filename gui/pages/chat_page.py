@@ -28,6 +28,7 @@ from gui.components.app_footer import AppFooter
 from gui.components.channel_sidebar import ChannelSidebar
 from gui.components.member_panel import MemberPanel
 from gui.components.message_input import MessageInput
+from gui.components.upload_bar import UploadBar
 from gui.components.message_log import ChannelLogView
 from gui.components.gear_button import GearButton
 from gui.components.sidebar_handle import SidebarHandle
@@ -160,6 +161,10 @@ class ChatPage(QWidget):
         self.message_input.photo_requested.connect(lambda: self._upload("photo"))
         self.message_input.file_requested.connect(lambda: self._upload("file"))
         self.message_input.clicked.connect(self._close_emoji_picker)
+        # 올리는 중일 때만 나타나는 줄. 입력줄 바로 위라 눈에 띄면서 자리를 안 뺏는다
+        self.upload_bar = UploadBar()
+        self.upload_bar.cancelled.connect(self._cancel_upload)
+        center.addWidget(self.upload_bar)
         center.addWidget(self.message_input)
         center_widget = QWidget()
         center_widget.setLayout(center)
@@ -203,6 +208,10 @@ class ChatPage(QWidget):
         # 파일 올리기 담당(처음 누를 때 만든다 - 안 쓰면 아무것도 안 만들어진다)
         self._uploader = None
         self._uploading_channel = ""
+        self._upload_queue: list[str] = []
+        # 창에 끌어다 놓으면 올라간다. 사진인지 파일인지는 **내용을 보고** 정하므로
+        # 사람이 미리 고를 필요가 없다(확장자는 거짓말을 한다)
+        self.setAcceptDrops(True)
 
 
     def _open_emoji_picker(self):
@@ -244,17 +253,56 @@ class ChatPage(QWidget):
         self.message_input.focus()
 
     # ---------------- 파일·사진 올리기 ----------------
-    def _upload(self, kind: str):
-        """파일을 골라 올리고, 끝나면 **주소를 입력줄에 넣는다.**
+    # ---------------- 끌어다 놓기 ----------------
 
-        바로 보내지 않고 입력줄에 넣는 이유: 사람이 한마디 덧붙이거나("이거 봐") 잘못
-        고른 것을 지울 수 있어야 한다. 주소가 들어가면 그 뒤는 이미 있는 길이 알아서
-        한다 - 사진이면 미리보기가 뜨고, 파일이면 눌러서 받는 링크가 된다.
+    def dragEnterEvent(self, event):  # noqa: N802 - Qt 규약
+        if event.mimeData().hasUrls() and any(u.isLocalFile()
+                                              for u in event.mimeData().urls()):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):  # noqa: N802
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):  # noqa: N802
+        """끌어다 놓은 것을 차례로 올린다.
+
+        여러 개를 한꺼번에 놓을 수 있는데 동시에 올리면 서로 느려지기만 하므로 줄을
+        세운다. 폴더는 건너뛴다(안에 뭐가 얼마나 있을지 알 수 없다).
         """
-        import gui_client  # 지연 import - 이유는 CLAUDE.md 1번
+        import os
 
-        from PySide6.QtWidgets import QFileDialog
+        paths = [url.toLocalFile() for url in event.mimeData().urls()
+                 if url.isLocalFile()]
+        files = [p for p in paths if p and os.path.isfile(p)]
+        if not files:
+            return
+        event.acceptProposedAction()
+        skipped = len(paths) - len(files)
+        channel = self.active_channel()
+        if skipped and channel:
+            self.append_system(channel, f"폴더 {skipped}개는 건너뛰었습니다(파일만 올릴 수 있습니다).")
+        self._upload_queue.extend(files)
+        self._start_next_upload()
 
+    def _start_next_upload(self):
+        if self._uploading_channel or not self._upload_queue:
+            return
+        self._begin_upload(self._upload_queue.pop(0))
+
+    def _cancel_upload(self):
+        """올리는 줄의 '취소' - 지금 것만 멈추고 줄 선 것도 비운다."""
+        dropped = len(self._upload_queue)
+        self._upload_queue.clear()
+        channel = self._uploading_channel
+        if self._uploader is not None:
+            self._uploader.cancel()
+        if channel and dropped:
+            self.append_system(channel, f"기다리던 {dropped}개도 함께 취소했습니다.")
+
+    # ---------------- 올리기 ----------------
+
+    def _ensure_uploader(self):
         if self._uploader is None:
             from gui.uploader import Uploader
 
@@ -263,30 +311,42 @@ class ChatPage(QWidget):
             self._uploader.finished.connect(self._on_upload_done)
             self._uploader.progress.connect(self._on_upload_progress)
 
+    def _begin_upload(self, path: str):
+        import os
+
+        self._ensure_uploader()
+        self._uploading_channel = self.active_channel()
+        self.upload_bar.start(os.path.basename(path))
+        self._uploader.upload(path)
+
+    def _upload(self, kind: str):
+        """파일을 골라 올리고, 끝나면 **주소를 입력줄에 넣는다.**
+
+        바로 보내지 않고 입력줄에 넣는 이유: 사람이 한마디 덧붙이거나("이거 봐") 잘못
+        고른 것을 지울 수 있어야 한다. 주소가 들어가면 그 뒤는 이미 있는 길이 알아서
+        한다 - 사진이면 미리보기가 뜨고, 파일이면 눌러서 받는 링크가 된다.
+        """
+        from PySide6.QtWidgets import QFileDialog
+
         if kind == "photo":
             title, filters = "사진 고르기", "사진 (*.png *.jpg *.jpeg *.gif *.webp *.bmp)"
         else:
             title, filters = "파일 고르기", "모든 파일 (*.*)"
-        path, _chosen = QFileDialog.getOpenFileName(self, title, "", filters)
-        if not path:
+        # 여러 개를 한 번에 고를 수 있게 한다 - 사진은 보통 여러 장을 같이 보낸다
+        paths, _chosen = QFileDialog.getOpenFileNames(self, title, "", filters)
+        if not paths:
             return
-        channel = self.active_channel()
-        if channel:
-            self.append_system(channel, "올리는 중입니다...")
-        self._uploading_channel = channel
-        self._uploader.upload(path)
+        self._upload_queue.extend(paths)
+        self._start_next_upload()
 
     def _on_upload_progress(self, sent: int, total: int):
         # 큰 파일은 한참 걸린다 - 아무 표시가 없으면 멈춘 줄 안다
-        if total > 0 and self._uploading_channel:
-            self.message_input.line.setPlaceholderText(
-                f"올리는 중... {sent * 100 // total}%")
+        self.upload_bar.set_progress(sent, total)
 
     def _on_upload_done(self, url: str, note: str):
         import gui_client  # 지연 import - 이유는 CLAUDE.md 1번
 
-        self.message_input.line.setPlaceholderText(
-            "메시지 입력 후 Enter (@닉네임으로 호출 가능)")
+        self.upload_bar.stop()
         channel, self._uploading_channel = self._uploading_channel, ""
         if not url:
             # 조용히 실패하면 사람이 이유를 모른다
@@ -294,6 +354,7 @@ class ChatPage(QWidget):
                 self.append_system(channel, f"올리지 못했습니다: {note}")
             else:
                 gui_client.themed_warning(self, "올리기 실패", note)
+            self._start_next_upload()
             return
         if channel:
             self.append_system(channel, note)
@@ -301,6 +362,7 @@ class ChatPage(QWidget):
         current = self.message_input.line.text()
         self.message_input.line.setText(f"{current} {url}".strip())
         self.message_input.focus()
+        self._start_next_upload()
 
     def show_resource_cheat(self):
         """'show me the money'가 채널에 떴을 때 - 자원 오버레이를 채팅창 가운데에 잠깐 표시"""
