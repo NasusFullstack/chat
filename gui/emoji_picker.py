@@ -8,7 +8,8 @@
 - 내가 붙인 이름으로 검색
 - 우클릭으로 이름 바꾸기 / 보관함에서 빼기
 
-그림은 창이 살아있는 동안 캐시한다(페이지를 오갈 때 같은 그림을 또 받지 않게).
+그림은 창이 살아있는 동안 기억한다 - **받아온 것과 받는 중인 것을 함께**(_Images).
+받아온 것만 기억하면 답이 오기 전에 화면을 다시 그릴 때 같은 그림을 또 요청한다.
 보관함에는 **주소만** 있고 그림 파일은 저장하지 않는다.
 """
 from PySide6.QtCore import Qt, Signal
@@ -27,6 +28,52 @@ PER_PAGE = COLUMNS * ROWS
 THUMB_PX = 104
 
 
+class _Images:
+    """이모티콘 그림을 받아오고 기억한다 - **받아온 것과 받는 중인 것을 함께.**
+
+    받아온 것만 기억하면 답이 오기 전에 화면을 다시 그릴 때(칸을 옮기거나 검색하거나
+    페이지를 넘길 때) 같은 그림을 또 요청한다. 즐겨찾기와 전체 양쪽에 있는 이모티콘이
+    그래서 두 번씩 받아와졌다(실측 2026-09-30: 겹치는 11개가 전부 두 번).
+
+    받는 중인 것에는 **줄만 선다.** 답이 오면 그때 기다리던 칸들에 한꺼번에 나눠준다.
+    """
+
+    def __init__(self, fetcher):
+        self._fetcher = fetcher
+        self._data: dict[str, bytes] = {}
+        self._waiting: dict[str, list] = {}
+
+    def want(self, url: str, cell):
+        """이 칸이 그 그림을 원한다. 이미 있으면 바로 주고, 받는 중이면 줄을 세운다."""
+        data = self._data.get(url)
+        if data is not None:
+            cell.show_image(data)
+            return
+        waiting = self._waiting.get(url)
+        if waiting is not None:
+            waiting.append(cell)
+            return
+        self._waiting[url] = [cell]
+        if self._fetcher is not None:
+            self._fetcher.fetch(url, lambda got, u=url: self._arrived(u, got))
+
+    def _arrived(self, url: str, data):
+        waiting = self._waiting.pop(url, [])
+        if not data:
+            return
+        self._data[url] = data
+        for cell in waiting:
+            try:
+                cell.show_image(data)
+            except RuntimeError:
+                # 기다리는 사이에 그 칸이 사라졌다(페이지를 넘겼거나 창을 닫았거나).
+                # 받아온 그림은 위에서 이미 기억해뒀으므로 버려지는 것은 없다
+                continue
+
+    def __len__(self):
+        return len(self._data)
+
+
 class EmojiPicker(QDialog):
     """고른 이모티콘 주소를 emoji_chosen으로 알려줌"""
 
@@ -36,9 +83,9 @@ class EmojiPicker(QDialog):
         """group은 '누구와 같이 쓰는가' - 같은 채팅 서버를 쓰는 사람들(gui/emoji_shared.py).
         비어 있으면 같이 쓰는 칸을 아예 안 보여준다(어디에 물어야 할지 모르므로)."""
         super().__init__(parent)
-        self._fetcher = fetcher
+        # 받아오기는 전부 _Images가 맡는다 - 칸은 '이 그림이 필요하다'만 말한다
         self._group = group
-        self._cache: dict[str, bytes] = {}
+        self._images = _Images(fetcher)
         self._page = 0
         self._items: list[dict] = []
         self._shared_mode = False
@@ -127,6 +174,10 @@ class EmojiPicker(QDialog):
         outer.addWidget(body_host)
         self.resize(THUMB_PX * COLUMNS + 90, THUMB_PX * ROWS + 190)
         self.reload()
+        if self._shared_mode:
+            # 전체 칸으로 열렸으면 목록을 받아와야 한다. 안 그러면 사람이 칸을 한 번
+            # 눌러줄 때까지 텅 비어 보인다
+            self._shared.fetch(self._group)
 
     # ---------------- 목록 ----------------
 
@@ -187,7 +238,7 @@ class EmojiPicker(QDialog):
 
         start = self._page * PER_PAGE
         for index, entry in enumerate(self._items[start:start + PER_PAGE]):
-            cell = _EmojiCell(entry, self._fetcher, self._cache, self,
+            cell = _EmojiCell(entry, self._images, self,
                               shared=self._shared_mode)
             cell.picked.connect(self._on_picked)
             cell.changed.connect(self.reload)
@@ -276,7 +327,7 @@ class _EmojiCell(QWidget):
     picked = Signal(str)
     changed = Signal()
 
-    def __init__(self, entry: dict, fetcher, cache: dict, parent=None, shared=False):
+    def __init__(self, entry: dict, images, parent=None, shared=False):
         super().__init__(parent)
         self.setObjectName("emojiCell")
         self._url = entry["url"]
@@ -284,7 +335,6 @@ class _EmojiCell(QWidget):
         # 전체 목록은 내 것이 아니다 - 여기서 이름을 바꾸거나 빼면 남의 것을 건드리는
         # 셈이 된다. 즐겨찾기에서만 그럴 수 있다
         self._shared = shared
-        self._cache = cache
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(self._name or self._url)
 
@@ -307,17 +357,23 @@ class _EmojiCell(QWidget):
         label.setObjectName("emojiName")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setFixedWidth(THUMB_PX)
+        # 전체 칸에서 즐겨찾기에 이미 있는 것은 별을 붙인다 - 안 그러면 두 칸에 같은
+        # 그림이 나오는 것이 '중복'처럼 보인다(실제로 그렇게 보였다)
+        shown = self._name
+        if shared and emoji_store.has_emoji(self._url):
+            shown = f"★ {shown}" if shown else "★"
         label.setText(label.fontMetrics().elidedText(
-            self._name, Qt.TextElideMode.ElideRight, THUMB_PX - 4))
+            shown, Qt.TextElideMode.ElideRight, THUMB_PX - 4))
         column.addWidget(label, 0, Qt.AlignmentFlag.AlignHCenter)
         column.addStretch(1)
         self._name_label = label
 
-        data = cache.get(self._url)
-        if data is not None:
-            self._show(data)
-        elif fetcher is not None:
-            fetcher.fetch(self._url, self._on_image)
+        # 받아오는 일은 창고가 한다 - 같은 그림을 두 번 요청하지 않게
+        images.want(self._url, self)
+
+    def show_image(self, data):
+        """창고가 그림을 건네줄 때 부른다."""
+        self._show(data)
 
     def _show(self, data):
         if not self.preview.set_image_data(data):
@@ -327,12 +383,6 @@ class _EmojiCell(QWidget):
         self.preview.setMinimumSize(0, 0)
         self.preview.setMaximumSize(THUMB_PX, THUMB_PX)
         self.preview.setFixedSize(self.preview.size())
-
-    def _on_image(self, data):
-        if not data:
-            return
-        self._cache[self._url] = data
-        self._show(data)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -353,6 +403,8 @@ class _EmojiCell(QWidget):
                 saved, text = emoji_store.add_emoji(self._url, self._name)
                 if not saved:
                     gui_client.themed_warning(self, "이모티콘", text)
+                else:
+                    self.changed.emit()      # 별이 바로 붙게
             return
 
         rename = menu.addAction("이름 바꾸기")

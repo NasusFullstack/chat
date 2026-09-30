@@ -134,6 +134,73 @@ backup_source = io.open(_os.path.join(_REPO, "gui/emoji_backup.py"),
                         encoding="utf-8").read()
 check("옮겨 담기가 끝나면 알아서 합친다", "emoji_store.dedupe()" in backup_source)
 
+# ---------- 1-3) 같은 그림을 두 번 받아오지 않는다 ----------
+# 즐겨찾기와 전체 양쪽에 있는 이모티콘은 두 번씩 받아와졌다(실측 2026-09-30: 겹치는
+# 11개가 전부 두 번). 받아온 것만 기억하고 **받는 중인 것**은 안 기억했기 때문이다
+import collections  # noqa: E402
+
+
+class _CountingFetcher:
+    """요청 횟수만 세고 답은 주지 않는다 - 답이 오기 전에 다시 그리는 상황 그대로."""
+
+    def __init__(self):
+        self.calls = collections.Counter()
+
+    def fetch(self, url, callback, limit=None):
+        self.calls[url] += 1
+
+
+shared_items = [{"url": f"{relay.SERVER}/files/{i:024x}/e{i}.png", "name": f"짤{i}"}
+                for i in range(6)]
+
+real_store = emoji_store.EMOJI_STORE_FILE
+emoji_store.EMOJI_STORE_FILE = _os.path.join(
+    _os.environ.get("TEMP", "."), "test_emojis_dup.json")
+try:
+    if _os.path.exists(emoji_store.EMOJI_STORE_FILE):
+        _os.remove(emoji_store.EMOJI_STORE_FILE)
+    # 앞의 셋을 즐겨찾기에도 넣어 겹치게 만든다
+    for entry in shared_items[:3]:
+        emoji_store.add_emoji(entry["url"], entry["name"])
+
+    counter = _CountingFetcher()
+    dup_picker = EmojiPicker(fetcher=counter, group="d" * 24)
+    dup_picker._shared._items = list(shared_items)
+    dup_picker._switch(True)
+    dup_picker._on_shared(shared_items)
+    dup_picker._switch(False)
+    dup_picker._switch(True)
+    dup_picker._render()
+
+    worst = max(counter.calls.values()) if counter.calls else 0
+    twice = [u for u, n in counter.calls.items() if n > 1]
+    check(f"칸을 오가도 그림을 한 번만 받아온다(가장 많이 받은 것 {worst}번)",
+          worst == 1, twice[:3])
+    check(f"겹치는 것도 한 번뿐이다({len(counter.calls)}개 주소)",
+          len(counter.calls) == len(shared_items), len(counter.calls))
+    check("아무것도 안 받아온 게 아니다(검사가 헛돌지 않게)", counter.calls)
+
+    # 받는 중인 것에 줄만 서고, 답이 오면 기다리던 칸이 전부 받는다
+    dup_picker._images._arrived(shared_items[0]["url"], b"\x89PNG data")
+    check("답이 오면 기억해둔다", len(dup_picker._images) == 1, len(dup_picker._images))
+    before = len(counter.calls)
+    dup_picker._render()
+    check("기억해둔 것은 다시 안 받는다", len(counter.calls) == before)
+
+    # 전체 칸에서 즐겨찾기에 있는 것은 별로 구분한다(같은 게 두 벌 있는 것처럼 보였다)
+    dup_picker._switch(True)
+    dup_picker._on_shared(shared_items)
+    names = [cell._name_label.text() for cell in dup_picker.findChildren(
+        type(dup_picker.grid.itemAt(0).widget()))]
+    starred = [n for n in names if n.startswith("★")]
+    check(f"즐겨찾기에 있는 것은 전체에서 별로 표시한다({len(starred)}개)",
+          len(starred) == 3, names)
+    dup_picker.deleteLater()
+finally:
+    if _os.path.exists(emoji_store.EMOJI_STORE_FILE):
+        _os.remove(emoji_store.EMOJI_STORE_FILE)
+    emoji_store.EMOJI_STORE_FILE = real_store
+
 # 무리를 모르면 칸 자체를 안 보여준다
 plain = EmojiPicker(group="")
 check("무리를 모르면 같이 쓰는 칸이 아예 없다", plain.shared_btn.isHidden())
