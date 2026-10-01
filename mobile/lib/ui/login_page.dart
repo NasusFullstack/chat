@@ -14,6 +14,7 @@ import '../core/irc_protocol.dart';
 import '../login_store.dart';
 import '../net/irc_client.dart';
 import '../net/trusted_certs.dart' as certs;
+import 'splash_page.dart' show developer;
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key, required this.state, required this.onDone});
@@ -185,8 +186,12 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       const SizedBox(height: 10),
                       Center(
-                        child: Text('PC 앱과 같은 방에서 이야기합니다',
-                            style: Theme.of(context).textTheme.bodySmall),
+                        // 로고 바로 아래는 "이게 무슨 앱이고 몇 버전인가" 자리다.
+                        // 버전을 아직 못 읽었으면 이름만 - 빈 줄이 깜빡이지 않게
+                        child: Text(
+                          _version.isEmpty ? '춥채팅' : '춥채팅 v$_version',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
                       ),
                       const SizedBox(height: 22),
                       TextField(
@@ -279,11 +284,12 @@ class _LoginPageState extends State<LoginPage> {
                 ),
               ),
             ),
-            // 버전은 맨 아래. "내가 몇 버전이지"를 확인하는 자리다
+            // 버전은 로고 아래에 있으므로 여기서 또 적지 않는다 - 한 화면에 같은
+            // 글자가 둘이면 어느 쪽을 봐야 할지 헷갈린다. 만든 사람만 남긴다
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Text(
-                _version.isEmpty ? '춥채팅' : '춥채팅 v$_version',
+                'made by $developer',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
