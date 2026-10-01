@@ -18,6 +18,7 @@ import 'net/irc_client.dart';
 import 'login_store.dart';
 import 'net/keep_alive.dart' as keep_alive;
 import 'net/notifier.dart';
+import 'net/reconnect.dart';
 import 'net/relay_api.dart';
 import 'prefs.dart';
 
@@ -46,7 +47,13 @@ class ChatLine {
 }
 
 class AppState extends ChangeNotifier {
-  AppState();
+  AppState() {
+    // **한 번만** 듣는다. connect() 안에서 듣기 시작하면 다시 붙을 때마다 듣는
+    // 사람이 하나씩 늘어나서 같은 줄을 두 번, 세 번 해석한다 - 인증서를 믿고 다시
+    // 붙는 경우에 바로 겪는다(메시지가 두 번 보인다)
+    _client.state.listen(_onLink);
+    _client.lines.listen((line) => _session?.handleLine(line));
+  }
 
   final IrcClient _client = IrcClient();
 
@@ -135,6 +142,25 @@ class AppState extends ChangeNotifier {
   Future<bool> Function() holdConnection = keep_alive.hold;
   Future<void> Function() releaseConnection = keep_alive.release;
 
+  // ------------------------------------------------------------ 다시 붙기
+  /// 다시 붙을 때 쓸 접속 정보. 사람에게 또 물어볼 수는 없다
+  String _nick = '';
+  String _password = '';
+  bool _secure = true;
+  String _appVersion = '0.0.0';
+
+  /// 일부러 끊는 중인가(로그아웃·종료). 그때는 다시 붙지 않는다 - 안 그러면
+  /// 로그아웃하자마자 방금 나온 이름으로 다시 들어간다(CLAUDE.md 10번)
+  bool _leaving = false;
+
+  late final ReconnectPolicy reconnect = ReconnectPolicy(
+    connectNow: _reconnectNow,
+    notify: (text) {
+      statusText = text;
+      notifyListeners();
+    },
+  );
+
   // ------------------------------------------------------------------ 접속
   Future<bool> connect({
     required String host,
@@ -144,19 +170,17 @@ class AppState extends ChangeNotifier {
     bool secure = true,
     String appVersion = '0.0.0',
   }) async {
-    _client.state.listen((s) {
-      link = s;
-      if (s == LinkState.failed) statusText = _client.lastError;
-      if (s == LinkState.closed) statusText = '연결이 끊겼습니다.';
-      notifyListeners();
-    });
-    _client.lines.listen((line) => _session?.handleLine(line));
-
     statusText = '연결 중...';
     notifyListeners();
 
     this.host = host;
     this.port = port;
+    // 다시 붙을 때 쓴다. 사람에게 또 물어볼 수는 없다
+    _nick = nick;
+    _password = password;
+    _secure = secure;
+    _appVersion = appVersion;
+    _leaving = false;
     final ok = await _client.connect(host: host, port: port, secure: secure);
     if (!ok) return false;
 
@@ -219,6 +243,53 @@ class AppState extends ChangeNotifier {
     // 물어보던 길은 꺼뒀다(core/client_badge.dart 에 이유)
     unawaited(publishClient());
     unawaited(rejoinSaved());
+    return true;
+  }
+
+  /// 연결 상태가 바뀌었다.
+  void _onLink(LinkState s) {
+    link = s;
+    if (s == LinkState.failed) statusText = _client.lastError;
+    if (s == LinkState.closed) {
+      statusText = '연결이 끊겼습니다.';
+      _lostConnection();
+    }
+    notifyListeners();
+  }
+
+  /// 예기치 않게 끊겼다 - 다시 붙기를 시작한다.
+  ///
+  /// 폰은 신호가 끊기는 자리가 PC 보다 훨씬 많다. 다시 안 붙으면 사람은 **죽은 채팅
+  /// 화면**을 보게 되고 앱을 끄고 다시 켜는 수밖에 없다.
+  void _lostConnection() {
+    // 일부러 끊은 것이거나 아직 로그인도 안 됐으면 다시 붙지 않는다
+    if (_leaving || !loggedIn) return;
+    reconnect.start(channels);
+  }
+
+  /// 다시 붙어본다. 되면 보던 채널로 돌아간다.
+  Future<bool> _reconnectNow() async {
+    final rooms = reconnect.pendingRooms;
+    final ok = await connect(
+      host: host,
+      port: port,
+      nick: _nick,
+      password: _password,
+      secure: _secure,
+      appVersion: _appVersion,
+    );
+    if (!ok) {
+      // 다음 차례를 예약한다. 시도할수록 간격이 늘어난다
+      reconnect.schedule();
+      return false;
+    }
+    reconnect.succeeded();
+    // **채널 목록에 있어도 다시 보낸다.** 서버는 우리가 그 방에 있었다는 걸 잊었다 -
+    // 우리 화면에만 남아 있으면 말을 해도 아무에게도 안 간다
+    for (final room in rooms) {
+      _session?.joinChannel(room);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+    }
     return true;
   }
 
@@ -286,6 +357,9 @@ class AppState extends ChangeNotifier {
   Future<void> cameBack() async {
     inForeground = true;
     await notifier?.clear();
+    // 사람이 앱을 다시 보고 있다는 건 신호가 돌아왔을 가능성이 가장 큰 순간이다.
+    // 30초짜리 예약을 기다리면 그동안 먹통처럼 보인다
+    reconnect.tryNow();
   }
 
   /// 새로 온 말을 알림으로 띄울지 정한다.
@@ -339,6 +413,9 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    // 일부러 끊는 것이다 - 다시 붙기를 완전히 접는다
+    _leaving = true;
+    reconnect.cancel();
     // 모아둔 대화를 마지막으로 밀어낸다 - 안 하면 방금 나눈 이야기가 통째로 안 올라가서
     // 그 사이에 없던 사람이 그만큼을 영영 못 본다
     _flushTimer?.cancel();
@@ -362,6 +439,7 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _flushTimer?.cancel();
+    reconnect.cancel();
     _client.dispose();
     super.dispose();
   }
@@ -466,12 +544,18 @@ class AppState extends ChangeNotifier {
         _loginDone?.complete(true);
         _loginDone = null;
       case ChannelJoined(:final channel, :final text):
-        if (!channels.contains(channel)) channels.add(channel);
+        // 이미 화면에 있는 방이면 **다시 붙어서 돌아온 것**이다. 들어간 안내를 또
+        // 쌓으면 끊길 때마다 "입장 완료"가 줄줄이 늘어난다
+        final returning = channels.contains(channel);
+        if (!returning) channels.add(channel);
         lines.putIfAbsent(channel, () => []);
         members.putIfAbsent(channel, () => []);
         if (current.isEmpty) current = channel;
-        _add(channel, ChatLine.system(text: text, at: DateTime.now()));
-        // 내가 없는 동안 오간 이야기를 채워 넣는다
+        if (!returning) {
+          _add(channel, ChatLine.system(text: text, at: DateTime.now()));
+        }
+        // 내가 없는 동안 오간 이야기를 채워 넣는다. 돌아온 경우에도 해야 한다 -
+        // 끊겨 있던 사이에 오간 말이 폰에는 아예 없다(PC 는 기록 파일이 있다)
         unawaited(fetchMissed(channel));
         _rememberRooms();
       case ChannelLeft(:final channel):
