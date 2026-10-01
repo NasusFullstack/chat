@@ -123,6 +123,8 @@ class MainWindow(QMainWindow):
         self._port = 0
         # 지난번 채널에 다시 들어가는 중인가(그동안은 기억을 덮어쓰지 않는다)
         self._rejoining = False
+        # 채널마다 직전에 본 참여자 - 새로 들어온 사람을 가려내는 데 쓴다
+        self._seen_in_channel: dict[str, set] = {}
 
         # ---- 끊겼을 때 자동 재접속 ----
         # 예전엔 끊김을 알려주는 경로가 아예 없어서, 서버가 죽어도 화면상으론 멀쩡해 보이고
@@ -334,8 +336,23 @@ class MainWindow(QMainWindow):
             chat_page.set_client_version(nick, text)
 
     def want_profiles(self, channel: str):
-        """지금 보이는 사람들의 얼굴을 서버에 물어본다(이미 아는 사람은 알아서 건너뛴다)."""
-        self.profile_sync.want(self.session.members.get(channel, []))
+        """지금 보이는 사람들의 얼굴과 쓰는 프로그램을 서버에 물어본다.
+
+        **새로 들어온 사람은 예전 답을 버리고 다시 묻는다.** 같은 이름으로 다른
+        기기에서 들어올 수 있기 때문이다 - 어제는 폰, 오늘은 PC. 한 번 받은 것을
+        그대로 믿으면 PC 로 들어온 사람에게 폰 표시가 계속 붙어 있게 된다.
+
+        처음 채널에 들어가 참여자 목록을 받을 때는 '새로 들어온 사람'이 없다 -
+        그때는 서버에 있는 것을 그대로 쓴다.
+        """
+        now = set(self.session.members.get(channel, []))
+        before = self._seen_in_channel.get(channel)
+        self._seen_in_channel[channel] = now
+        if before is not None:
+            for user_id in now - before:
+                self.profile_sync.forget(user_id)
+                client_version_store.forget(self._host, user_id)
+        self.profile_sync.want(now)
 
     def _on_server_profile(self, nick: str, avatar_b64: str, _display: str):
         # 채팅 통로로 이미 받아뒀으면 그걸 놔둔다 - 방금 바꾼 것이 더 최신이다
