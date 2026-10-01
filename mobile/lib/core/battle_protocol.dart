@@ -15,6 +15,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:math';
 
 const int maxLineBytes = 512;
 const int maxHumans = 6;
@@ -61,6 +62,17 @@ final RegExp _roomNotice =
 
 /// 연습 상대(AI) 자리인가. 뒤쪽 자리가 AI 다
 bool isBotSlot(int slot) => slot >= maxHumans;
+
+/// 이 판에만 쓰는 방 번호(난수 24자). **이걸 모르면 방에 못 들어온다** -
+/// 주소는 모두가 알지만 번호를 모르면 아무나 끼어들 수 없다.
+String newRoom() {
+  final random = Random.secure();
+  final buffer = StringBuffer();
+  for (var i = 0; i < 12; i++) {
+    buffer.write(random.nextInt(256).toRadixString(16).padLeft(2, '0'));
+  }
+  return buffer.toString();
+}
 
 bool isRoomId(Object? value) =>
     value is String && _roomOk.hasMatch(value.toLowerCase());

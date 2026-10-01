@@ -15,6 +15,7 @@ import '../app_state.dart';
 import '../core/client_badge.dart';
 import '../core/emoji.dart';
 import '../core/relay.dart' as relay;
+import 'battle_lobby_page.dart';
 import 'file_card.dart';
 import 'layout.dart';
 import 'settings_page.dart';
@@ -61,11 +62,49 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  /// 전투를 여는 말과 들어가는 말. PC 의 chat_core/constants.py 와 **같은 문구**여야
+  /// 한다 - 다르면 PC 에서 연 방에 폰이 못 들어간다
+  static const String openPhrase = '배틀크루저 전투';
+  static const String joinPhrase = '배틀크루저 전투 참가';
+
   void _send() {
     final text = _input.text;
     if (text.trim().isEmpty) return;
     widget.state.sendChat(text);
     _input.clear();
+    // 친 말은 채널에도 그대로 간다(PC 와 같다 - 남들도 무슨 일인지 알아야 한다).
+    // 그러고 나서 나만 전투로 넘어간다
+    _maybeBattle(text.trim());
+  }
+
+  void _maybeBattle(String text) {
+    final channel = widget.state.current;
+    if (channel.isEmpty) return;
+    // 참가가 먼저다 - '배틀크루저 전투 참가'는 '배틀크루저 전투'로도 시작한다
+    if (text == joinPhrase) {
+      final open = widget.state.openRoom(channel);
+      if (open == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('이 채널에 열린 전투 방이 없습니다.')));
+        return;
+      }
+      _goBattle(open.$1, isHost: false);
+    } else if (text == openPhrase) {
+      _goBattle(widget.state.openBattleRoom(channel), isHost: true);
+    }
+  }
+
+  void _goBattle(String room, {required bool isHost}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => BattleLobbyPage(
+          room: room,
+          nick: widget.state.myId,
+          isHost: isHost,
+        ),
+      ),
+    );
   }
 
   Future<void> _pick({required bool photo}) async {

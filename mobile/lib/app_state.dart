@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:io';
 
+import 'core/battle_protocol.dart' as bp;
 import 'core/client_badge.dart';
 import 'core/events.dart';
 import 'core/relay.dart' as relay;
@@ -102,6 +103,37 @@ class AppState extends ChangeNotifier {
 
   /// 채널마다 직전에 본 참여자. 새로 들어온 사람을 가려내는 데 쓴다
   final Map<String, Set<String>> _seenMembers = {};
+
+  // ------------------------------------------------------------ 전투
+  /// 채널마다 알려진 전투 방(번호, 연 사람, 알려진 때).
+  ///
+  /// **오래된 것은 잊는다.** 아침에 열린 방에 저녁에 들어가려다 "이미 끝난 방"을
+  /// 만나는 것보다, "열린 방이 없다"고 말해주는 편이 낫다
+  final Map<String, (String room, String host, DateTime at)> knownRooms = {};
+
+  /// 이만큼 지난 방 알림은 잊는다(PC 와 같은 30분)
+  static const Duration roomMemory = Duration(minutes: 30);
+
+  /// 이 채널에 지금 들어갈 수 있는 방. 없으면 null
+  (String, String)? openRoom(String channel) {
+    final known = knownRooms[channel];
+    if (known == null) return null;
+    if (DateTime.now().difference(known.$3) > roomMemory) {
+      knownRooms.remove(channel);
+      return null;
+    }
+    return (known.$1, known.$2);
+  }
+
+  /// 방을 하나 열고 채널에 알린다. 돌려주는 것은 방 번호.
+  ///
+  /// **주소는 안 나간다** - 번호만 알린다. 중계 서버 주소는 각자 안다
+  String openBattleRoom(String channel) {
+    final room = bp.newRoom();
+    _session?.send('PRIVMSG $channel :${bp.formatRoomNotice(room)}');
+    knownRooms[channel] = (room, myId, DateTime.now());
+    return room;
+  }
 
   /// 사람마다 쓰는 프로그램. 이것도 서버에서 받아온다 - IRC 로 물어보던 길은
   /// `core/session.dart`에 남겨둔 채 꺼뒀다(core/client_badge.dart 에 이유)
@@ -616,6 +648,16 @@ class AppState extends ChangeNotifier {
         // 얼굴은 채팅 통로로 오기를 기다리지 않고 서버에도 물어본다 - 그 사람이 지금
         // 접속해 있지 않아도 보이게
         unawaited(wantFaces(channel));
+      case BattleRoomOpened(:final channel, :final host, :final room):
+        knownRooms[channel] = (room, host, DateTime.now());
+        _add(
+          channel,
+          ChatLine.system(
+            text: '$host님이 배틀크루저 전투 방을 열었습니다. '
+                "'배틀크루저 전투 참가'를 치면 들어갑니다.",
+            at: DateTime.now(),
+          ),
+        );
       case NicknameRetrying(:final newNickname):
         statusText = '닉네임이 사용 중이라 $newNickname(으)로 다시 시도합니다.';
       case ConnectionClosed(:final text):
