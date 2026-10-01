@@ -5,8 +5,6 @@
     <!-- 새 버전을 받아 설치 화면을 띄우는 데 필요하다. 이게 없으면 아무 일도 안 일어난다.
          실제 설치는 사람이 마지막 '설치'를 눌러야 되므로 앱이 몰래 깔 수는 없다 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
-    <!-- 알림 - 안드로이드 13부터는 사람이 허락해야 보인다(앱에서 따로 물어본다) -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- **포그라운드 서비스를 쓰지 않는다.**
          홈으로 나가도 접속을 유지하려고 상주 서비스를 뒀더니, 한국 폰에서 보이스피싱
          탐지가 "악성 앱으로 의심"이라며 **설치 자체를 막았다**(실측 2026-10-01).
