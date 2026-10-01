@@ -9,6 +9,7 @@
 library;
 
 import 'events.dart';
+import 'battle_protocol.dart' as bp;
 import 'irc_protocol.dart';
 
 /// 서버로 한 줄 보내는 통로. 소켓을 여기 끌어들이지 않으려고 함수로 받는다.
@@ -236,6 +237,16 @@ class ChatSession {
       return;
     }
     if (isCtcpFrame(text)) {
+      // 전투 방 알림이면 알려준다 - 이걸 못 알아들으면 폰에서는 전투에 아예 못 들어간다.
+      // **방 번호 모양을 먼저 검사한다** - 다른 클라이언트가 흉내낸 값일 수 있다
+      final room = bp.parseRoomNotice(text);
+      if (room.isNotEmpty && msg.sourceNick != s.myId) {
+        final where = target.startsWith('#') ? target : s.activeChannel;
+        if (where.isNotEmpty) {
+          s.emit(BattleRoomOpened(where, msg.sourceNick, room));
+        }
+        return;
+      }
       // **해석 못 해도 채팅으로 흘리지 않는다.** PC 앱에서 잘린 base64 483자가
       // 채널에 그대로 쏟아진 사고가 있었다. 모르는 프레임은 조용히 버린다
       return;
