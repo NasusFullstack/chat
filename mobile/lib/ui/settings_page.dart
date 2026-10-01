@@ -71,8 +71,9 @@ class _SettingsPageState extends State<SettingsPage> {
               title: const Text('홈으로 나가도 접속 유지'),
               subtitle: const Text('끄면 홈으로 나가는 순간 접속이 끊기고 알림도 안 옵니다'),
             ),
-            const _Note('유지하는 동안은 안드로이드 규칙에 따라 "춥채팅 접속 중" 알림이 '
-                '하나 떠 있습니다. 앱이 숨길 수 없는 알림입니다.\n'
+            const _Note('유지하는 동안 안드로이드는 춥채팅을 "실행 중"으로 표시합니다. '
+                '기기와 버전에 따라 알림으로 보이기도 하고, 설정의 '
+                '"활성 앱"에만 잡히기도 합니다.\n'
                 '최근 앱 목록에서 밀어서 끄면 접속도 같이 끊깁니다.'),
             SwitchListTile(
               value: _last.auto,
