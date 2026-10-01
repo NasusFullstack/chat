@@ -2,6 +2,9 @@
     <!-- 채팅 앱이므로 당연히 필요한데, flutter create 는 이걸 **디버그 매니페스트에만**
          넣어준다. 여기 안 적으면 정식 빌드에서만 연결이 조용히 안 된다 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 새 버전을 받아 설치 화면을 띄우는 데 필요하다. 이게 없으면 아무 일도 안 일어난다.
+         실제 설치는 사람이 마지막 '설치'를 눌러야 되므로 앱이 몰래 깔 수는 없다 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 
     <application
         android:label="춥채팅"
@@ -30,6 +33,18 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 받아온 APK를 시스템 설치 화면에 넘겨주는 통로.
+             안드로이드 7부터 file:// 주소를 다른 앱에 넘기면 예외가 난다 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

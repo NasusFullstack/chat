@@ -5,10 +5,13 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'app_state.dart';
+import 'net/updater.dart';
 import 'ui/chat_page.dart';
 import 'ui/login_page.dart';
+import 'ui/update_sheet.dart';
 
 void main() => runApp(const ChupChatApp());
 
@@ -21,7 +24,27 @@ class ChupChatApp extends StatefulWidget {
 
 class _ChupChatAppState extends State<ChupChatApp> {
   final AppState _state = AppState();
+  final GlobalKey<NavigatorState> _nav = GlobalKey<NavigatorState>();
   bool _loggedIn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 켤 때 한 번만 확인한다. 스토어가 없으니 아무도 대신 알려주지 않는다 -
+    // 그냥 두면 사람마다 다른 버전을 쓰게 되고 "나만 안 보인다"가 생긴다
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkUpdate());
+  }
+
+  Future<void> _checkUpdate() async {
+    final info = await PackageInfo.fromPlatform();
+    final found = await Updater().check(info.version);
+    if (found == null) return;      // 최신이거나 못 물어봤다 - 조용히 넘어간다
+    // 물어보는 사이에 앱이 꺼졌을 수 있다. 그때 화면을 띄우려 하면 예외가 난다
+    if (!mounted) return;
+    final navigator = _nav.currentState;
+    if (navigator == null || !navigator.mounted) return;
+    await showUpdate(navigator.context, found);
+  }
 
   @override
   void dispose() {
@@ -32,6 +55,7 @@ class _ChupChatAppState extends State<ChupChatApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _nav,
       title: '춥채팅',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(

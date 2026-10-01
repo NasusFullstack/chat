@@ -54,3 +54,9 @@ mobile/build/
 mobile/.idea/
 mobile/*.iml
 mobile/.flutter-plugins*
+
+# 안드로이드 서명 정보 - **절대 저장소에 넣지 말 것.** 이게 새면 누구나 우리 앱인 척
+# 하는 APK를 만들 수 있다. CI는 GitHub 비밀값에서 받아 쓴다
+mobile/android/key.properties
+mobile/android/*.jks
+mobile/android/*.keystore

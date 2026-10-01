@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -29,11 +31,39 @@ android {
         versionName = flutter.versionName
     }
 
+    // 서명 정보는 저장소에 안 넣는다. 로컬에서는 key.properties(gitignore 됨),
+    // CI에서는 GitHub 비밀값이 만들어 준 같은 파일을 읽는다.
+    //
+    // **왜 반드시 같은 키여야 하나**: 안드로이드는 앱의 신원을 '패키지 이름 + 서명 키'로
+    // 본다. 키가 달라지면 덮어쓰기 설치가 거부되고 사람이 지웠다 다시 깔아야 한다
+    // (그때 설정과 로그인 정보가 날아간다). 그래서 어느 컴퓨터에서 빌드하든 같은 키를 쓴다.
+    val keyProps = Properties()
+    val keyPropsFile = rootProject.file("key.properties")
+    if (keyPropsFile.exists()) {
+        keyPropsFile.inputStream().use { keyProps.load(it) }
+    }
+
+    signingConfigs {
+        create("release") {
+            if (keyPropsFile.exists()) {
+                storeFile = rootProject.file(keyProps.getProperty("storeFile"))
+                storePassword = keyProps.getProperty("storePassword")
+                keyAlias = keyProps.getProperty("keyAlias")
+                keyPassword = keyProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // 서명 정보가 없으면 디버그 키로 떨어진다. 그래야 키 없는 사람도
+            // `flutter run --release` 로 돌려볼 수 있다 - 다만 그렇게 만든 APK는
+            // 배포하면 안 된다(도장이 달라서 업데이트가 안 깔린다)
+            signingConfig = if (keyPropsFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

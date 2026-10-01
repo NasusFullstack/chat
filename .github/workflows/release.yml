@@ -1,4 +1,4 @@
-name: Release GUI exe
+name: Release (PC + 모바일)
 
 on:
   push:
@@ -12,7 +12,62 @@ permissions:
   contents: write
 
 jobs:
+  # 안드로이드 APK. PC exe와 **같은 태그**에서 나와야 둘이 같은 버전이 된다.
+  # 리눅스에서 만든다 - 윈도우 러너보다 빠르고, APK는 어디서 만들든 같다
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # **서명 키는 저장소에 없다.** 비밀값으로 받아 빌드할 때만 꺼내 쓴다.
+      # 이 키로 서명해야만 앞선 버전 위에 덮어쓰기로 깔린다 - 키가 바뀌면 사람이
+      # 앱을 지웠다 다시 깔아야 하고 그때 설정이 날아간다
+      - name: 서명 키 꺼내기
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/chupchat.jks"
+          cat > mobile/android/key.properties <<EOF
+          storeFile=$RUNNER_TEMP/chupchat.jks
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          EOF
+
+      # 버전이 어긋난 채로 나가면 앱이 "새 버전 있다"를 영영 띄우거나 영영 안 띄운다
+      - name: PC와 버전이 같은지 확인
+        run: python tests/test_version_sync.py
+
+      - name: 검사
+        working-directory: mobile
+        run: flutter test
+
+      - name: APK 만들기
+        working-directory: mobile
+        run: flutter build apk --release
+
+      - name: 서명 확인
+        run: |
+          APK=mobile/build/app/outputs/flutter-apk/app-release.apk
+          SIGNER=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/apksigner
+          "$SIGNER" verify --print-certs "$APK" | grep -q 'CN=ChupChat' \
+            || { echo '우리 키로 서명되지 않았다 - 이대로 내보내면 업데이트가 안 깔린다'; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+
   release:
+    needs: android
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +108,19 @@ jobs:
           $version = "${{ github.ref_name }}" -replace '^v', ''
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer.iss
 
+      # 모바일 쪽에서 만든 APK를 가져와 같은 릴리즈에 올린다
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: apk
+
+      # 사람이 폰에서 받을 파일이므로 이름을 알아볼 수 있게 바꾼다.
+      # **앱 안의 업데이트 확인이 이 이름을 보고 찾는다** - 바꾸면 거기도 같이 고칠 것
+      - name: APK 이름 붙이기
+        shell: pwsh
+        run: Move-Item apk/app-release.apk "apk/ChupChat.apk"
+
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" "installer_output/FriendChat_Setup.exe" "dist/FriendChat_GUI.zip" --title "${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" "installer_output/FriendChat_Setup.exe" "dist/FriendChat_GUI.zip" "apk/ChupChat.apk" --title "${{ github.ref_name }}" --generate-notes
