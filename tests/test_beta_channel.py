@@ -36,6 +36,33 @@ def read(rel):
         return fp.read()
 
 
+# ---------- 0) 워크플로 파일이 **읽히는가** ----------
+# GitHub 은 워크플로 파일을 못 읽으면 **0초 만에 실패**하고 아무 단계도 안 돈다.
+# 실제로 겪었다(2026-10-01): run 블록 안에 여러 줄 셸 문자열을 쓰면서 줄 머리를 0열에
+# 뒀더니 YAML 이 그걸 새 키로 읽었고, v2.6.7 릴리즈가 통째로 안 나갔다. 태그를 민 뒤에야
+# 알았다. 여기서 먼저 걸러낸다
+import glob  # noqa: E402
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+if yaml is None:
+    check("워크플로 YAML 검사 (pyyaml 없음 - 건너뜀)", True)
+else:
+    for path in sorted(glob.glob(_os.path.join(_REPO, ".github", "workflows", "*.yml"))):
+        name = _os.path.basename(path)
+        try:
+            loaded = yaml.safe_load(io.open(path, encoding="utf-8"))
+            ok, why = isinstance(loaded, dict) and "jobs" in loaded, ""
+            if not ok:
+                why = "jobs 가 없다"
+        except Exception as error:
+            ok, why = False, str(error).splitlines()[0]
+        check(f"{name} 을 읽을 수 있다", ok, why)
+
+
 # ---------- 1~3) 배포 설정 ----------
 stable = read(".github/workflows/release.yml")
 beta = read(".github/workflows/release-beta.yml")
