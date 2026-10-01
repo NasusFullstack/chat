@@ -8,7 +8,12 @@
 /// **IRC에 붙는 검사는 이 파일 하나뿐이다.** 검사 파일은 동시에 돌기 때문에, 여러
 /// 파일이 같이 붙으면 서버가 보호 장치로 연결을 끊는다(실제로 그래서 깨졌다).
 ///
-/// 서버에 못 닿으면 건너뛴다.
+/// ## 건너뛰는 경우
+/// 서버에 못 닿을 때, 그리고 **서버가 우리를 거부할 때**.
+///
+/// 깃허브에서 돌리면 서버가 막는다 - 클라우드 IP 가 공개 차단 목록에 올라 있어서
+/// "Proxy/Drone detected" 로 끊긴다. 우리 코드 문제가 아니므로 실패로 세면 안 된다.
+/// 이 길은 개발하는 컴퓨터에서 확인하고, 깃허브에서는 나머지만 본다.
 library;
 
 import 'dart:async';
@@ -49,6 +54,7 @@ void main() {
     final sentLines = <String>[];
     final client = IrcClient();
     final joined = Completer<void>();
+    final refused = Completer<String>();
     final members = Completer<List<String>>();
     final mine = <String>[];
     ChatSession? session;
@@ -56,6 +62,12 @@ void main() {
     final raw = <String>[];
     client.lines.listen((line) {
       raw.add(line);
+      // 서버가 아예 안 받아주는 경우(차단 목록·접속 제한 등). 465 는 '넌 여기 못 온다',
+      // ERROR 는 서버가 끊는다는 뜻이다
+      if (!refused.isCompleted &&
+          (line.contains(' 465 ') || line.startsWith('ERROR'))) {
+        refused.complete(line);
+      }
       session?.handleLine(line);
     });
     final ok = await client.connect(
@@ -90,9 +102,21 @@ void main() {
     );
     session.login(realname: 'ChupChat mobile');
 
-    await joined.future.timeout(const Duration(seconds: 30),
-        onTimeout: () => fail('채널에 못 들어갔다. 서버가 보낸 것:\n'
-            '${raw.take(25).join("\n")}'));
+    final outcome = await Future.any([
+      joined.future.then((_) => ''),
+      refused.future,
+    ]).timeout(const Duration(seconds: 30), onTimeout: () => '시간 초과');
+
+    if (outcome.isNotEmpty) {
+      await client.close();
+      client.dispose();
+      if (outcome == '시간 초과') {
+        fail('채널에 못 들어갔다. 서버가 보낸 것:\n${raw.take(25).join("\n")}');
+      }
+      // 서버가 우리를 안 받아줬다 - 우리 코드 문제가 아니다
+      markTestSkipped('서버가 접속을 거부해 건너뜀: $outcome');
+      return;
+    }
 
     final people = await members.future
         .timeout(const Duration(seconds: 20), onTimeout: () => const <String>[]);
