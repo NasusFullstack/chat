@@ -17,6 +17,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/battle_protocol.dart' as bp;
 import '../core/battle_sim.dart' as sim;
@@ -72,12 +73,25 @@ class _BattlePageState extends State<BattlePage> {
     _battle = sim.Battle(widget.slots, judged: {widget.mySlot});
     _sub = widget.link.signals.listen(_onSignal);
     _timer = Timer.periodic(const Duration(milliseconds: sim.tickMs), (_) => _advance());
+
+    // 판이 가로로 긴 3:2 다. 세로로 들면 폭에 맞추느라 배가 너무 작아진다 -
+    // 가로로 돌리면 같은 화면에서 훨씬 크게 보이고, 남는 좌우 여백에 조작을 둘 수 있어
+    // **손가락이 전투장을 안 가린다**
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    // 상태줄·탐색바도 치운다(전투 중에 잘못 누르면 그대로 죽는다)
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     _sub?.cancel();
+    // 채팅으로 돌아가면 세로로 되돌린다 - 안 되돌리면 채팅이 가로로 남는다
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
@@ -164,51 +178,70 @@ class _BattlePageState extends State<BattlePage> {
     return Scaffold(
       backgroundColor: const Color(0xFF070910),
       body: SafeArea(
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: CustomPaint(
-                painter: _ArenaPainter(
-                  battle: _battle,
-                  mySlot: widget.mySlot,
-                  names: widget.names,
-                  tick: _tick,
+        child: LayoutBuilder(
+          builder: (context, box) {
+            // 그리는 쪽과 **같은 식**으로 전투장 자리를 잡는다 - 여기서 다르게 재면
+            // 조작이 전투장 위에 걸친다
+            final scale = math.min(
+                box.maxWidth / sim.fieldWidth, box.maxHeight / sim.fieldHeight);
+            final margin = (box.maxWidth - sim.fieldWidth * scale) / 2;
+
+            // 폰마다 비율이 다르다. 좌우 여백이 조작을 담을 만큼 넓으면 **거기** 두고
+            // (손가락이 전투장을 안 가린다), 좁으면 반투명으로 화면 위에 얹는다
+            final roomy = margin >= _Joystick.size + 16;
+
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: _ArenaPainter(
+                      battle: _battle,
+                      mySlot: widget.mySlot,
+                      names: widget.names,
+                      tick: _tick,
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            // 내 상태
-            Positioned(
-              left: 16,
-              top: 12,
-              child: _MyStatus(ship: me, notice: _notice),
-            ),
-            Positioned(
-              right: 8,
-              top: 4,
-              child: IconButton(
-                onPressed: _askLeave,
-                icon: const Icon(Icons.close, color: Colors.white70),
-                tooltip: '전투 그만두기',
-              ),
-            ),
-            // 왼쪽 조이스틱
-            Positioned(
-              left: 24,
-              bottom: 24,
-              child: _Joystick(onMove: (v) => _stick = v),
-            ),
-            // 오른쪽 발사 - **누르고 있으면 기가 찬다**
-            Positioned(
-              right: 24,
-              bottom: 24,
-              child: _FireButton(
-                charge: (me?.charge ?? 0) / sim.chargeFullTicks,
-                reloading: (me?.reloadLeft ?? 0) > 0,
-                onDown: () => _firing = true,
-                onUp: () => _firing = false,
-              ),
-            ),
-          ],
+                Positioned(
+                  left: 12,
+                  top: 8,
+                  child: _MyStatus(ship: me, notice: _notice),
+                ),
+                Positioned(
+                  right: 4,
+                  top: 0,
+                  child: IconButton(
+                    onPressed: _askLeave,
+                    icon: const Icon(Icons.close, color: Colors.white70),
+                    tooltip: '전투 그만두기',
+                  ),
+                ),
+                // 왼쪽 방향키
+                Positioned(
+                  left: roomy ? (margin - _Joystick.size) / 2 : 20,
+                  bottom: roomy ? (box.maxHeight - _Joystick.size) / 2 : 16,
+                  child: Opacity(
+                    opacity: roomy ? 1.0 : 0.45,
+                    child: _Joystick(onMove: (v) => _stick = v),
+                  ),
+                ),
+                // 오른쪽 발사 - **누르고 있으면 기가 찬다**
+                Positioned(
+                  right: roomy ? (margin - _FireButton.size) / 2 : 20,
+                  bottom: roomy ? (box.maxHeight - _FireButton.size) / 2 : 16,
+                  child: Opacity(
+                    opacity: roomy ? 1.0 : 0.45,
+                    child: _FireButton(
+                      charge: (me?.charge ?? 0) / sim.chargeFullTicks,
+                      reloading: (me?.reloadLeft ?? 0) > 0,
+                      onDown: () => _firing = true,
+                      onUp: () => _firing = false,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -278,6 +311,9 @@ class _MyStatus extends StatelessWidget {
 class _Joystick extends StatefulWidget {
   const _Joystick({required this.onMove});
 
+  /// 바깥(배치하는 쪽)도 알아야 여백 가운데에 놓을 수 있다
+  static const double size = 132;
+
   /// -1..1 범위의 밀린 정도
   final void Function(Offset) onMove;
 
@@ -286,13 +322,12 @@ class _Joystick extends StatefulWidget {
 }
 
 class _JoystickState extends State<_Joystick> {
-  static const double size = 132;
   Offset _knob = Offset.zero;
 
   void _update(Offset local) {
-    final center = const Offset(size / 2, size / 2);
+    const center = Offset(_Joystick.size / 2, _Joystick.size / 2);
     var delta = local - center;
-    final limit = size / 2 - 18;
+    final limit = _Joystick.size / 2 - 18;
     if (delta.distance > limit) delta = delta / delta.distance * limit;
     setState(() => _knob = delta);
     widget.onMove(Offset(delta.dx / limit, delta.dy / limit));
@@ -311,8 +346,8 @@ class _JoystickState extends State<_Joystick> {
       onPanEnd: (_) => _release(),
       onPanCancel: _release,
       child: Container(
-        width: size,
-        height: size,
+        width: _Joystick.size,
+        height: _Joystick.size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: Colors.white.withValues(alpha: 0.06),
@@ -338,6 +373,9 @@ class _JoystickState extends State<_Joystick> {
 
 /// 오른쪽 발사 단추 - 누르고 있으면 기가 찬다.
 class _FireButton extends StatelessWidget {
+  /// 바깥(배치하는 쪽)도 알아야 여백 가운데에 놓을 수 있다
+  static const double size = 108;
+
   const _FireButton({
     required this.charge,
     required this.reloading,
@@ -357,15 +395,15 @@ class _FireButton extends StatelessWidget {
       onTapUp: (_) => onUp(),
       onTapCancel: onUp,
       child: SizedBox(
-        width: 108,
-        height: 108,
+        width: size,
+        height: size,
         child: Stack(
           alignment: Alignment.center,
           children: [
             // 모은 정도를 테두리로 보여준다 - 꽉 차면 세고 빠르게 나간다
             SizedBox(
-              width: 108,
-              height: 108,
+              width: size,
+              height: size,
               child: CircularProgressIndicator(
                 value: charge.clamp(0.0, 1.0),
                 strokeWidth: 6,
