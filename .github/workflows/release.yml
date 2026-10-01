@@ -50,13 +50,18 @@ jobs:
         working-directory: mobile
         run: flutter test
 
+      # **CPU 종류별로 따로 만든다.** 한 덩어리로 만들면 쓰지도 않는 32비트·x86 코드가
+      # 같이 들어가서 49.7MB가 된다(실측). arm64만 담으면 17.3MB다 - 스토어 밖에서는
+      # 패치할 때마다 통째로 받아야 하므로 이 차이가 매번 그대로 온다.
+      #
+      # arm64 하나만 올린다. 2016년 이후 안드로이드 폰은 전부 arm64다
       - name: APK 만들기
         working-directory: mobile
-        run: flutter build apk --release
+        run: flutter build apk --release --split-per-abi
 
       - name: 서명 확인
         run: |
-          APK=mobile/build/app/outputs/flutter-apk/app-release.apk
+          APK=mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
           SIGNER=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/apksigner
           "$SIGNER" verify --print-certs "$APK" | grep -q 'CN=ChupChat' \
             || { echo '우리 키로 서명되지 않았다 - 이대로 내보내면 업데이트가 안 깔린다'; exit 1; }
@@ -64,7 +69,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          path: mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
 
   release:
     needs: android
@@ -118,7 +123,7 @@ jobs:
       # **앱 안의 업데이트 확인이 이 이름을 보고 찾는다** - 바꾸면 거기도 같이 고칠 것
       - name: APK 이름 붙이기
         shell: pwsh
-        run: Move-Item apk/app-release.apk "apk/ChupChat.apk"
+        run: Move-Item apk/app-arm64-v8a-release.apk "apk/ChupChat.apk"
 
       - name: Create GitHub Release
         env:

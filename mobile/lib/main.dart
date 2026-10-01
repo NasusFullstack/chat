@@ -36,8 +36,12 @@ class _ChupChatAppState extends State<ChupChatApp> {
   }
 
   Future<void> _checkUpdate() async {
+    final updater = Updater();
+    // 지난번에 받아둔 설치 파일이 있으면 먼저 치운다(50MB짜리가 남아 있을 이유가 없다).
+    // 설치 직후에 지우면 설치 화면이 읽는 중이라 깨지므로 여기서 한다
+    await updater.cleanLeftover();
     final info = await PackageInfo.fromPlatform();
-    final found = await Updater().check(info.version);
+    final found = await updater.check(info.version);
     if (found == null) return;      // 최신이거나 못 물어봤다 - 조용히 넘어간다
     // 물어보는 사이에 앱이 꺼졌을 수 있다. 그때 화면을 띄우려 하면 예외가 난다
     if (!mounted) return;
