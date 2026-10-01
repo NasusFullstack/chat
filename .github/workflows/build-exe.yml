@@ -3,6 +3,12 @@ name: Build Windows EXE
 on:
   push:
     branches: [ main, master ]
+    # 모바일 앱과 문서만 고쳤을 때는 윈도우 exe를 다시 만들 이유가 없다.
+    # 안 걸러두면 모바일 작업을 할 때마다 PC 빌드가 헛돈다
+    paths-ignore:
+      - 'mobile/**'
+      - 'docs/**'
+      - '*.md'
   workflow_dispatch:
 
 jobs:
