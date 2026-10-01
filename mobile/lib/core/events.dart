@@ -141,6 +141,29 @@ class UserlistUpdated extends ChatEvent {
       {'type': type, 'channel': channel, 'users': users};
 }
 
+/// 채널에 전투 방이 열렸다 - "이 방으로 와라".
+///
+/// **주소는 안 실린다.** 방 번호만 오고, 중계 서버 주소는 각자 안다. 번호를 모르면
+/// 들어갈 수 없으므로 아무나 끼어들지 못한다.
+class BattleRoomOpened extends ChatEvent {
+  const BattleRoomOpened(this.channel, this.host, this.room);
+
+  final String channel;
+
+  /// 방을 연 사람
+  final String host;
+
+  /// 방 번호
+  final String room;
+
+  @override
+  String get type => 'BattleRoomOpened';
+
+  @override
+  Map<String, Object?> toMap() =>
+      {'type': type, 'channel': channel, 'host': host, 'room': room};
+}
+
 /// 닉네임이 밀려서 다시 시도하는 중.
 class NicknameRetrying extends ChatEvent {
   const NicknameRetrying(this.newNickname);
