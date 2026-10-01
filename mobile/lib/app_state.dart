@@ -89,6 +89,7 @@ class AppState extends ChangeNotifier {
     String password = '',
     bool secure = true,
     bool allowBadCertificate = false,
+    String appVersion = '0.0.0',
   }) async {
     _client.state.listen((s) {
       link = s;
@@ -113,6 +114,7 @@ class AppState extends ChangeNotifier {
       send: _client.send,
       emit: _onEvent,
       wantedNick: nick,
+      appVersion: appVersion,
     );
     // 기록·프로필이 놓이는 자리는 (프로토콜, 호스트, 포트)로 정해진다. 서버가 바뀌면
     // 같이 바꿔야 **다른 서버 기록에 우리 대화가 쌓이지 않는다**

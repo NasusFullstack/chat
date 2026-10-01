@@ -46,6 +46,7 @@ void main() {
       return;
     }
 
+    final sentLines = <String>[];
     final client = IrcClient();
     final joined = Completer<void>();
     final members = Completer<List<String>>();
@@ -66,7 +67,10 @@ void main() {
     expect(ok, isTrue, reason: client.lastError);
 
     session = ChatSession(
-      send: client.send,
+      send: (line) {
+        sentLines.add(line);
+        client.send(line);
+      },
       emit: (event) {
         switch (event) {
           case LoggedIn():
@@ -82,6 +86,7 @@ void main() {
         }
       },
       wantedNick: 'chupphone${Random().nextInt(900) + 100}',
+      appVersion: '2.6.4',
     );
     session.login(realname: 'ChupChat mobile');
 
@@ -94,9 +99,9 @@ void main() {
     expect(people, isNotEmpty, reason: '참여자 목록(353/366)을 못 받았다');
     expect(people, contains(session.myId), reason: '내가 목록에 있어야 한다');
 
-    session.sendChat(channel, '빵길허접');
+    session.sendChat(channel, '폰에서 보냅니다. 참여자 목록에 폰 표시 보이나요?');
     // 서버가 내 말을 되돌려주지 않으므로, 화면에 올리는 건 우리가 해야 한다
-    expect(mine, ['빵길허접'], reason: '내가 보낸 말이 내 화면에 안 올라왔다');
+    expect(mine.length, 1, reason: '내가 보낸 말이 내 화면에 안 올라왔다');
 
     // 서버에 등록된 이모티콘을 하나 집어서 보낸다 - 받는 쪽은 그림으로 본다
     final files = FileApi(group: relay.groupId('irc', host, port));
@@ -110,6 +115,17 @@ void main() {
     expect(parts.length, 1);
     expect(parts.first.isEmoji, isTrue, reason: '이모티콘으로 안 읽힌다: ${mine.last}');
     expect(parts.first.value, pick);
+
+    // 누가 "무슨 프로그램 쓰세요?"라고 물으면 답해야 한다 - 그래야 상대 화면에
+    // 춥채팅 배지와 폰 표시가 같이 뜬다
+    final before = sentLines.length;
+    session.handleLine(':누군가!u@h PRIVMSG ${session.myId} :VERSION');
+    final answered = sentLines.skip(before).where((l) => l.contains('VERSION')).toList();
+    expect(answered, isNotEmpty, reason: '프로그램을 물었는데 답을 안 했다');
+    expect(answered.first, startsWith('NOTICE'),
+        reason: 'PRIVMSG 로 답하면 서로 되받아치며 무한 반복될 수 있다');
+    expect(answered.first, contains('ChupChat Mobile'),
+        reason: 'Mobile 이 들어가야 PC에서 폰 표시가 붙는다');
 
     await Future<void>.delayed(const Duration(seconds: 2));
     session.quit('확인 완료');
