@@ -17,8 +17,6 @@ import 'core/relay.dart' as relay;
 import 'core/session.dart';
 import 'net/irc_client.dart';
 import 'login_store.dart';
-import 'net/keep_alive.dart' as keep_alive;
-import 'net/notifier.dart';
 import 'net/reconnect.dart';
 import 'net/relay_api.dart';
 import 'prefs.dart';
@@ -156,26 +154,20 @@ class AppState extends ChangeNotifier {
   /// 로그인이 끝나기를 기다리는 쪽
   Completer<bool>? _loginDone;
 
-  // ------------------------------------------------------------ 설정과 알림
+  // ------------------------------------------------------------ 설정
   /// 사람이 고른 설정. 화면이 고친 뒤 [applySettings] 를 부른다
   Prefs prefs = Prefs();
 
-  /// 알림을 띄우는 쪽. 없으면 안 띄운다(검사는 가짜를 끼운다)
-  Notifier? notifier;
-
-  /// 지금 앱을 보고 있는가. 수명주기 관찰(main.dart)이 알려준다.
-  ///
-  /// 보고 있을 때 알림을 띄우면 안 된다 - 눈앞에 이미 보인다
+  /// 지금 앱을 보고 있는가. 수명주기 관찰(main.dart)이 알려준다
   bool inForeground = true;
 
   /// 이름을 기억할까 / 다음에 알아서 들어갈까. 로그인 화면의 체크 두 개다
   bool rememberLogin = true;
   bool autoLogin = true;
 
-  /// 접속을 붙잡아 두는 쪽. 검사에서 안드로이드 서비스를 띄울 수 없으므로 끼울 수
-  /// 있게 열어둔다
-  Future<bool> Function() holdConnection = keep_alive.hold;
-  Future<void> Function() releaseConnection = keep_alive.release;
+  // 예전에는 여기서 안드로이드 서비스를 띄워 접속을 붙잡아 뒀다. 한국 폰의
+  // 보이스피싱 탐지가 그걸 보고 **설치 자체를 막아서** 뺐다(mobile/README.md).
+  // 대신 서버가 푸시로 깨워주는 길로 간다
 
   // ------------------------------------------------------------ 다시 붙기
   /// 다시 붙을 때 쓸 접속 정보. 사람에게 또 물어볼 수는 없다
@@ -261,8 +253,6 @@ class AppState extends ChangeNotifier {
     //  - 접속 붙잡기: 안드로이드 12부터 배경에서 포그라운드 서비스를 띄우면 거절한다.
     //    홈으로 나간 뒤에 띄우려 하면 늦는다
     //  - 알림 허락: 배경에서 물어보면 창이 안 뜨고 조용히 거절된 것처럼 된다
-    if (prefs.keepAlive) holdConnection().ignore();
-    if (prefs.notify) notifier?.prepare().ignore();
 
     // 다음에 켤 때 이름을 다시 치지 않게 적어둔다. **성공한 뒤에만** 적는다 -
     // 거절당한 이름을 기억하면 다음에도 같은 실패로 시작한다
@@ -374,12 +364,6 @@ class AppState extends ChangeNotifier {
   /// 다음 실행까지 남아서 끈 것처럼 보이지 않는다.
   Future<void> applySettings() async {
     await prefs.save();
-    if (prefs.keepAlive && loggedIn) {
-      await holdConnection();
-    } else {
-      await releaseConnection();
-    }
-    if (!prefs.notify) await notifier?.clear();
     notifyListeners();
   }
 
@@ -388,41 +372,12 @@ class AppState extends ChangeNotifier {
     inForeground = false;
   }
 
-  /// 앱으로 돌아왔다. 쌓인 알림은 치운다 - 읽을 수 있는 자리에 왔으니 남겨둘 이유가 없다
+  /// 앱으로 돌아왔다.
   Future<void> cameBack() async {
     inForeground = true;
-    await notifier?.clear();
     // 사람이 앱을 다시 보고 있다는 건 신호가 돌아왔을 가능성이 가장 큰 순간이다.
     // 30초짜리 예약을 기다리면 그동안 먹통처럼 보인다
     reconnect.tryNow();
-  }
-
-  /// 새로 온 말을 알림으로 띄울지 정한다.
-  ///
-  /// 판단 자체는 `net/notifier.dart`의 순수 함수가 한다 - 알림은 눈으로 확인하기가
-  /// 번거로워서, 조건이 여기 섞여 있으면 조용히 틀린 채로 오래 묻힌다.
-  void _maybeNotify({
-    required String channel,
-    required String sender,
-    required String text,
-    required bool mine,
-  }) {
-    final target = notifier;
-    if (target == null) return;
-    if (!shouldNotify(
-      mine: mine,
-      isSystem: false,
-      inForeground: inForeground,
-      enabled: prefs.notify,
-    )) {
-      return;
-    }
-    unawaited(target.show(previewFor(
-      channel: channel,
-      sender: sender,
-      text: text,
-      detail: prefs.notifyDetail,
-    )));
   }
 
   /// 검사가 "실제로 입장 요청이 나갔는가"를 볼 수 있게 열어둔 구멍.
@@ -457,9 +412,6 @@ class AppState extends ChangeNotifier {
     await _logs?.flush();
     _session?.quit();
     await _client.close();
-    // 접속이 없는데 "접속 중" 알림이 남아 있으면 안 된다
-    await releaseConnection();
-    await notifier?.clear();
     _session = null;
     myId = '';
     channels.clear();
@@ -618,7 +570,6 @@ class AppState extends ChangeNotifier {
         if (!mine && channel != current) {
           unread[channel] = (unread[channel] ?? 0) + 1;
         }
-        _maybeNotify(channel: channel, sender: sender, text: text, mine: mine);
         // 받아본 줄을 중계 서버에 올린다 - 앱을 꺼둔 사람이 나중에 따라잡을 수 있게.
         // 내가 보낸 것도 올린다(빠지면 남이 받아갈 기록에 구멍이 생긴다)
         _logs?.record(channel, sender, text,

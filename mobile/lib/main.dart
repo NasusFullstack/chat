@@ -14,7 +14,6 @@ library;
 import 'package:flutter/material.dart';
 
 import 'app_state.dart';
-import 'net/notifier.dart';
 import 'prefs.dart';
 import 'ui/chat_page.dart';
 import 'ui/login_page.dart';
@@ -40,9 +39,8 @@ class _ChupChatAppState extends State<ChupChatApp>
   @override
   void initState() {
     super.initState();
-    // 홈으로 나갔는지 돌아왔는지를 알아야 한다 - 보고 있을 때 알림을 띄우면 안 된다
+    // 홈으로 나갔다 돌아온 것을 알아야 한다 - 그때 다시 붙는다
     WidgetsBinding.instance.addObserver(this);
-    _state.notifier = LocalNotifier();
     Prefs.load().then((loaded) {
       if (mounted) _state.prefs = loaded;
     });
@@ -57,8 +55,8 @@ class _ChupChatAppState extends State<ChupChatApp>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState phase) {
-    // resumed 만 '보고 있는 중'이다. inactive 는 알림창을 내렸거나 전화가 온 것처럼
-    // 잠깐 가려진 상태라서, 그때 알림을 띄우면 눈앞에 있는데도 울린다
+    // 홈으로 나가면 안드로이드가 우리를 멈춰서 접속이 끊긴다. 돌아왔을 때 **바로**
+    // 다시 붙어야 사람 눈에 먹통으로 안 보인다
     if (phase == AppLifecycleState.resumed) {
       _state.cameBack();
     } else if (phase == AppLifecycleState.paused ||
