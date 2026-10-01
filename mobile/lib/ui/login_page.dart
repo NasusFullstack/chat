@@ -3,6 +3,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'package:package_info_plus/package_info_plus.dart';
+
 import '../app_state.dart';
 import '../core/irc_protocol.dart';
 import '../net/irc_client.dart';
@@ -47,6 +49,8 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
     setState(() => _busy = true);
+    // 참여자 목록에 춥채팅 배지와 폰 표시를 띄우려면 우리 버전을 알려줘야 한다
+    final info = await PackageInfo.fromPlatform();
     final ok = await widget.state.connect(
       host: _host.text.trim(),
       port: int.tryParse(_port.text.trim()) ?? 6697,
@@ -54,6 +58,7 @@ class _LoginPageState extends State<LoginPage> {
       password: _password.text,
       secure: _secure,
       allowBadCertificate: _allowBadCert,
+      appVersion: info.version,
     );
     if (!mounted) return;
     setState(() => _busy = false);

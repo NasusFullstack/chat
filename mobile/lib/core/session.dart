@@ -21,6 +21,7 @@ class ChatSession {
     required this.send,
     required this.emit,
     required this.wantedNick,
+    this.appVersion = '0.0.0',
   });
 
 
@@ -32,6 +33,9 @@ class ChatSession {
 
   /// 내가 쓰려던 이름. 밀리면 여기에 `_`를 붙여 다시 시도한다.
   String wantedNick;
+
+  /// 지금 앱 버전. "무슨 프로그램 쓰세요?"에 답할 때 같이 알려준다
+  final String appVersion;
 
   int _nickTries = 0;
 
@@ -225,6 +229,12 @@ class ChatSession {
   static void _onPrivmsg(ChatSession s, IrcMessage msg) {
     final target = msg.params.isNotEmpty ? msg.params.first : '';
     final text = msg.trailing;
+    if (isVersionRequest(text)) {
+      // "무슨 프로그램 쓰세요?" - 답해야 상대 화면에 춥채팅 + 폰으로 보인다.
+      // 사람에게는 아무것도 안 보여준다(기계끼리 주고받는 것이다)
+      s.send(formatVersionReply(msg.sourceNick, ourClientVersion(s.appVersion)));
+      return;
+    }
     if (isCtcpFrame(text)) {
       // **해석 못 해도 채팅으로 흘리지 않는다.** PC 앱에서 잘린 base64 483자가
       // 채널에 그대로 쏟아진 사고가 있었다. 모르는 프레임은 조용히 버린다

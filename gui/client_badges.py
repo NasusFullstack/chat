@@ -110,7 +110,7 @@ CLIENT_SPECS = [
     ClientSpec("androirc", "AndroIRC (안드로이드)", r"androirc", "A", "#3ddc84", shape="phone"),
     ClientSpec("yaaic", "Yaaic (안드로이드)", r"yaaic", "Y", "#3ddc84", shape="phone"),
     ClientSpec("limechat", "LimeChat", r"limechat", "L", "#4a90d9", shape="phone"),
-    ClientSpec("atomic", "Atomic (iOS)", r"atomic", "A", "#4a90d9", shape="phone"),
+    ClientSpec("atomic", "Atomic (iOS)", r"\batomic\b", "A", "#4a90d9", shape="phone"),
     ClientSpec("irccloud_mobile", "IRCCloud (모바일)", r"irccloud.*(android|ios|iphone|mobile)",
                "C", "#1a86e0", "https://www.irccloud.com/favicon.ico", shape="phone"),
 
@@ -131,10 +131,10 @@ UNKNOWN_COLOR = "#6e7185"
 # (예: "WeeChat 4.4.2 (Android)", "Palaver 2.0 (iOS 17.2)", "Quasseldroid 1.1")
 MOBILE_TOKENS = re.compile(
     r"android|androirc|quasseldroid|yaaic|termux|"
-    r"ios|iphone|ipad|ipod|ios ?\d|windows ?phone|mobile",
+    r"\bios\b|iphone|ipad|ipod|ios ?\d|windows ?phone|\bmobile\b",
     re.IGNORECASE)
 # 마찬가지로 '사람이 아님'을 알려주는 말들. 봇들은 대개 자기가 봇이라고 밝힌다
-BOT_TOKENS = re.compile(r"bot|bots|services|daemon|relay|bridge", re.IGNORECASE)
+BOT_TOKENS = re.compile(r"\bbot\b|\bbots\b|services|daemon|relay|bridge", re.IGNORECASE)
 # 이름이 이렇게 끝나면 사람이 아니다(관례)
 BOT_NICK_SUFFIXES = ("bot", "serv", "bridge")
 # 이름에 이런 말이 들어 있으면 휴대폰에서 접속한 것으로 본다.

@@ -201,6 +201,27 @@ String normalizeChannel(String name) {
   return trimmed;
 }
 
+/// 상대가 "무슨 프로그램 쓰세요?"라고 물어본 것인가(CTCP VERSION).
+///
+/// 답을 해야 PC 앱의 참여자 목록에 **춥채팅 배지 + 폰 표시**가 같이 뜬다.
+/// 안 하면 '모르는 프로그램'으로 남는다.
+bool isVersionRequest(String text) =>
+    text.replaceAll(ctcpDelim, '').trim().toUpperCase() == 'VERSION';
+
+/// 그 물음에 대한 답 한 줄.
+///
+/// **반드시 NOTICE로 보낸다.** PRIVMSG로 답하면 상대가 그걸 또 CTCP 요청으로 보고
+/// 서로 되받아치며 무한 반복될 수 있다(RFC가 NOTICE를 못박아 둔 이유).
+String formatVersionReply(String nick, String version) =>
+    formatNotice(nick, '${ctcpDelim}VERSION $version$ctcpDelim');
+
+/// 우리가 밝히는 이름.
+///
+/// **'Mobile'이 들어가야 한다.** PC 앱이 그 낱말을 보고 폰에서 접속한 것으로 판단해
+/// 춥채팅 배지 옆에 폰 표시를 같이 붙인다(gui/client_badges.py).
+String ourClientVersion(String appVersion) =>
+    'ChupChat Mobile $appVersion - https://github.com/NasusFullstack/chat';
+
 /// 우리끼리 쓰는 숨김 프레임인가.
 ///
 /// **잘려서 해석에 실패해도 채팅으로 새면 안 된다.** 그래서 '완성된 프레임인가'가
