@@ -19,10 +19,7 @@ const String tinyPng =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
 
 AppState chatting() {
-  final state = AppState()
-    // 검사에서 안드로이드 서비스를 띄울 수 없다
-    ..holdConnection = (() async => true)
-    ..releaseConnection = (() async {});
+  final state = AppState();
   state.handleEvent(const LoggedIn('나'));
   state.handleEvent(const ChannelJoined('#일반', '입장'));
   state.handleEvent(const MessageReceived(

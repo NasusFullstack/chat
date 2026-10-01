@@ -32,49 +32,18 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
-  Future<void> _change(void Function() edit) async {
-    setState(edit);
-    await widget.state.applySettings();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final prefs = widget.state.prefs;
     return Scaffold(
       appBar: AppBar(title: const Text('설정')),
       body: SafeArea(
         child: ListView(
           children: [
-            const _Heading('알림'),
-            SwitchListTile(
-              value: prefs.notify,
-              onChanged: (on) => _change(() => prefs.notify = on),
-              title: const Text('새 말이 오면 알림'),
-              subtitle: const Text('앱을 보고 있을 때는 울리지 않습니다'),
-            ),
-            SwitchListTile(
-              value: prefs.notifyDetail,
-              // 알림을 껐으면 내용 표시를 만질 이유가 없다
-              onChanged: prefs.notify
-                  ? (on) => _change(() => prefs.notifyDetail = on)
-                  : null,
-              title: const Text('알림에 내용까지 보이기'),
-              subtitle: const Text('끄면 누가 말했는지만 알립니다'),
-            ),
-            const _Note('알림은 **최신 하나만** 보입니다. 말이 오는 대로 쌓으면 '
-                '수다 한 번에 알림이 수십 개가 되기 때문입니다.'),
-            const Divider(),
             const _Heading('접속'),
-            SwitchListTile(
-              value: prefs.keepAlive,
-              onChanged: (on) => _change(() => prefs.keepAlive = on),
-              title: const Text('홈으로 나가도 접속 유지'),
-              subtitle: const Text('끄면 홈으로 나가는 순간 접속이 끊기고 알림도 안 옵니다'),
-            ),
-            const _Note('유지하는 동안 안드로이드는 춥채팅을 "실행 중"으로 표시합니다. '
-                '기기와 버전에 따라 알림으로 보이기도 하고, 설정의 '
-                '"활성 앱"에만 잡히기도 합니다.\n'
-                '최근 앱 목록에서 밀어서 끄면 접속도 같이 끊깁니다.'),
+            const _Note('홈으로 나가면 접속이 끊깁니다. 안드로이드가 화면에서 사라진 앱을 '
+                '멈추기 때문입니다 - 앱을 다시 열면 알아서 다시 붙고, 그동안 오간 '
+                '이야기도 채워집니다.\n'
+                '앱을 꺼둔 동안에도 알림을 받는 방법은 따로 준비하고 있습니다.'),
             SwitchListTile(
               value: _last.auto,
               onChanged: (on) async {

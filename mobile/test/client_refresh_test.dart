@@ -14,9 +14,7 @@ import 'package:chupchat/core/client_badge.dart';
 import 'package:chupchat/core/events.dart';
 
 AppState joined() {
-  final state = AppState()
-    ..holdConnection = (() async => true)
-    ..releaseConnection = (() async {});
+  final state = AppState();
   state.handleEvent(const LoggedIn('나'));
   state.handleEvent(const ChannelJoined('#일반', '입장'));
   return state;
