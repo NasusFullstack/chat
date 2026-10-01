@@ -47,3 +47,10 @@ dist_try/
 build_try/
 dist_beta/
 build_beta/
+
+# Flutter/Dart 빌드 찌꺼기 (모바일)
+mobile/.dart_tool/
+mobile/build/
+mobile/.idea/
+mobile/*.iml
+mobile/.flutter-plugins*
