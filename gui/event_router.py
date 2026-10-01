@@ -43,6 +43,9 @@ def _logged_in(view, event):
     # 예전부터 쓰던 이모티콘을 서버로 옮겨 담는다(주소만 갖고 있으면 원본이 사라질 때
     # 같이 깨진다). 조용히 천천히 하고, 옮길 게 없으면 시작도 안 한다
     view.back_up_emojis()
+    # 지난번에 들어가 있던 방에 다시 들어간다. 들어갈 게 없으면 채널 선택 화면에
+    # 그대로 머문다(처음 쓰는 사람은 거기서 고른다)
+    view.rejoin_saved_channels()
 
 
 def _register_succeeded(view, event):
@@ -96,6 +99,8 @@ def _channel_joined(view, event):
     update_note = view.take_update_note()
     if update_note:
         view.chat_page.append_system(event.channel, update_note)
+    # 다음에 켤 때 이 방에 그대로 들어가게 적어둔다
+    view.remember_channels()
 
 
 def _channel_join_failed(view, event):
@@ -115,6 +120,8 @@ def _channel_left(view, event):
         tag="채널 이탈",
     )
     view.chat_page.remove_channel(event.channel)
+    # 나온 방에 다음에 또 들어가면 안 된다
+    view.remember_channels()
 
 
 def _channel_leave_failed(view, event):

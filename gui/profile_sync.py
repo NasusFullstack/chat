@@ -71,6 +71,7 @@ class ProfileSync(QObject):
     """내 프로필을 올리고, 남의 프로필을 받아온다."""
 
     profile_known = Signal(str, str, str)   # 닉네임, 아이콘(base64), 표시이름
+    client_known = Signal(str, dict)        # 닉네임, {app, version, platform}
 
     def __init__(self, protocol: str, host: str, port: int, parent=None):
         super().__init__(parent)
@@ -86,13 +87,20 @@ class ProfileSync(QObject):
         self._timer.timeout.connect(self._ask_now)
 
     # ------------------------------------------------------------ 올리기
-    def publish(self, nick: str, avatar_b64: str):
-        """내 프로필을 올린다. 처음이면 서버가 주는 표를 받아 적어둔다."""
+    def publish(self, nick: str, avatar_b64=None, client=None):
+        """내 프로필을 올린다. 처음이면 서버가 주는 표를 받아 적어둔다.
+
+        **안 넘긴 칸은 보내지 않는다.** 서버는 안 온 칸을 그대로 두므로, 아이콘만
+        바꿀 때 프로그램 정보가 지워지거나 그 반대가 되는 일이 없다.
+        """
         if not nick:
             return
         who = self._who(nick)
-        body = {"nick": nick, "avatar": avatar_b64 or "",
-                "token": load_tokens().get(who, "")}
+        body = {"nick": nick, "token": load_tokens().get(who, "")}
+        if avatar_b64 is not None:
+            body["avatar"] = avatar_b64 or ""
+        if client is not None:
+            body["client"] = client
         request = QNetworkRequest(QUrl(f"{relay.PROFILES_URL}/{who}"))
         request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
         reply = self._manager.put(
@@ -146,9 +154,16 @@ class ProfileSync(QObject):
                 if isinstance(found, dict):
                     for who, profile in found.items():
                         nick = by_id.get(who)
-                        if nick and isinstance(profile, dict) and profile.get("avatar"):
+                        if not nick or not isinstance(profile, dict):
+                            continue
+                        if profile.get("avatar"):
                             self.profile_known.emit(nick, profile["avatar"],
                                                     profile.get("nick", ""))
+                        # 무슨 프로그램을 쓰는지도 같은 조회로 같이 온다 - 이것 때문에
+                        # IRC 로 아무에게도 물어볼 필요가 없어졌다
+                        client = profile.get("client")
+                        if isinstance(client, dict) and client.get("app"):
+                            self.client_known.emit(nick, client)
             reply.deleteLater()
             if self._pending:
                 self._timer.start()

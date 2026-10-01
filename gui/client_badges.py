@@ -185,6 +185,38 @@ def _spec_by_key(key: str) -> ClientSpec | None:
     return None
 
 
+def my_client_info() -> dict:
+    """중계 서버에 적을 "나는 무엇인가".
+
+    모바일도 같은 모양으로 적는다(mobile/lib/core/client_badge.dart). 자리 이름은
+    서버가 아는 것만 받는다 - pc / mobile / web / cli.
+    """
+    import version as app_version      # 지연 import - 순환참조를 만들지 않는다
+    return {"app": "ChupChat", "version": app_version.APP_VERSION, "platform": "pc"}
+
+
+def text_from_client(client) -> str:
+    """중계 서버가 알려준 {app, version, platform}을 **CTCP 응답과 같은 모양의 한 줄**로.
+
+    왜 글자로 바꿔서 쓰나: 아래 판정 코드(resolve_spec/kind_for)가 이미 그 모양을
+    읽도록 되어 있다. 구조체를 따로 받는 길을 새로 만들면 "IRC로 알아낸 사람"과
+    "서버에서 알아낸 사람"의 배지 판정이 두 벌로 갈라지고, 둘 중 하나만 고치는 일이
+    반드시 생긴다(예전에 GUI와 CLI가 그렇게 갈라졌다 - CLAUDE.md 머리말).
+
+    모바일은 이름에 Mobile 을 넣는다. 그러면 MOBILE_TOKENS 가 알아보고 로고 옆에
+    휴대폰 표시를 하나 더 붙인다 - 우리 앱의 CTCP 응답과 똑같은 글자다.
+    """
+    if not isinstance(client, dict):
+        return ""
+    app = str(client.get("app", "")).strip()
+    if not app:
+        return ""
+    version = str(client.get("version", "")).strip()
+    where = {"mobile": "Mobile", "web": "Web", "cli": "CLI"}.get(
+        str(client.get("platform", "")), "")
+    return " ".join(part for part in (app, where, version) if part)
+
+
 def resolve_spec(version: str, nick: str = "") -> ClientSpec | None:
     """어느 프로그램인지 판단. **이름 힌트를 먼저 본다.**
 

@@ -17,6 +17,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../core/client_badge.dart';
 import '../core/relay.dart' as relay;
 
 const Duration _timeout = Duration(seconds: 15);
@@ -56,7 +57,12 @@ class ProfileApi {
   ///
   /// 표가 없으면 서버가 안 고쳐준다 - 그래야 **남이 내 얼굴을 못 바꾼다.** 계정이 없는
   /// 서버라 채팅 통로로 주고받을 때 IRC 서버가 해주던 보호가 사라지기 때문이다.
-  Future<String?> publish(String nick, String avatarB64, {String token = ''}) async {
+  ///
+  /// [avatar]나 [client]를 **안 주면 그 칸은 건드리지 않는다.** 모바일은 아이콘
+  /// 편집기가 없어서 "나는 춥채팅 모바일"만 올리는데, 빈 아이콘을 같이 보내면 그
+  /// 사람이 PC에서 정해둔 얼굴이 서버에서 지워진다(같은 닉네임이면 같은 자리다).
+  Future<String?> publish(String nick,
+      {String? avatar, ClientInfo? client, String token = ''}) async {
     if (nick.isEmpty) return null;
     final who = relay.whoId(protocol, host, port, nick);
     try {
@@ -64,7 +70,14 @@ class ProfileApi {
           .put(
             Uri.parse('${relay.profilesUrl}/$who'),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'nick': nick, 'avatar': avatarB64, 'token': token}),
+            body: jsonEncode({
+              'nick': nick,
+              'token': token,
+              // 값이 없으면 그 칸 자체를 안 보낸다(? 표시). 안 보낸 칸은 서버가
+              // 그대로 둔다(features/profiles.py) - 빈 값으로 덮어쓰면 안 된다
+              'avatar': ?avatar,
+              'client': ?client?.toJson(),
+            }),
           )
           .timeout(_timeout);
       return _json(response)?['token'] as String?;
@@ -74,7 +87,7 @@ class ProfileApi {
   }
 
   /// 이 사람들 얼굴을 받아온다. 이미 물어본 사람은 알아서 건너뛴다.
-  Future<Map<String, String>> lookup(Iterable<String> nicks) async {
+  Future<Map<String, Who>> lookup(Iterable<String> nicks) async {
     final fresh = nicks.where((n) => n.isNotEmpty && !_asked.contains(n)).toList();
     if (fresh.isEmpty) return const {};
     final batch = fresh.take(fallbackLookup).toList();
@@ -93,13 +106,15 @@ class ProfileApi {
           .timeout(_timeout);
       final found = _json(response)?['profiles'];
       if (found is! Map) return const {};
-      final out = <String, String>{};
+      final out = <String, Who>{};
       found.forEach((who, profile) {
         final nick = byId[who];
-        if (nick != null && profile is Map && profile['avatar'] is String) {
-          final avatar = profile['avatar'] as String;
-          if (avatar.isNotEmpty) out[nick] = avatar;
-        }
+        if (nick == null || profile is! Map) return;
+        final avatar = profile['avatar'];
+        out[nick] = Who(
+          avatar: avatar is String ? avatar : '',
+          client: ClientInfo.fromJson(profile['client']),
+        );
       });
       return out;
     } on Object {
@@ -109,6 +124,17 @@ class ProfileApi {
 
   /// 그 사람을 다시 물어보게 한다(프로필이 바뀐 걸 알았을 때).
   void forget(String nick) => _asked.remove(nick);
+}
+
+/// 서버가 아는 그 사람 - 얼굴과 쓰는 프로그램.
+///
+/// 둘을 같이 돌려주는 이유: 어차피 같은 조회 한 번에 온다. 따로 물으면 참여자 수만큼
+/// 요청이 두 배가 된다.
+class Who {
+  const Who({this.avatar = '', this.client = const ClientInfo()});
+
+  final String avatar;
+  final ClientInfo client;
 }
 
 /// ------------------------------------------------------------ 놓친 대화

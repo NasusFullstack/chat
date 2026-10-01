@@ -14,6 +14,9 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // 알림 플러그인(flutter_local_notifications)이 요구한다. 없으면 빌드가
+        // "Call requires API level 26" 류로 통째로 멈춘다
+        isCoreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
@@ -66,6 +69,11 @@ android {
             }
         }
     }
+}
+
+dependencies {
+    // 위 isCoreLibraryDesugaringEnabled 와 **짝**이다. 하나만 넣으면 빌드가 안 된다
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
 
 kotlin {

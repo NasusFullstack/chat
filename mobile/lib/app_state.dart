@@ -10,11 +10,16 @@ import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:io';
 
+import 'core/client_badge.dart';
 import 'core/events.dart';
 import 'core/relay.dart' as relay;
 import 'core/session.dart';
 import 'net/irc_client.dart';
+import 'login_store.dart';
+import 'net/keep_alive.dart' as keep_alive;
+import 'net/notifier.dart';
 import 'net/relay_api.dart';
+import 'prefs.dart';
 
 /// 화면에 한 줄로 그려지는 것.
 class ChatLine {
@@ -44,12 +49,30 @@ class AppState extends ChangeNotifier {
   AppState();
 
   final IrcClient _client = IrcClient();
+
+  /// 처음 보는 인증서를 만났으면 그 지문(없으면 빈 값). 화면이 사람에게 물어본다
+  String get pendingFingerprint => _client.pendingFingerprint;
+
+  /// 전에 믿기로 한 것과 달라졌는가
+  bool get fingerprintChanged => _client.fingerprintChanged;
   ChatSession? _session;
 
   LinkState link = LinkState.idle;
   String statusText = '';
 
-  String get myId => _session?.myId ?? '';
+  /// 서버가 우리를 받아줬는가(001). **소켓이 붙은 것과 다르다.**
+  /// 이게 되기 전에 채널 입장을 보내면 서버가 그냥 무시한다
+  bool get loggedIn => myId.isNotEmpty;
+
+  /// 서버가 확정해준 내 이름. **001 이 와야 채워진다.**
+  ///
+  /// 세션에서 파생시키지 않고 여기에 따로 둔다 - 세션은 접속할 때 새로 만들어지는데,
+  /// 화면은 그보다 오래 살아 있고 '로그인했는가'를 계속 봐야 하기 때문이다
+  String myId = '';
+
+  /// 지금 붙어 있는 서버. 채널 목록을 **서버+닉네임별로** 적어두는 데 쓴다
+  String host = '';
+  int port = 0;
 
   /// 채널마다 쌓인 줄. 들어간 순서를 지키려고 목록을 따로 둔다
   final List<String> channels = [];
@@ -70,6 +93,13 @@ class AppState extends ChangeNotifier {
   /// 사람마다의 아이콘(base64). 서버에서 받아온다 - 상대가 접속해 있지 않아도 보인다
   final Map<String, String> avatars = {};
 
+  /// 사람마다 쓰는 프로그램. 이것도 서버에서 받아온다 - IRC 로 물어보던 길은
+  /// `core/session.dart`에 남겨둔 채 꺼뒀다(core/client_badge.dart 에 이유)
+  final Map<String, ClientInfo> clients = {};
+
+  /// 내가 무엇인지(버전 포함). 로그인할 때 받아 서버에 적는다
+  ClientInfo _me = const ClientInfo();
+
   /// 내 프로필을 고칠 수 있는 표. 없으면 서버가 안 고쳐준다
   String _profileToken = '';
 
@@ -81,6 +111,30 @@ class AppState extends ChangeNotifier {
   /// 올리는 중인 파일(화면이 진행 상태를 보여주는 데 쓴다).
   String uploading = '';
 
+  /// 로그인이 끝나기를 기다리는 쪽
+  Completer<bool>? _loginDone;
+
+  // ------------------------------------------------------------ 설정과 알림
+  /// 사람이 고른 설정. 화면이 고친 뒤 [applySettings] 를 부른다
+  Prefs prefs = Prefs();
+
+  /// 알림을 띄우는 쪽. 없으면 안 띄운다(검사는 가짜를 끼운다)
+  Notifier? notifier;
+
+  /// 지금 앱을 보고 있는가. 수명주기 관찰(main.dart)이 알려준다.
+  ///
+  /// 보고 있을 때 알림을 띄우면 안 된다 - 눈앞에 이미 보인다
+  bool inForeground = true;
+
+  /// 이름을 기억할까 / 다음에 알아서 들어갈까. 로그인 화면의 체크 두 개다
+  bool rememberLogin = true;
+  bool autoLogin = true;
+
+  /// 접속을 붙잡아 두는 쪽. 검사에서 안드로이드 서비스를 띄울 수 없으므로 끼울 수
+  /// 있게 열어둔다
+  Future<bool> Function() holdConnection = keep_alive.hold;
+  Future<void> Function() releaseConnection = keep_alive.release;
+
   // ------------------------------------------------------------------ 접속
   Future<bool> connect({
     required String host,
@@ -88,7 +142,6 @@ class AppState extends ChangeNotifier {
     required String nick,
     String password = '',
     bool secure = true,
-    bool allowBadCertificate = false,
     String appVersion = '0.0.0',
   }) async {
     _client.state.listen((s) {
@@ -102,22 +155,20 @@ class AppState extends ChangeNotifier {
     statusText = '연결 중...';
     notifyListeners();
 
-    final ok = await _client.connect(
-      host: host,
-      port: port,
-      secure: secure,
-      allowBadCertificate: allowBadCertificate,
-    );
+    this.host = host;
+    this.port = port;
+    final ok = await _client.connect(host: host, port: port, secure: secure);
     if (!ok) return false;
 
     _session = ChatSession(
       send: _client.send,
-      emit: _onEvent,
+      emit: handleEvent,
       wantedNick: nick,
       appVersion: appVersion,
     );
     // 기록·프로필이 놓이는 자리는 (프로토콜, 호스트, 포트)로 정해진다. 서버가 바뀌면
     // 같이 바꿔야 **다른 서버 기록에 우리 대화가 쌓이지 않는다**
+    _me = ourClient(appVersion);
     _profiles = ProfileApi('irc', host, port);
     _logs = ChatLogApi('irc', host, port);
     files.group = relay.groupId('irc', host, port);
@@ -126,13 +177,153 @@ class AppState extends ChangeNotifier {
     _flushTimer?.cancel();
     _flushTimer = Timer.periodic(const Duration(seconds: 8), (_) => _logs?.flush());
 
+    // **여기서 끝이 아니다.** IRC 는 서버가 001 을 보내줘야 '등록된 사용자'가 된다.
+    // 그 전에 채널 입장을 보내면 서버가 조용히 무시하므로, 화면도 그때까지 기다린다
+    _loginDone = Completer<bool>();
     _session!.login(password: password, realname: nick);
     statusText = '로그인 중...';
     notifyListeners();
+
+    final accepted = await _loginDone!.future.timeout(
+      const Duration(seconds: 25),
+      onTimeout: () {
+        statusText = '서버가 응답하지 않습니다. 이름이나 비밀번호를 확인해 주세요.';
+        return false;
+      },
+    );
+    _loginDone = null;
+    if (!accepted) {
+      await _client.close();
+      notifyListeners();
+      return false;
+    }
+
+    // **앱이 보이는 동안** 해둬야 하는 두 가지다.
+    //  - 접속 붙잡기: 안드로이드 12부터 배경에서 포그라운드 서비스를 띄우면 거절한다.
+    //    홈으로 나간 뒤에 띄우려 하면 늦는다
+    //  - 알림 허락: 배경에서 물어보면 창이 안 뜨고 조용히 거절된 것처럼 된다
+    if (prefs.keepAlive) holdConnection().ignore();
+    if (prefs.notify) notifier?.prepare().ignore();
+
+    // 다음에 켤 때 이름을 다시 치지 않게 적어둔다. **성공한 뒤에만** 적는다 -
+    // 거절당한 이름을 기억하면 다음에도 같은 실패로 시작한다
+    unawaited(saveLastLogin(
+      host: host,
+      port: port,
+      nick: myId,
+      secure: secure,
+      remember: rememberLogin,
+      auto: autoLogin,
+    ));
+    // 참여자 목록에 "춥채팅 · 폰"이 뜨게 내가 무엇인지 적어둔다. IRC 로 서로
+    // 물어보던 길은 꺼뒀다(core/client_badge.dart 에 이유)
+    unawaited(publishClient());
+    unawaited(rejoinSaved());
     return true;
   }
 
-  void joinChannel(String name) => _session?.joinChannel(name);
+  /// 지난번에 들어가 있던 채널에 다시 들어간다.
+  ///
+  /// 한꺼번에 보내지 않고 한 박자씩 띄운다. 서버는 짧은 시간에 몰린 요청을 폭주로
+  /// 보고 연결을 끊는다(CLAUDE.md 2-4 에 실측표가 있다).
+  Future<void> rejoinSaved() async {
+    final rooms = await loadRooms(host, port, myId);
+    // 다시 들어가는 **동안에는 기억을 건드리지 않는다.** 한 방에 들어갈 때마다
+    // 적어버리면, 도중에 앱이 꺼지면 아직 못 들어간 방들이 통째로 사라진다
+    _rejoining = true;
+    try {
+      for (final room in rooms) {
+        if (channels.contains(room)) continue;
+        joinChannel(room);
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+      }
+    } finally {
+      _rejoining = false;
+    }
+    _rememberRooms();
+  }
+
+  /// 지금 지난번 채널에 다시 들어가는 중인가
+  bool _rejoining = false;
+
+  /// 채널 목록을 적는 일은 **차례대로** 한다.
+  ///
+  /// 한꺼번에 던지면 끝나는 순서가 뒤바뀌어 옛 목록이 나중에 덮어쓸 수 있다
+  /// (실측: 들어가기 두 번을 연달아 했을 때 두 번째가 사라졌다).
+  Future<void> _roomWrite = Future<void>.value();
+
+  /// 들어가 있는 채널을 적어둔다(다음에 켤 때 그대로 들어가게).
+  void _rememberRooms() {
+    if (_rejoining || !loggedIn || host.isEmpty) return;
+    final now = List<String>.of(channels);
+    _roomWrite = _roomWrite.then((_) => saveRooms(host, port, myId, now));
+  }
+
+  /// 적어두는 일이 끝나기를 기다린다(검사와 종료 때 쓴다).
+  Future<void> get roomsWritten => _roomWrite;
+
+  /// 설정이 바뀌었다 - 지금 상태에 반영한다.
+  ///
+  /// 접속 유지를 껐으면 붙잡기를 **바로** 놓아야 한다. 안 그러면 "실행 중" 알림이
+  /// 다음 실행까지 남아서 끈 것처럼 보이지 않는다.
+  Future<void> applySettings() async {
+    await prefs.save();
+    if (prefs.keepAlive && loggedIn) {
+      await holdConnection();
+    } else {
+      await releaseConnection();
+    }
+    if (!prefs.notify) await notifier?.clear();
+    notifyListeners();
+  }
+
+  /// 홈으로 나갔다. 이제부터 오는 말은 알림으로 알린다
+  void wentBackground() {
+    inForeground = false;
+  }
+
+  /// 앱으로 돌아왔다. 쌓인 알림은 치운다 - 읽을 수 있는 자리에 왔으니 남겨둘 이유가 없다
+  Future<void> cameBack() async {
+    inForeground = true;
+    await notifier?.clear();
+  }
+
+  /// 새로 온 말을 알림으로 띄울지 정한다.
+  ///
+  /// 판단 자체는 `net/notifier.dart`의 순수 함수가 한다 - 알림은 눈으로 확인하기가
+  /// 번거로워서, 조건이 여기 섞여 있으면 조용히 틀린 채로 오래 묻힌다.
+  void _maybeNotify({
+    required String channel,
+    required String sender,
+    required String text,
+    required bool mine,
+  }) {
+    final target = notifier;
+    if (target == null) return;
+    if (!shouldNotify(
+      mine: mine,
+      isSystem: false,
+      inForeground: inForeground,
+      enabled: prefs.notify,
+    )) {
+      return;
+    }
+    unawaited(target.show(previewFor(
+      channel: channel,
+      sender: sender,
+      text: text,
+      detail: prefs.notifyDetail,
+    )));
+  }
+
+  /// 검사가 "실제로 입장 요청이 나갔는가"를 볼 수 있게 열어둔 구멍.
+  /// 핸들러를 직접 부르는 검사는 사람이 눌렀을 때만 나는 버그를 못 잡는다
+  void Function(String)? onJoinForTest;
+
+  void joinChannel(String name) {
+    onJoinForTest?.call(name);
+    _session?.joinChannel(name);
+  }
 
   void leaveChannel(String channel) => _session?.leaveChannel(channel);
 
@@ -154,7 +345,11 @@ class AppState extends ChangeNotifier {
     await _logs?.flush();
     _session?.quit();
     await _client.close();
+    // 접속이 없는데 "접속 중" 알림이 남아 있으면 안 된다
+    await releaseConnection();
+    await notifier?.clear();
     _session = null;
+    myId = '';
     channels.clear();
     lines.clear();
     members.clear();
@@ -174,18 +369,38 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------- 중계 서버 기능
   /// 내 아이콘을 서버에 올린다(내가 꺼져 있어도 남에게 보이게).
   Future<void> publishProfile(String avatarB64) async {
-    final token = await _profiles?.publish(myId, avatarB64, token: _profileToken);
+    final token = await _profiles?.publish(myId,
+        avatar: avatarB64, client: _me.known ? _me : null, token: _profileToken);
     if (token != null && token.isNotEmpty) _profileToken = token;
     avatars[myId] = avatarB64;
     notifyListeners();
   }
 
-  /// 지금 보이는 사람들의 얼굴을 받아온다(이미 아는 사람은 알아서 건너뛴다).
+  /// 지금 보이는 사람들의 얼굴과 **쓰는 프로그램**을 받아온다.
+  ///
+  /// 이미 아는 사람은 알아서 건너뛴다. 둘을 한 번에 받아오는 이유는 어차피 같은
+  /// 조회라서다 - 따로 물으면 참여자 수만큼 요청이 두 배가 된다.
   Future<void> wantFaces(String channel) async {
     final people = members[channel] ?? const <String>[];
-    final found = await _profiles?.lookup(people) ?? const <String, String>{};
+    final found = await _profiles?.lookup(people) ?? const <String, Who>{};
     if (found.isEmpty) return;
-    avatars.addAll(found);
+    found.forEach((nick, who) {
+      if (who.avatar.isNotEmpty) avatars[nick] = who.avatar;
+      if (who.client.known) clients[nick] = who.client;
+    });
+    notifyListeners();
+  }
+
+  /// "나는 춥채팅 모바일 x.y.z"를 서버에 적는다.
+  ///
+  /// 아이콘은 **같이 보내지 않는다.** 모바일에는 아이콘 편집기가 없어서 빈 값을
+  /// 보내게 되는데, 그러면 그 사람이 PC에서 정해둔 얼굴이 서버에서 지워진다.
+  Future<void> publishClient() async {
+    if (!_me.known || myId.isEmpty) return;
+    final token = await _profiles?.publish(myId,
+        client: _me, token: _profileToken);
+    if (token != null && token.isNotEmpty) _profileToken = token;
+    clients[myId] = _me;
     notifyListeners();
   }
 
@@ -239,10 +454,17 @@ class AppState extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------------ 이벤트
-  void _onEvent(ChatEvent event) {
+  /// 세션이 "무슨 일이 일어났다"고 알려주는 곳.
+  ///
+  /// 공개해 둔 이유: 화면 검사가 **이 길 그대로** 상태를 만들 수 있어야 한다.
+  /// 가짜를 따로 만들면 진짜 앱과 다른 것을 시험하게 된다
+  void handleEvent(ChatEvent event) {
     switch (event) {
-      case LoggedIn():
+      case LoggedIn(:final userId):
+        myId = userId;
         statusText = '';
+        _loginDone?.complete(true);
+        _loginDone = null;
       case ChannelJoined(:final channel, :final text):
         if (!channels.contains(channel)) channels.add(channel);
         lines.putIfAbsent(channel, () => []);
@@ -251,11 +473,13 @@ class AppState extends ChangeNotifier {
         _add(channel, ChatLine.system(text: text, at: DateTime.now()));
         // 내가 없는 동안 오간 이야기를 채워 넣는다
         unawaited(fetchMissed(channel));
+        _rememberRooms();
       case ChannelLeft(:final channel):
         channels.remove(channel);
         lines.remove(channel);
         members.remove(channel);
         unread.remove(channel);
+        _rememberRooms();
         if (current == channel) current = channels.isEmpty ? '' : channels.first;
       case ChannelJoinFailed(:final text):
         statusText = text;
@@ -274,6 +498,7 @@ class AppState extends ChangeNotifier {
         if (!mine && channel != current) {
           unread[channel] = (unread[channel] ?? 0) + 1;
         }
+        _maybeNotify(channel: channel, sender: sender, text: text, mine: mine);
         // 받아본 줄을 중계 서버에 올린다 - 앱을 꺼둔 사람이 나중에 따라잡을 수 있게.
         // 내가 보낸 것도 올린다(빠지면 남이 받아갈 기록에 구멍이 생긴다)
         _logs?.record(channel, sender, text,
@@ -294,6 +519,8 @@ class AppState extends ChangeNotifier {
         statusText = '닉네임이 사용 중이라 $newNickname(으)로 다시 시도합니다.';
       case ConnectionClosed(:final text):
         statusText = '연결이 종료되었습니다: $text';
+        _loginDone?.complete(false);
+        _loginDone = null;
       default:
         break;
     }

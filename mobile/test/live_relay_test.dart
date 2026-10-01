@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:chupchat/core/relay.dart' as relay;
+import 'package:chupchat/core/client_badge.dart';
 import 'package:chupchat/net/relay_api.dart';
 
 /// 아무 데도 안 쓰이는 가짜 서버 이름 - 진짜 방 기록을 건드리지 않으려고.
@@ -35,6 +36,38 @@ Future<bool> reachable() async {
 Uint8List tinyPng() => base64Decode(
     'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGOUWxXFgA0wYRUdtBIA'
     '5xgBMtM6Z3YAAAAASUVORK5CYII=');
+
+/// 중계 서버의 profiles 기능이 이 버전 이상인가.
+///
+/// 기능을 하나 보탤 때마다 서버를 올려야 하는데, 올리기 전에 돌린 검사가 그냥 빨갛게
+/// 뜨면 "코드가 틀렸나"를 먼저 의심하게 된다. 서버가 뭘 할 수 있는지 물어보고 나눈다.
+Future<bool> profilesAtLeast(String want) async {
+  try {
+    final response = await http
+        .get(Uri.parse(relay.profilesUrl))
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode != 200) return false;
+    final body = jsonDecode(response.body);
+    if (body is! Map) return false;
+    return !isOlder('${body['version'] ?? '0'}', want);
+  } on Object {
+    return false;
+  }
+}
+
+/// a 가 b 보다 **옛** 버전인가(숫자로 비교한다 - 글자로 하면 2.10 < 2.9 가 된다).
+bool isOlder(String a, String b) {
+  List<int> parts(String v) =>
+      v.split('.').map((p) => int.tryParse(p) ?? 0).toList();
+  final x = parts(a);
+  final y = parts(b);
+  for (var i = 0; i < 3; i++) {
+    final left = i < x.length ? x[i] : 0;
+    final right = i < y.length ? y[i] : 0;
+    if (left != right) return left < right;
+  }
+  return false;
+}
 
 void main() {
   late bool alive;
@@ -84,15 +117,34 @@ void main() {
         'DUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
     final mine = ProfileApi('irc', host, 6697);
-    final token = await mine.publish('몽키', face);
+    final token = await mine.publish('몽키',
+        avatar: face, client: ourClient('2.6.6'));
     expect(token, isNotNull);
     expect(token!.length, greaterThanOrEqualTo(16), reason: '표를 받아야 다음에 고칠 수 있다');
 
     // '남'이 - 같은 서버를 쓰는 다른 사람이 - 그 얼굴을 본다
     final mate = ProfileApi('irc', host, 6697);
     final found = await mate.lookup(['몽키', '없는사람']);
-    expect(found['몽키'], face);
+    expect(found['몽키']?.avatar, face);
     expect(found.containsKey('없는사람'), isFalse);
+
+    // 무슨 프로그램을 쓰는지도 같은 조회로 같이 온다(IRC 로 안 물어본다).
+    // **서버가 그만큼 올라가 있어야** 된다 - 아직이면 건너뛰고 그 사실을 말한다.
+    // 조용히 통과시키면 "배지가 안 뜨는데 검사는 초록"이 된다
+    if (await profilesAtLeast('1.1.0')) {
+      expect(found['몽키']?.client.isOurs, isTrue);
+      expect(found['몽키']?.client.platform, 'mobile');
+
+      // 아이콘을 안 보내면 서버가 얼굴을 지우지 않는다 - 모바일이 "나는 춥채팅
+      // 모바일"만 올리는 경우다
+      await mine.publish('몽키', client: ourClient('2.6.7'), token: token);
+      final again = ProfileApi('irc', host, 6697);
+      expect((await again.lookup(['몽키']))['몽키']?.avatar, face,
+          reason: '프로그램만 올렸는데 얼굴이 사라지면 안 된다');
+    } else {
+      markTestSkipped('중계 서버의 profiles 가 1.1.0 미만 - '
+          '무슨 프로그램을 쓰는지는 서버를 올린 뒤에 확인됩니다');
+    }
 
     // 한 번 받아온 사람은 다시 안 묻는다
     expect(await mate.lookup(['몽키']), isEmpty);

@@ -18,6 +18,7 @@ _sys.path.insert(0, _REPO)
 _sys.path.insert(0, _HERE)
 
 import irc_protocol
+from gui import client_badges
 from chat_core import constants, events
 from chat_core.session import build_session
 
@@ -325,8 +326,48 @@ for version in ("Anope-2.0.21", "Goguma 0.7"):
     check(f"{version.split()[0]} 배지도 작다({CLIENT_BADGE_PX}px 이하)",
           made.width() <= CLIENT_BADGE_PX)
 
+# ---------- 4-5) 기본값은 '아무에게도 안 묻는다' ----------
+# 중계 서버가 같은 것을 알려주므로 IRC 로 물어볼 이유가 없다(gui/client_probe.py).
+# 끄는 스위치가 **정말로 요청을 막는가**를 먼저 못 박아 둔다 - 안 그러면 모르는 채로
+# 다시 켜져서 서버가 연결을 끊는 사고로 돌아온다
+import gui.client_probe as client_probe_mod  # noqa: E402
+
+off_win = g.MainWindow()
+off_win._host = "irc.off"
+off_lines = []
+off_win.session = build_session("irc", "irc.off", 6667, transport=off_lines.append,
+                                on_event=off_win._on_domain_event)
+off_win.session.my_id = "몽키"
+off_win.session.active_channel = "#a"
+off_win.session.members["#a"] = {"몽키", "앨리스", "Bob"}
+off_win.probe_client_versions("#a")
+check("기본값에서는 IRC 로 아무것도 묻지 않는다",
+      client_probe_mod.ASK_OVER_IRC is False and off_lines == [], off_lines)
+
+# 서버가 알려준 것만으로 배지가 붙는가 - 이게 지금의 정상 경로다
+off_win._on_server_client("앨리스", {"app": "ChupChat", "version": "2.6.6",
+                                   "platform": "mobile"})
+check("서버가 알려주면 물어보지 않고도 알아낸다",
+      client_version_store.load("irc.off").get("앨리스", "")
+      == "ChupChat Mobile 2.6.6",
+      client_version_store.load("irc.off"))
+check("서버가 알려준 것도 휴대폰으로 읽힌다",
+      client_badges.kind_for("ChupChat Mobile 2.6.6") == "phone")
+check("서버가 알려준 것도 춥채팅으로 읽힌다",
+      (client_badges.resolve_spec("ChupChat Mobile 2.6.6") or None) is not None)
+check("프로그램 이름이 없으면 아무것도 적지 않는다",
+      client_badges.text_from_client({"version": "1.0", "platform": "pc"}) == "")
+check("우리 자신도 같은 모양으로 적는다",
+      client_badges.my_client_info()["platform"] == "pc"
+      and client_badges.my_client_info()["app"] == "ChupChat",
+      client_badges.my_client_info())
+
 # ---------- 4-6) 나중에 들어온 사람도 표시된다 ----------
 # 예전엔 채널당 한 번만 묻고 끝내서, 그 뒤에 들어온 사람은 영영 로고가 안 떴다
+#
+# 아래는 **IRC 로 묻는 길**을 보는 검사다. 지금 기본값은 꺼져 있지만, 중계 서버를 못
+# 쓰는 곳에서는 이 길이 유일하므로 회귀 검사를 그대로 둔다 - 켜고 확인한다
+client_probe_mod.ASK_OVER_IRC = True
 client_version_store.STORE_FILE = _os.path.join(
     _os.environ.get("TEMP", _HERE), "test_client_versions4.json")
 if _os.path.exists(client_version_store.STORE_FILE):

@@ -12,10 +12,12 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../app_state.dart';
+import '../core/client_badge.dart';
 import '../core/emoji.dart';
 import '../core/relay.dart' as relay;
 import 'file_card.dart';
 import 'layout.dart';
+import 'settings_page.dart';
 
 class ChatPage extends StatefulWidget {
   const ChatPage({super.key, required this.state});
@@ -124,9 +126,24 @@ class _ChatPageState extends State<ChatPage> {
         ],
       ),
     );
-    if (name != null && name.trim().isNotEmpty) {
-      widget.state.joinChannel(name.trim());
+    if (name == null || name.trim().isEmpty) return;
+    if (!widget.state.loggedIn) {
+      // 로그인 전에 보내면 서버가 조용히 무시한다 - 그러면 "눌렀는데 아무 일도
+      // 안 일어남"으로만 보이므로 여기서 알려준다
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('아직 서버에 로그인되지 않았습니다.')),
+      );
+      return;
     }
+    widget.state.joinChannel(name.trim());
+  }
+
+  void _showSettings() {
+    Navigator.push(
+      context,
+      MaterialPageRoute<void>(builder: (_) => SettingsPage(state: widget.state)),
+    );
   }
 
   void _showMembers() {
@@ -164,6 +181,11 @@ class _ChatPageState extends State<ChatPage> {
             onPressed: state.current.isEmpty ? null : _showMembers,
             icon: const Icon(Icons.people_outline),
             tooltip: '참여자',
+          ),
+          IconButton(
+            onPressed: _showSettings,
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '설정',
           ),
         ],
       ),
@@ -264,14 +286,44 @@ class _MemberList extends StatelessWidget {
             child: ListView.builder(
               shrinkWrap: true,
               itemCount: people.length,
-              itemBuilder: (_, i) => ListTile(
-                leading: const Icon(Icons.person_outline),
-                title: Text(people[i]),
+              itemBuilder: (_, i) => _Member(
+                nick: people[i],
+                avatar: state.avatars[people[i]],
+                client: state.clients[people[i]] ?? const ClientInfo(),
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 참여자 한 줄 - 얼굴, 이름, 그리고 **무슨 프로그램으로 들어와 있는지**.
+///
+/// 프로그램은 IRC 로 묻지 않고 중계 서버에서 받아온다(core/client_badge.dart 에 이유).
+/// 모르는 사람은 아무것도 안 적는다 - "알 수 없음"을 적으면 목록이 그 글자로 찬다.
+class _Member extends StatelessWidget {
+  const _Member({required this.nick, required this.avatar, required this.client});
+
+  final String nick;
+  final String? avatar;
+  final ClientInfo client;
+
+  @override
+  Widget build(BuildContext context) {
+    final badge = badgeText(client);
+    return ListTile(
+      // 아이콘은 서버에서 받아온다(UserlistUpdated -> wantFaces). 예전엔 받아놓고도
+      // 사람 모양 기본 아이콘만 그려서 "프로필이 안 불러와진다"로 보였다
+      leading: _Face(nick: nick, avatar: avatar, size: faceInList),
+      title: Text(nick),
+      subtitle: badge.isEmpty ? null : Text(badge),
+      trailing: switch (client.platform) {
+        'mobile' => const Icon(Icons.smartphone, size: 18),
+        'pc' => const Icon(Icons.computer, size: 18),
+        _ => null,
+      },
     );
   }
 }
@@ -488,12 +540,23 @@ class _InputRow extends StatelessWidget {
 }
 
 
+/// 말풍선 옆 얼굴 지름.
+///
+/// **첫 줄 글 높이와 같게** 맞춘다. 더 크면 위로 맞춰도 얼굴 가운데가 글 가운데보다
+/// 내려앉아서 이름과 어긋나 보인다(실측: 지름 26 / 첫 줄 20 일 때 3px). PC 앱도
+/// 같은 이유로 작게 쓴다(AVATAR_MSG_PX = 16).
+const double faceInLine = 20;
+
+/// 참여자 목록의 얼굴. 여기는 줄에 맞출 글이 없고 손으로 누르는 자리라 크게 둔다
+const double faceInList = 36;
+
 /// 사람 얼굴 - 서버에서 받아온 아이콘. 없으면 이름 첫 글자로 대신한다.
 class _Face extends StatelessWidget {
-  const _Face({required this.nick, this.avatar});
+  const _Face({required this.nick, this.avatar, this.size = faceInLine});
 
   final String nick;
   final String? avatar;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
@@ -501,7 +564,7 @@ class _Face extends StatelessWidget {
     if (data != null && data.isNotEmpty) {
       try {
         return CircleAvatar(
-          radius: 13,
+          radius: size / 2,
           backgroundImage: MemoryImage(base64Decode(data)),
         );
       } on Object {
@@ -509,9 +572,9 @@ class _Face extends StatelessWidget {
       }
     }
     return CircleAvatar(
-      radius: 13,
+      radius: size / 2,
       child: Text(nick.isEmpty ? '?' : nick.characters.first,
-          style: const TextStyle(fontSize: 12)),
+          style: TextStyle(fontSize: size * 0.46)),
     );
   }
 }

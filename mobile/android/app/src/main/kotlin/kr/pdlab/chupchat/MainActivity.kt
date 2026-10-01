@@ -25,6 +25,7 @@ import java.io.File
  */
 class MainActivity : FlutterActivity() {
     private val channelName = "chupchat/installer"
+    private val serviceChannelName = "chupchat/service"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -41,6 +42,37 @@ class MainActivity : FlutterActivity() {
                 }
                 result.success(openInstaller(File(path)))
             }
+
+        // 홈으로 나가도 접속이 끊기지 않게 붙잡는 서비스. 왜 필요한지는 ChatService.kt
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, serviceChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> result.success(holdConnection())
+                    "stop" -> {
+                        stopService(Intent(this, ChatService::class.java))
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /** 서비스를 띄운다. 안드로이드가 거절하면 false - 그러면 접속 유지는 포기한다. */
+    private fun holdConnection(): Boolean {
+        val intent = Intent(this, ChatService::class.java)
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            true
+        } catch (error: Exception) {
+            // 안드로이드 12부터 배경에서 포그라운드 서비스를 띄우면 거절당한다.
+            // 우리는 앱이 보이는 동안 띄우므로 정상 경로에서는 안 걸리지만,
+            // 거절당해도 앱이 죽으면 안 된다
+            false
+        }
     }
 
     /** 문제가 있으면 사람에게 보여줄 말을, 잘 열렸으면 빈 글자를 돌려준다. */
