@@ -59,20 +59,23 @@ jobs:
         working-directory: mobile
         run: flutter build apk --release --split-per-abi
 
+      # **한국 폰에서 설치가 막히는 것을 여기서 잡는다.** v2.6.6 이 상주 서비스를
+      # 넣었다가 보이스피싱 탐지에 걸려 설치 자체가 거부됐다(CLAUDE.md 11-6-1).
+      # 검사도 에뮬레이터도 이걸 못 잡으므로(그 탐지기가 없다), 권한이 늘어난 것만이라도
+      # 여기서 세운다. 목록을 늘릴 때는 **실제 폰에서 설치부터 해보고** 늘릴 것
       - name: 권한 확인
-        # **한국 폰에서 설치가 막히는 것을 여기서 잡는다.** v2.6.6 이 상주 서비스를
-        # 넣었다가 보이스피싱 탐지에 걸려 설치 자체가 거부됐다(CLAUDE.md 11-6-1).
-        # 검사도 에뮬레이터도 이걸 못 잡으므로, 권한이 늘어난 것만이라도 여기서 알린다
         run: |
-          APK=$(ls build/app/outputs/flutter-apk/app-arm64-v8a-release.apk)
-          AAPT=$(ls $ANDROID_HOME/build-tools/*/aapt2 | tail -1)
-          GOT=$("$AAPT" dump permissions "$APK" | grep "uses-permission" | sed "s/.*name='//;s/'.*//" | sort)
-          echo "$GOT"
-          # 허용 목록. 늘리려면 **실제 폰에서 설치부터 해보고** 여기에 추가할 것
-          WANT="android.permission.INTERNET
-android.permission.REQUEST_INSTALL_PACKAGES
-kr.pdlab.chupchat.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
-          EXTRA=$(comm -13 <(echo "$WANT" | sort) <(echo "$GOT"))
+          APK=mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          AAPT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/aapt2
+          "$AAPT" dump permissions "$APK" \
+            | grep "uses-permission" | sed "s/.*name='//;s/'.*//" | sort > got.txt
+          echo "지금 권한:"; cat got.txt
+          printf '%s\n' \
+            'android.permission.INTERNET' \
+            'android.permission.REQUEST_INSTALL_PACKAGES' \
+            'kr.pdlab.chupchat.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION' \
+            | sort > want.txt
+          EXTRA=$(comm -13 want.txt got.txt)
           if [ -n "$EXTRA" ]; then
             echo "::error::허용 목록에 없는 권한이 들어왔습니다:"
             echo "$EXTRA"
