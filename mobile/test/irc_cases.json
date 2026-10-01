@@ -1,0 +1,365 @@
+{
+ "parse": [
+  {
+   "line": ":irc.example.com 001 몽키 :Welcome to the Internet Relay Network",
+   "prefix": "irc.example.com",
+   "command": "001",
+   "params": [
+    "몽키",
+    "Welcome to the Internet Relay Network"
+   ],
+   "source_nick": "irc.example.com",
+   "trailing": "Welcome to the Internet Relay Network"
+  },
+  {
+   "line": ":몽키!~mong@1.2.3.4 PRIVMSG #일반 :안녕 다들 뭐해",
+   "prefix": "몽키!~mong@1.2.3.4",
+   "command": "PRIVMSG",
+   "params": [
+    "#일반",
+    "안녕 다들 뭐해"
+   ],
+   "source_nick": "몽키",
+   "trailing": "안녕 다들 뭐해"
+  },
+  {
+   "line": ":몽키!~mong@1.2.3.4 PRIVMSG #일반 :공백   여러   개",
+   "prefix": "몽키!~mong@1.2.3.4",
+   "command": "PRIVMSG",
+   "params": [
+    "#일반",
+    "공백   여러   개"
+   ],
+   "source_nick": "몽키",
+   "trailing": "공백   여러   개"
+  },
+  {
+   "line": ":두리!d@host PRIVMSG 몽키 :귓속말이야",
+   "prefix": "두리!d@host",
+   "command": "PRIVMSG",
+   "params": [
+    "몽키",
+    "귓속말이야"
+   ],
+   "source_nick": "두리",
+   "trailing": "귓속말이야"
+  },
+  {
+   "line": "PING :1234567890",
+   "prefix": null,
+   "command": "PING",
+   "params": [
+    "1234567890"
+   ],
+   "source_nick": "",
+   "trailing": "1234567890"
+  },
+  {
+   "line": ":irc.example.com 353 몽키 = #일반 :@몽키 +두리 앨리스 ~밥",
+   "prefix": "irc.example.com",
+   "command": "353",
+   "params": [
+    "몽키",
+    "=",
+    "#일반",
+    "@몽키 +두리 앨리스 ~밥"
+   ],
+   "source_nick": "irc.example.com",
+   "trailing": "@몽키 +두리 앨리스 ~밥"
+  },
+  {
+   "line": ":irc.example.com 366 몽키 #일반 :End of /NAMES list.",
+   "prefix": "irc.example.com",
+   "command": "366",
+   "params": [
+    "몽키",
+    "#일반",
+    "End of /NAMES list."
+   ],
+   "source_nick": "irc.example.com",
+   "trailing": "End of /NAMES list."
+  },
+  {
+   "line": ":몽키!~m@h JOIN #개발",
+   "prefix": "몽키!~m@h",
+   "command": "JOIN",
+   "params": [
+    "#개발"
+   ],
+   "source_nick": "몽키",
+   "trailing": "#개발"
+  },
+  {
+   "line": ":몽키!~m@h PART #개발 :나간다",
+   "prefix": "몽키!~m@h",
+   "command": "PART",
+   "params": [
+    "#개발",
+    "나간다"
+   ],
+   "source_nick": "몽키",
+   "trailing": "나간다"
+  },
+  {
+   "line": ":몽키!~m@h QUIT :Client Quit",
+   "prefix": "몽키!~m@h",
+   "command": "QUIT",
+   "params": [
+    "Client Quit"
+   ],
+   "source_nick": "몽키",
+   "trailing": "Client Quit"
+  },
+  {
+   "line": ":irc.example.com 433 * 몽키 :Nickname is already in use",
+   "prefix": "irc.example.com",
+   "command": "433",
+   "params": [
+    "*",
+    "몽키",
+    "Nickname is already in use"
+   ],
+   "source_nick": "irc.example.com",
+   "trailing": "Nickname is already in use"
+  },
+  {
+   "line": "@time=2026-09-30T00:00:00Z :몽키!~m@h PRIVMSG #일반 :태그 달린 줄",
+   "prefix": "몽키!~m@h",
+   "command": "PRIVMSG",
+   "params": [
+    "#일반",
+    "태그 달린 줄"
+   ],
+   "source_nick": "몽키",
+   "trailing": "태그 달린 줄"
+  },
+  {
+   "line": ":서버 NOTICE * :*** Looking up your hostname...",
+   "prefix": "서버",
+   "command": "NOTICE",
+   "params": [
+    "*",
+    "*** Looking up your hostname..."
+   ],
+   "source_nick": "서버",
+   "trailing": "*** Looking up your hostname..."
+  },
+  {
+   "line": ":몽키!~m@h PRIVMSG #일반 :시간 10 :30 에 보자",
+   "prefix": "몽키!~m@h",
+   "command": "PRIVMSG",
+   "params": [
+    "#일반",
+    "시간 10 :30 에 보자"
+   ],
+   "source_nick": "몽키",
+   "trailing": "시간 10 :30 에 보자"
+  },
+  {
+   "line": "ERROR",
+   "prefix": null,
+   "command": "ERROR",
+   "params": [],
+   "source_nick": "",
+   "trailing": ""
+  },
+  {
+   "line": ":몽키!~m@h PRIVMSG #일반 :\u0001VERSION\u0001",
+   "prefix": "몽키!~m@h",
+   "command": "PRIVMSG",
+   "params": [
+    "#일반",
+    "\u0001VERSION\u0001"
+   ],
+   "source_nick": "몽키",
+   "trailing": "\u0001VERSION\u0001"
+  },
+  {
+   "line": ":몽키!~m@h PRIVMSG #일반 :\u0001ACTION 춤춘다\u0001",
+   "prefix": "몽키!~m@h",
+   "command": "PRIVMSG",
+   "params": [
+    "#일반",
+    "\u0001ACTION 춤춘다\u0001"
+   ],
+   "source_nick": "몽키",
+   "trailing": "\u0001ACTION 춤춘다\u0001"
+  },
+  {
+   "line": ":몽키!~m@h PRIVMSG #일반 :\u0001FCAVATAR abc 1/3 ZZZ",
+   "prefix": "몽키!~m@h",
+   "command": "PRIVMSG",
+   "params": [
+    "#일반",
+    "\u0001FCAVATAR abc 1/3 ZZZ"
+   ],
+   "source_nick": "몽키",
+   "trailing": "\u0001FCAVATAR abc 1/3 ZZZ"
+  },
+  {
+   "line": ":irc.example.com 475 몽키 #비밀방 :Cannot join channel (+k)",
+   "prefix": "irc.example.com",
+   "command": "475",
+   "params": [
+    "몽키",
+    "#비밀방",
+    "Cannot join channel (+k)"
+   ],
+   "source_nick": "irc.example.com",
+   "trailing": "Cannot join channel (+k)"
+  }
+ ],
+ "split": [
+  {
+   "text": "",
+   "pieces": []
+  },
+  {
+   "text": "짧은 글",
+   "pieces": [
+    "짧은 글"
+   ]
+  },
+  {
+   "text": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+   "pieces": [
+    "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+    "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가"
+   ]
+  },
+  {
+   "text": "띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 ",
+   "pieces": [
+    "띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가",
+    "띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가",
+    "띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가",
+    "띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 띄어쓰기가 "
+   ]
+  },
+  {
+   "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "pieces": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+   ]
+  },
+  {
+   "text": "짧은앞부분 나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나",
+   "pieces": [
+    "짧은앞부분 나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나",
+    "나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나",
+    "나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나나"
+   ]
+  },
+  {
+   "text": "영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 ",
+   "pieces": [
+    "영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글",
+    "영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글",
+    "영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글 영문 and 한글 섞인 글",
+    "영문 and 한글 섞인 글 "
+   ]
+  }
+ ],
+ "normalize_channel": [
+  {
+   "name": "일반",
+   "out": "#일반"
+  },
+  {
+   "name": "#일반",
+   "out": "#일반"
+  },
+  {
+   "name": "  개발  ",
+   "out": "#개발"
+  },
+  {
+   "name": "&로컬",
+   "out": "&로컬"
+  },
+  {
+   "name": "+모드",
+   "out": "+모드"
+  },
+  {
+   "name": "!느낌표",
+   "out": "!느낌표"
+  },
+  {
+   "name": "",
+   "out": ""
+  },
+  {
+   "name": "   ",
+   "out": ""
+  }
+ ],
+ "is_ctcp_frame": [
+  {
+   "text": "\u0001VERSION\u0001",
+   "out": true
+  },
+  {
+   "text": "\u0001잘린것",
+   "out": true
+  },
+  {
+   "text": "보통 글",
+   "out": false
+  },
+  {
+   "text": "",
+   "out": false
+  },
+  {
+   "text": " \u0001앞에공백",
+   "out": false
+  }
+ ],
+ "names_reply": [
+  {
+   "line": ":irc.example.com 353 몽키 = #일반 :@몽키 +두리 앨리스 ~밥",
+   "names": [
+    "몽키",
+    "두리",
+    "앨리스",
+    "밥"
+   ]
+  }
+ ],
+ "constants": {
+  "MAX_MESSAGE_BYTES": 380,
+  "MAX_NICK_RETRIES": 3,
+  "NICK_COLLISION_NUMERICS": [
+   "432",
+   "433",
+   "436"
+  ],
+  "CHANNEL_JOIN_ERROR_NUMERICS": [
+   "403",
+   "405",
+   "471",
+   "473",
+   "474",
+   "475"
+  ]
+ },
+ "format": {
+  "pass": "PASS 비밀",
+  "nick": "NICK 몽키",
+  "user": "USER mong 0 * :몽키 님",
+  "join": "JOIN #일반",
+  "join_key": "JOIN #비밀 열쇠",
+  "privmsg": "PRIVMSG #일반 :안녕",
+  "notice": "NOTICE 몽키 :알림",
+  "part": "PART #일반",
+  "part_reason": "PART #일반 :간다",
+  "quit": "QUIT",
+  "quit_reason": "QUIT :종료",
+  "pong": "PONG :1234",
+  "ping": "PING :1234",
+  "names": "NAMES #일반"
+ }
+}
