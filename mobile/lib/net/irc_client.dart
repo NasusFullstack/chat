@@ -14,6 +14,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../core/irc_protocol.dart';
+import 'trusted_certs.dart' as certs;
 
 /// 연결이 어떤 상태인가 - 화면이 이걸 보고 안내 문구를 바꾼다.
 enum LinkState { idle, connecting, connected, closed, failed }
@@ -37,29 +38,48 @@ class IrcClient {
 
   String lastError = '';
 
+  /// 처음 보는 인증서를 만났을 때 그 지문. 화면이 사람에게 보여주고 물어본다
+  String pendingFingerprint = '';
+
+  /// 전에 믿기로 한 것과 **달라졌는가**. 서버를 바꾼 게 아니라면 위험하다
+  bool fingerprintChanged = false;
+
   bool get isConnected => _socket != null;
 
   /// 서버에 붙는다. [secure]면 TLS로 붙는다(대부분의 IRC 서버가 6697 포트에서 쓴다).
   ///
-  /// [allowBadCertificate]는 **직접 운영하는 서버**를 위한 것이다. 개인 서버는 자체
-  /// 서명 인증서를 쓰는 경우가 흔한데, 그걸 무조건 막으면 아예 못 붙는다. 다만 켜면
-  /// 중간에서 가로채는 것을 못 걸러내므로, 화면에서 사람에게 물어본 뒤에만 켜야 한다.
+  /// 개인이 돌리는 서버는 대개 자체 서명 인증서를 쓴다. 무조건 막으면 못 붙고,
+  /// 무조건 넘기면 가짜 서버를 구분할 수 없다.
+  ///
+  /// 그래서 **전에 믿기로 한 그 인증서만** 받아들인다(trusted_certs.dart). 처음 보는
+  /// 것이면 붙지 않고 지문만 남긴다 - 화면이 사람에게 보여주고 물어본 뒤 다시 부른다.
   Future<bool> connect({
     required String host,
     required int port,
     bool secure = true,
-    bool allowBadCertificate = false,
     Duration timeout = const Duration(seconds: 15),
   }) async {
     await close();
+    pendingFingerprint = '';
+    fingerprintChanged = false;
     _state.add(LinkState.connecting);
+    final known = secure ? await certs.knownFingerprint(host, port) : '';
     try {
       final socket = secure
           ? await SecureSocket.connect(
               host,
               port,
               timeout: timeout,
-              onBadCertificate: (_) => allowBadCertificate,
+              onBadCertificate: (cert) {
+                final seen = certs.fingerprintOf(cert);
+                if (known.isNotEmpty && seen == known) {
+                  return true;      // 전에 내가 보고 믿기로 한 바로 그 인증서다
+                }
+                // 모르는 인증서다. 붙지 않고 사람에게 물어볼 거리만 남긴다
+                pendingFingerprint = seen;
+                fingerprintChanged = known.isNotEmpty;
+                return false;
+              },
             )
           : await Socket.connect(host, port, timeout: timeout);
       socket.setOption(SocketOption.tcpNoDelay, true);
@@ -81,7 +101,7 @@ class IrcClient {
       _state.add(LinkState.connected);
       return true;
     } on Object catch (error) {
-      lastError = _friendly(error);
+      lastError = pendingFingerprint.isEmpty ? _friendly(error) : '';
       _state.add(LinkState.failed);
       return false;
     }
@@ -147,9 +167,8 @@ class IrcClient {
       return '서버에 연결하지 못했습니다. 인터넷 연결과 주소를 확인해 주세요.';
     }
     if (error is HandshakeException) {
-      // 개인 서버는 자체 서명 인증서를 쓰는 일이 흔하다 - 그때 이 안내가 뜬다
-      return '서버 인증서를 믿을 수 없습니다. 직접 운영하는 서버라면 '
-          '"인증서 검사 건너뛰기"를 켜고 다시 시도해 주세요.';
+      // 지문을 못 읽은 경우에만 여기까지 온다(읽었으면 화면이 물어본다)
+      return '서버와 암호화 연결을 맺지 못했습니다. 주소와 포트를 확인해 주세요.';
     }
     return text;
   }

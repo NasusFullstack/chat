@@ -1,12 +1,13 @@
 # 춥채팅 (ChupChat)
 
-![platform](https://img.shields.io/badge/platform-Windows-0078D6)
+![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Android-0078D6)
 ![python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/PySide6-Qt%206-41CD52?logo=qt&logoColor=white)
+![flutter](https://img.shields.io/badge/Flutter-Android-02569B?logo=flutter&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-89%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-90%20%2B%20127%20passing-brightgreen)
 
-**IRC 채팅 GUI 클라이언트 — Python + PySide6로 만든 윈도우 데스크톱 앱.**
+**IRC 채팅 클라이언트 — 윈도우 앱(Python + PySide6)과 안드로이드 앱(Flutter).**
 
 Libera.Chat 같은 표준 IRC 서버에 그대로 접속해서 쓰는 채팅 프로그램입니다.
 터미널이 아니라 창 프로그램이고, 아이콘·이모티콘·링크 미리보기처럼 요즘 메신저에서 쓰는
@@ -15,7 +16,8 @@ Libera.Chat 같은 표준 IRC 서버에 그대로 접속해서 쓰는 채팅 프
 ![춥채팅 실행 화면](docs/screenshot.png)
 
 [**최신 버전 내려받기**](https://github.com/NasusFullstack/chat/releases/latest) ·
-[변경 내역](CHANGELOG.md) · Windows · 설치 후 자동 업데이트
+[변경 내역](CHANGELOG.md) · Windows(`FriendChat_Setup.exe`) · Android(`ChupChat.apk`) ·
+둘 다 설치 후 자동 업데이트
 
 ---
 
@@ -36,7 +38,10 @@ Libera.Chat 같은 표준 IRC 서버에 그대로 접속해서 쓰는 채팅 프
 | **끊겨도 알아서 복구** | 연결이 끊기면 간격을 늘려가며 재접속하고, 보던 채널로 되돌아감 |
 | **링크 미리보기 / 이모티콘** | 이미지·움짤·뉴스 카드를 클라이언트에서 직접 렌더링(서버 자원을 쓰지 않음) |
 | **창을 닫아도 계속 받음** | 트레이에 상주하고, 새 메시지는 앱이 직접 그린 팝업으로 알림(보여줄 범위를 네 단계로 조절) |
-| **누가 뭘로 접속했나** | CTCP VERSION으로 상대 클라이언트를 알아내 참여자 목록에 로고로 표시(WeeChat·irssi·Discord 다리 등) |
+| **누가 뭘로 접속했나** | 참여자 목록에 그 사람이 쓰는 프로그램을 로고로 표시(WeeChat·irssi·Discord 다리 등). 각자 **자기가 무엇인지 중계 서버에 적어두고** 프로필을 받아올 때 같이 읽습니다 — 아무에게도 묻지 않습니다. IRC로 직접 묻는 길(CTCP VERSION)은 코드에 남겨 꺼뒀습니다 |
+| **폰에서도 같은 방** | 안드로이드 앱이 같은 서버·같은 채널에 들어갑니다. 참여자 목록에는 춥채팅 표시와 폰 표시가 같이 뜹니다 |
+| **폰 알림** | 홈으로 나가도 접속이 유지되고, 새 말이 오면 알립니다. 알림은 **최신 하나만** — 수다 한 번에 수십 개로 쌓이지 않습니다 |
+| **들어갔던 방 기억** | 다시 켜면 지난번 채널에 그대로 들어갑니다. **이름마다 따로** 적으므로 한 기기를 둘이 써도 섞이지 않습니다 |
 | **IRC에 없는 것들을 얹음** | 프로필 아이콘·표시 닉네임·@호출 알림을 CTCP 프레임으로 주고받아, 다른 IRC 클라이언트와 같은 채널에 있어도 대화가 깨지지 않음 |
 
 ## 어떻게 만들었나
@@ -58,12 +63,16 @@ gui/
   toast.py       앱이 직접 그리는 알림 팝업 / tray.py 트레이 상주
   event_router.py  도메인 이벤트 -> 화면 동작 표
 server.py        asyncio 서버 (TLS)
+mobile/          안드로이드 앱 (Flutter) - core/ 가 PC 파이썬 코드와 답을 대조한다
 ```
 
 **프로토콜 분기를 코드에서 없앴습니다.** `if protocol == "irc"` 같은 분기 대신 전략 객체와
 표(registry)를 씁니다. 새 프로토콜은 클래스 하나 만들고 표에 한 줄 등록하면 됩니다.
 
-**회귀 테스트 89개**가 실제 서버를 띄워서 돕니다(`python tests/run_all.py`).
+**회귀 테스트 90개**가 실제 서버를 띄워서 돕니다(`python tests/run_all.py`).
+모바일은 따로 **127개**(`cd mobile && flutter test`)인데, 그중 일부는 파이썬이 뽑아둔
+답(`test/*.json`)과 다트의 답이 **같은지** 대조합니다 — 두 앱이 같은 서버에서 같은
+대화를 다르게 해석하기 시작하면 그게 가장 찾기 어려운 버그입니다.
 화면을 건드리는 작업은 [픽셀 단위 비교 도구](tests/ui_snapshot.py)로 리팩토링 전후가
 같은지 확인합니다 — 기능 테스트는 배치가 몇 px 틀어진 것을 못 잡기 때문입니다.
 
@@ -73,7 +82,8 @@ server.py        asyncio 서버 (TLS)
 
 ## 기술
 
-`Python 3.13` `PySide6 (Qt6)` `IRC (RFC 1459 · IRCv3)` `asyncio` `TLS` `PyInstaller` `Inno Setup` `GitHub Actions`
+`Python 3.13` `PySide6 (Qt6)` `Flutter / Dart` `IRC (RFC 1459 · IRCv3)` `asyncio` `TLS`
+`FastAPI` `PyInstaller` `Inno Setup` `GitHub Actions`
 
 ---
 
@@ -238,6 +248,44 @@ python cli_client.py <서버주소> <포트> [cert.pem 경로] [ssl여부: on/of
 - `/`를 치면 지금 접속한 서버에서 쓸 수 있는 명령 목록이 뜸
   (`/`로 시작하는 평범한 메시지를 보내려면 `//메시지`처럼 두 번)
 
+---
+
+## 📱 안드로이드 앱
+
+[릴리즈](https://github.com/NasusFullstack/chat/releases/latest)에서 `ChupChat.apk`를
+받아 설치하면 폰에서도 **같은 서버, 같은 채널**에서 이야기할 수 있습니다. 스토어에
+올리지 않으므로 처음 설치할 때 "출처를 알 수 없는 앱"을 한 번 허용해야 하고,
+그 뒤로는 앱이 스스로 새 버전을 확인해서 받아 설치합니다.
+
+| | |
+|---|---|
+| **되는 것** | 채팅 · 여러 채널 · 참여자 목록(얼굴·프로그램 표시) · 사진/파일 보내기 · 이모티콘 · 놓친 대화 하루치 · 자동 업데이트 |
+| **알림** | 홈으로 나가도 접속이 유지되고 새 말이 오면 알립니다. 알림은 **최신 하나만** 보입니다 |
+| **기억** | 이름과 들어갔던 채널을 기기에 적어두고 다음에 알아서 들어갑니다(끌 수 있습니다) |
+| **아직** | 전투(배틀크루저)는 PC에서만 됩니다 |
+
+### 왜 "접속 중" 알림이 떠 있나
+
+안드로이드 11부터는 화면에서 사라진 앱의 프로세스를 **얼려버립니다**(cached app
+freezer). 그러면 서버가 보내는 PING에 답을 못 해서 서버가 연결을 끊습니다 —
+실제로 홈 버튼만 눌러도 접속이 끊기는 증상이 그것이었습니다.
+
+얼지 않으려면 "지금 사용자를 위해 일하고 있다"고 안드로이드에 알려야 하고
+(포그라운드 서비스), 그 대가로 **알림 하나를 띄우는 것이 규칙입니다.** 앱이 숨길 수
+없습니다. 그게 싫으면 설정에서 끌 수 있고, 끄면 홈으로 나갈 때 접속이 끊깁니다.
+최근 앱 목록에서 밀어서 끄면 접속도 같이 끊깁니다.
+
+### PC와 꼬이지 않게 하는 방법
+
+같은 서버에서 같은 대화를 **두 앱이 다르게 해석하기 시작하면** 그게 가장 찾기 어려운
+버그입니다(예전에 GUI와 CLI가 그렇게 갈라졌습니다). 그래서 모바일은 판단 규칙을
+`mobile/lib/core/`에 모으고, 파이썬이 뽑아둔 답과 **다트의 답이 같은지 대조하는
+검사**를 둡니다(`mobile/test/*_cases.json`). 자세한 약속은
+[mobile/README.md](mobile/README.md)에 적어뒀습니다.
+
+버전은 **PC와 같이 올라갑니다** — `version.py`와 `mobile/pubspec.yaml`이 어긋나면
+검사가 실패합니다(`tests/test_version_sync.py`).
+
 ## 치트 이스터에그
 
 채팅창에 그대로 치면 그 채널에 있는 모두의 화면에 뜹니다 (채널당 1분 쿨타임).
@@ -269,6 +317,6 @@ python cli_client.py <서버주소> <포트> [cert.pem 경로] [ssl여부: on/of
 
 ## 아직 없는 것
 
-- 이미지/파일 전송
+- 폰에서 전투(배틀크루저) — PC끼리만 됩니다
 - 실제 IRC 모드: SASL, DCC, CAP 협상은 지원하지 않음
 - `@닉네임` 자동완성의 초성 검색(`ㅁ` → `몽키`) — 앞글자 검색만 됩니다

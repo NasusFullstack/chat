@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 2.6.5+5
+version: 2.6.6+6
 
 environment:
   sdk: ^3.13.4
@@ -40,6 +40,8 @@ dependencies:
   url_launcher: ^6.3.2
   path_provider: ^2.1.6
   package_info_plus: ^10.2.1
+  shared_preferences: ^2.5.5
+  flutter_local_notifications: ^22.3.1
 
 dev_dependencies:
   flutter_test:
@@ -51,6 +53,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -62,6 +65,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/logo.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -93,3 +99,15 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# 앱 아이콘 - 설치할 때와 홈 화면에 나오는 그림.
+# 고치고 나서 `flutter pub run flutter_launcher_icons` 를 돌리면 기기 해상도별로
+# 알아서 만들어 넣는다(mipmap-* 폴더들)
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/logo.png"
+  # 안드로이드 8부터는 테마에 맞춰 모양이 바뀌는 아이콘을 쓴다. 배경색을 따로 주면
+  # 둥근 모양으로 잘려도 그림이 안 깨진다
+  adaptive_icon_background: "#1b1d27"
+  adaptive_icon_foreground: "assets/logo.png"

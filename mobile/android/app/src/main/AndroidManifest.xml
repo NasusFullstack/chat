@@ -5,6 +5,13 @@
     <!-- 새 버전을 받아 설치 화면을 띄우는 데 필요하다. 이게 없으면 아무 일도 안 일어난다.
          실제 설치는 사람이 마지막 '설치'를 눌러야 되므로 앱이 몰래 깔 수는 없다 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <!-- 알림 - 안드로이드 13부터는 사람이 허락해야 보인다(앱에서 따로 물어본다) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- 홈으로 나가도 접속이 끊기지 않게 하려면 포그라운드 서비스가 필요하다.
+         안드로이드 11부터 화면에서 사라진 앱의 프로세스를 얼려버리기 때문이다
+         (얼면 서버 PING 에 PONG 을 못 해서 서버가 연결을 끊는다) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
 
     <application
         android:label="춥채팅"
@@ -33,6 +40,15 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 접속을 붙잡아 두는 서비스. 하는 일은 ChatService.kt 에 적어뒀다.
+             stopWithTask: 최근 앱 목록에서 밀어서 끄면 접속도 같이 끊긴다 -
+             "끈 줄 알았는데 계속 접속되어 있는" 상태를 만들지 않는다 -->
+        <service
+            android:name=".ChatService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="true" />
+
         <!-- 받아온 APK를 시스템 설치 화면에 넘겨주는 통로.
              안드로이드 7부터 file:// 주소를 다른 앱에 넘기면 예외가 난다 -->
         <provider

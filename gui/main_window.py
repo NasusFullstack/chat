@@ -22,6 +22,7 @@ import error_log
 import trusted_certs
 import avatar_store
 import relay
+import channel_store
 import client_version_store
 import irc_protocol
 import login_prefs
@@ -32,6 +33,7 @@ from gui.login_request import parse_login_values
 from gui.reconnect import ReconnectPolicy
 from gui.tray import TrayIcon
 from gui.chat_log_sync import ChatLogSync
+from gui import client_badges
 from gui.client_probe import ClientProbeController
 from gui.emoji_backup import EmojiBackup
 from gui.profile_sync import ProfileSync
@@ -119,6 +121,8 @@ class MainWindow(QMainWindow):
         self._auto_login_suppressed = False
         self._host = ""
         self._port = 0
+        # 지난번 채널에 다시 들어가는 중인가(그동안은 기억을 덮어쓰지 않는다)
+        self._rejoining = False
 
         # ---- 끊겼을 때 자동 재접속 ----
         # 예전엔 끊김을 알려주는 경로가 아예 없어서, 서버가 죽어도 화면상으론 멀쩡해 보이고
@@ -244,6 +248,9 @@ class MainWindow(QMainWindow):
         self.log_sync.missed.connect(self._show_missed)
         self.profile_sync = ProfileSync(protocol, host, port, self)
         self.profile_sync.profile_known.connect(self._on_server_profile)
+        # 무슨 프로그램을 쓰는지도 같은 조회로 온다. IRC 로 물어보던 길은 꺼뒀다
+        # (gui/client_probe.py 의 ASK_OVER_IRC)
+        self.profile_sync.client_known.connect(self._on_server_client)
         # 이모티콘을 누구와 같이 쓰는지도 서버가 바뀌면 같이 바뀐다.
         # **창을 조립하는 도중에도 불린다**(로그인 전에도 빈 세션을 하나 두기 때문) -
         # 그때는 채팅 화면이 아직 없으므로 확인하고 넘어간다
@@ -303,10 +310,28 @@ class MainWindow(QMainWindow):
 
         채팅 통로로 보내는 길은 그대로 둔 채 **하나 더** 하는 것이다 - 중계 서버를 못
         쓰는 상황에서도 지금처럼 동작해야 한다.
+
+        "나는 춥채팅 PC 몇 버전"도 같이 올린다. 그러면 남이 나에게 CTCP VERSION 을
+        물어볼 필요가 없다 - 서버마다 그걸 폭주로 보고 거절하는 문제가 사라진다.
         """
         if not self.my_id:
             return
-        self.profile_sync.publish(self.my_id, self._my_avatar_b64 or "")
+        self.profile_sync.publish(self.my_id, self._my_avatar_b64 or "",
+                                  client=client_badges.my_client_info())
+
+    def _on_server_client(self, nick: str, client: dict):
+        """중계 서버가 "그 사람은 이 프로그램"이라고 알려줬다.
+
+        IRC 로 알아낸 것과 **같은 자리에 적는다**(client_version_store). 그러면 배지를
+        그리는 코드도, 다음 실행에 기억하는 길도 한 벌로 끝난다.
+        """
+        text = client_badges.text_from_client(client)
+        if not text:
+            return
+        self.remember_client_version(nick, text)
+        chat_page = getattr(self, "chat_page", None)
+        if chat_page is not None:
+            chat_page.set_client_version(nick, text)
 
     def want_profiles(self, channel: str):
         """지금 보이는 사람들의 얼굴을 서버에 물어본다(이미 아는 사람은 알아서 건너뛴다)."""
@@ -897,6 +922,40 @@ class MainWindow(QMainWindow):
         self._stop_connecting()
     def save_login_prefs(self):
         self._save_login_prefs()
+
+    # ---------------- 들어가 있던 채널 기억 ----------------
+    def remember_channels(self):
+        """지금 들어가 있는 채널을 적어둔다(다음에 켤 때 그대로 들어가게).
+
+        **다시 들어가는 동안에는 적지 않는다.** 한 방에 들어갈 때마다 덮어쓰면, 도중에
+        앱이 꺼지면 아직 못 들어간 방들이 통째로 사라진다.
+        """
+        if self._rejoining or not self.my_id or not self._host:
+            return
+        channel_store.save(self._host, self._port, self.my_id,
+                           self.chat_page.channels())
+
+    def rejoin_saved_channels(self) -> bool:
+        """지난번에 들어가 있던 채널에 다시 들어간다. 들어갈 게 있으면 True.
+
+        한꺼번에 보내지 않고 한 박자씩 띄운다 - 서버는 짧은 시간에 몰린 요청을 폭주로
+        보고 연결을 끊는다(CLAUDE.md 2-4).
+        """
+        rooms = [room for room in
+                 channel_store.load(self._host, self._port, self.my_id)
+                 if not self.chat_page.has_channel(room)]
+        if not rooms:
+            return False
+        self._rejoining = True
+        for index, room in enumerate(rooms):
+            QTimer.singleShot(index * 400, lambda r=room: self.session.join_channel(r))
+        # 마지막 요청이 나간 뒤에 기억을 다시 열어준다
+        QTimer.singleShot(len(rooms) * 400 + 100, self._rejoin_done)
+        return True
+
+    def _rejoin_done(self):
+        self._rejoining = False
+        self.remember_channels()
     @property
     def is_reconnecting(self) -> bool:
         return self._reconnect.active

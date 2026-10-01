@@ -2,18 +2,28 @@
 ///
 /// PC 앱과 **같은 서버, 같은 사람들**이다. 무슨 일이 일어났는지 판단하는 규칙은
 /// `core/`에 있고 PC의 파이썬 코드와 답을 대조해둔다(`test/`).
+///
+/// 화면 흐름은 PC 앱과 같다:
+///
+///     시작화면(로고·버전 확인) --> 로그인 --> 채팅
+///
+/// 시작화면을 먼저 두는 이유는 PC 앱과 같다 - 새 버전 확인에 잠깐 걸리는데, 그동안
+/// 로그인 화면이 떠 있으면 사람이 이름을 치기 시작하고 그 위로 업데이트 안내가 덮친다.
 library;
 
 import 'package:flutter/material.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
 import 'app_state.dart';
-import 'net/updater.dart';
+import 'net/notifier.dart';
+import 'prefs.dart';
 import 'ui/chat_page.dart';
 import 'ui/login_page.dart';
-import 'ui/update_sheet.dart';
+import 'ui/splash_page.dart';
 
 void main() => runApp(const ChupChatApp());
+
+/// 지금 어느 장면인가. 화면은 이 셋뿐이다(mobile/README.md 의 약속).
+enum _Scene { splash, login, chat }
 
 class ChupChatApp extends StatefulWidget {
   const ChupChatApp({super.key});
@@ -22,44 +32,59 @@ class ChupChatApp extends StatefulWidget {
   State<ChupChatApp> createState() => _ChupChatAppState();
 }
 
-class _ChupChatAppState extends State<ChupChatApp> {
+class _ChupChatAppState extends State<ChupChatApp>
+    with WidgetsBindingObserver {
   final AppState _state = AppState();
-  final GlobalKey<NavigatorState> _nav = GlobalKey<NavigatorState>();
-  bool _loggedIn = false;
+  _Scene _scene = _Scene.splash;
 
   @override
   void initState() {
     super.initState();
-    // 켤 때 한 번만 확인한다. 스토어가 없으니 아무도 대신 알려주지 않는다 -
-    // 그냥 두면 사람마다 다른 버전을 쓰게 되고 "나만 안 보인다"가 생긴다
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkUpdate());
-  }
-
-  Future<void> _checkUpdate() async {
-    final updater = Updater();
-    // 지난번에 받아둔 설치 파일이 있으면 먼저 치운다(50MB짜리가 남아 있을 이유가 없다).
-    // 설치 직후에 지우면 설치 화면이 읽는 중이라 깨지므로 여기서 한다
-    await updater.cleanLeftover();
-    final info = await PackageInfo.fromPlatform();
-    final found = await updater.check(info.version);
-    if (found == null) return;      // 최신이거나 못 물어봤다 - 조용히 넘어간다
-    // 물어보는 사이에 앱이 꺼졌을 수 있다. 그때 화면을 띄우려 하면 예외가 난다
-    if (!mounted) return;
-    final navigator = _nav.currentState;
-    if (navigator == null || !navigator.mounted) return;
-    await showUpdate(navigator.context, found);
+    // 홈으로 나갔는지 돌아왔는지를 알아야 한다 - 보고 있을 때 알림을 띄우면 안 된다
+    WidgetsBinding.instance.addObserver(this);
+    _state.notifier = LocalNotifier();
+    Prefs.load().then((loaded) {
+      if (mounted) _state.prefs = loaded;
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _state.dispose();
     super.dispose();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState phase) {
+    // resumed 만 '보고 있는 중'이다. inactive 는 알림창을 내렸거나 전화가 온 것처럼
+    // 잠깐 가려진 상태라서, 그때 알림을 띄우면 눈앞에 있는데도 울린다
+    if (phase == AppLifecycleState.resumed) {
+      _state.cameBack();
+    } else if (phase == AppLifecycleState.paused ||
+        phase == AppLifecycleState.hidden) {
+      _state.wentBackground();
+    }
+  }
+
+  /// 버전 확인과 업데이트 안내는 시작화면이 한다(여기서 또 하지 말 것 - 두 번 묻게 된다).
+  Widget _page() {
+    switch (_scene) {
+      case _Scene.splash:
+        return SplashPage(onDone: () => setState(() => _scene = _Scene.login));
+      case _Scene.login:
+        return LoginPage(
+          state: _state,
+          onDone: () => setState(() => _scene = _Scene.chat),
+        );
+      case _Scene.chat:
+        return ChatPage(state: _state);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      navigatorKey: _nav,
       title: '춥채팅',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -70,12 +95,7 @@ class _ChupChatAppState extends State<ChupChatApp> {
           brightness: Brightness.dark,
         ),
       ),
-      home: _loggedIn
-          ? ChatPage(state: _state)
-          : LoginPage(
-              state: _state,
-              onDone: () => setState(() => _loggedIn = true),
-            ),
+      home: _page(),
     );
   }
 }

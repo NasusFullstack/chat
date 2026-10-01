@@ -7,6 +7,20 @@
 
 여기서 하는 판단은 전부 **아껴 묻기**에 관한 것이다 - 자세한 근거는 CLAUDE.md 2-4 참고.
 화면에 직접 손대지 않고, 사용자에게 알릴 일이 있으면 생성자로 받은 notify()에 맡긴다.
+
+## 지금은 꺼져 있다 (ASK_OVER_IRC = False)
+중계 서버가 같은 것을 알려주게 되어서(features/profiles.py 의 client), **아무에게도
+물어볼 필요가 없어졌다.** 각자 자기가 무엇인지 프로필에 적어두고, 참여자 목록을 받을
+때 어차피 하는 조회 한 번으로 같이 온다.
+
+IRC 로 묻는 길이 안고 있던 문제가 그래서 다 사라진다:
+ - 서버가 폭주로 보고 거절한다(UnrealIRCd: "Multi-target messaging is not allowed")
+ - 상대 화면에 "CTCP VERSION received from ..."이 찍힌다 - 켤 때마다 실례다
+ - 다리 봇은 자기가 쓰는 라이브러리를 답한다(실측: girc ... using go1.19.5)
+
+**코드는 지우지 않고 그대로 둔다.** 중계 서버를 못 쓰는 곳(다른 IRC 서버에 붙거나
+중계가 내려간 경우)에서는 이 길이 유일한 방법이므로, 아래 한 줄만 True 로 바꾸면
+예전처럼 동작한다.
 """
 import time
 
@@ -14,6 +28,9 @@ from PySide6.QtCore import QObject, QTimer
 
 import app_prefs
 import client_version_store
+
+# IRC 로 직접 물어볼까. 꺼두는 이유는 위 docstring 참고
+ASK_OVER_IRC = False
 
 
 class ClientProbeController(QObject):
@@ -61,6 +78,9 @@ class ClientProbeController(QObject):
     def probe(self, session, host: str, channel: str):
         """그 채널에서 아직 모르는 사람에게만, 그것도 아껴서 물어본다.
 
+        **ASK_OVER_IRC 가 꺼져 있으면 아무것도 안 한다**(지금 기본값) - 중계 서버가
+        같은 것을 알려주므로 물어볼 이유가 없다.
+
         서버와 상대에게 부담을 주지 않으려고 이렇게 아낀다:
         0. 새로 들어온 사람은 **예전 기억을 버리고 다시 확인한다.** 같은 닉네임으로
            다른 프로그램을 켜고 들어올 수 있어서, 기억을 그대로 믿으면 엉뚱한 로고가
@@ -79,6 +99,10 @@ class ClientProbeController(QObject):
         4. 한 명뿐이면(누가 나중에 혼자 들어온 경우) 그 사람에게만 조용히 물어본다.
            한 명에게 보내는 건 실측에서도 막히지 않았고, 채널 전체를 건드릴 이유가 없다
         """
+        # 중계 서버가 알려주므로 아무에게도 묻지 않는다(파일 머리말 참고).
+        # 이 한 줄만 지우면 예전처럼 IRC 로 물어본다
+        if not ASK_OVER_IRC:
+            return
         if not app_prefs.get("show_client_badges"):
             return
         if channel != session.active_channel:

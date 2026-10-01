@@ -436,6 +436,14 @@ class ChatPage(QWidget):
     def has_channel(self, channel: str) -> bool:
         return channel in self._log_views
 
+    def channels(self) -> list:
+        """지금 열려 있는 채널(들어간 순서 그대로).
+
+        순서를 지키는 이유: 다음에 켤 때 같은 순서로 다시 들어가야 채널 목록이
+        어제와 같은 모양으로 보인다.
+        """
+        return list(self._log_views.keys())
+
     def remove_channel(self, channel: str):
         view = self._log_views.pop(channel, None)
         if view is None:
