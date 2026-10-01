@@ -89,6 +89,10 @@ class _BattlePageState extends State<BattlePage> {
   void dispose() {
     _timer?.cancel();
     _sub?.cancel();
+    // 어떻게 나가든(뒤로가기 포함) 연결은 확실히 닫는다. 안 닫으면 서버는 내가
+    // 아직 그 방에 있다고 보고, 남들 화면에는 **움직이지 않는 배**가 남는다
+    widget.link.leave();
+    widget.link.dispose();
     // 채팅으로 돌아가면 세로로 되돌린다 - 안 되돌리면 채팅이 가로로 남는다
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -175,7 +179,13 @@ class _BattlePageState extends State<BattlePage> {
   @override
   Widget build(BuildContext context) {
     final me = _battle.ships[widget.mySlot];
-    return Scaffold(
+    return PopScope(
+      // 뒤로가기로 바로 나가면 "그만두려던 게 아닌데" 가 된다 - 한 번 물어본다
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _askLeave();
+      },
+      child: Scaffold(
       backgroundColor: const Color(0xFF070910),
       body: SafeArea(
         child: LayoutBuilder(
@@ -244,6 +254,7 @@ class _BattlePageState extends State<BattlePage> {
           },
         ),
       ),
+      ),
     );
   }
 
@@ -261,8 +272,8 @@ class _BattlePageState extends State<BattlePage> {
       ),
     );
     if (yes != true || !mounted) return;
-    await widget.link.leave();
-    if (mounted) Navigator.pop(context);
+    // 닫는 일은 dispose 가 한다 - 여기서도 닫으면 두 번이 된다
+    Navigator.pop(context);
   }
 }
 
