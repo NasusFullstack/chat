@@ -59,6 +59,27 @@ jobs:
         working-directory: mobile
         run: flutter build apk --release --split-per-abi
 
+      - name: 권한 확인
+        # **한국 폰에서 설치가 막히는 것을 여기서 잡는다.** v2.6.6 이 상주 서비스를
+        # 넣었다가 보이스피싱 탐지에 걸려 설치 자체가 거부됐다(CLAUDE.md 11-6-1).
+        # 검사도 에뮬레이터도 이걸 못 잡으므로, 권한이 늘어난 것만이라도 여기서 알린다
+        run: |
+          APK=$(ls build/app/outputs/flutter-apk/app-arm64-v8a-release.apk)
+          AAPT=$(ls $ANDROID_HOME/build-tools/*/aapt2 | tail -1)
+          GOT=$("$AAPT" dump permissions "$APK" | grep "uses-permission" | sed "s/.*name='//;s/'.*//" | sort)
+          echo "$GOT"
+          # 허용 목록. 늘리려면 **실제 폰에서 설치부터 해보고** 여기에 추가할 것
+          WANT="android.permission.INTERNET
+android.permission.REQUEST_INSTALL_PACKAGES
+kr.pdlab.chupchat.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+          EXTRA=$(comm -13 <(echo "$WANT" | sort) <(echo "$GOT"))
+          if [ -n "$EXTRA" ]; then
+            echo "::error::허용 목록에 없는 권한이 들어왔습니다:"
+            echo "$EXTRA"
+            echo "실제 폰에서 설치가 막힐 수 있습니다. 설치부터 해보고 목록에 추가하세요."
+            exit 1
+          fi
+
       - name: 서명 확인
         run: |
           APK=mobile/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
