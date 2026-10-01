@@ -100,6 +100,9 @@ class AppState extends ChangeNotifier {
   /// 사람마다의 아이콘(base64). 서버에서 받아온다 - 상대가 접속해 있지 않아도 보인다
   final Map<String, String> avatars = {};
 
+  /// 채널마다 직전에 본 참여자. 새로 들어온 사람을 가려내는 데 쓴다
+  final Map<String, Set<String>> _seenMembers = {};
+
   /// 사람마다 쓰는 프로그램. 이것도 서버에서 받아온다 - IRC 로 물어보던 길은
   /// `core/session.dart`에 남겨둔 채 꺼뒀다(core/client_badge.dart 에 이유)
   final Map<String, ClientInfo> clients = {};
@@ -563,6 +566,7 @@ class AppState extends ChangeNotifier {
         lines.remove(channel);
         members.remove(channel);
         unread.remove(channel);
+        _seenMembers.remove(channel);
         _rememberRooms();
         if (current == channel) current = channels.isEmpty ? '' : channels.first;
       case ChannelJoinFailed(:final text):
@@ -595,6 +599,19 @@ class AppState extends ChangeNotifier {
           _add(where, ChatLine.system(text: text, at: DateTime.now()));
         }
       case UserlistUpdated(:final channel, :final users):
+        // **새로 들어온 사람은 예전 답을 버리고 다시 묻는다.** 같은 이름으로 다른
+        // 기기에서 들어올 수 있다 - 어제는 폰, 오늘은 PC. 한 번 받은 것을 그대로
+        // 믿으면 PC 로 들어온 사람에게 폰 표시가 계속 붙어 있게 된다.
+        // 처음 목록을 받을 때는 '새로 들어온 사람'이 없다(서버 것을 그대로 쓴다)
+        final before = _seenMembers[channel];
+        final now = users.toSet();
+        _seenMembers[channel] = now;
+        if (before != null) {
+          for (final who in now.difference(before)) {
+            _profiles?.forget(who);
+            clients.remove(who);
+          }
+        }
         members[channel] = users;
         // 얼굴은 채팅 통로로 오기를 기다리지 않고 서버에도 물어본다 - 그 사람이 지금
         // 접속해 있지 않아도 보이게
