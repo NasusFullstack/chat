@@ -15,11 +15,15 @@ import 'package:chupchat/app_state.dart';
 import 'package:chupchat/ui/chat_page.dart';
 import 'package:chupchat/ui/layout.dart';
 
-/// 갤S23+ / S25+ / 폴드 접은 바깥 화면이 모두 들어가는 크기
+/// 갤S23+ / S25+ / S25 Ultra 가 모두 들어가는 크기
 const Size narrow = Size(393, 851);
 
-/// 갤Z폴드 편 안쪽 화면 - 거의 정사각형이다
-const Size unfolded = Size(832, 750);
+/// 갤Z폴드7 접은 바깥 화면 - 폭은 보통 폰과 같은데 **유난히 길다**(411x960).
+/// 세로로 긴 화면에서 입력줄이 바닥에 안 붙거나 목록이 안 늘어나는 실수가 나기 쉽다
+const Size foldCover = Size(411, 960);
+
+/// 갤Z폴드7 편 안쪽 화면 - 거의 정사각형이다(750x832)
+const Size unfolded = Size(750, 832);
 
 Future<void> pumpAt(WidgetTester tester, Size size, Widget child) async {
   tester.view.physicalSize = size * tester.view.devicePixelRatio;
@@ -96,9 +100,24 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('폴드7 접은 바깥 화면(길쭉한 쪽)에서도 쓸 수 있다', (tester) async {
+    await pumpAt(tester, foldCover, ChatPage(state: sampleState()));
+    expect(tester.takeException(), isNull);
+    // 길쭉해도 좁은 쪽 분기여야 한다 - 폭은 보통 폰과 같다
+    expect(find.text('#개발'), findsNothing, reason: '411dp 는 한 칸 레이아웃이다');
+    expect(find.byType(TextField), findsOneWidget, reason: '입력줄이 있어야 한다');
+  });
+
+  testWidgets('폴드7 편 화면에서는 두 칸이 된다', (tester) async {
+    await pumpAt(tester, unfolded, ChatPage(state: sampleState()));
+    expect(find.text('#개발'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('화면 가르는 기준이 폰과 펼친 폴드 사이에 있다', () {
-    // 바 형태 폰(369~411)은 전부 좁은 쪽, 펼친 폴드(~832)만 넓은 쪽이어야 한다
-    expect(wideBreakpoint, greaterThan(411));
-    expect(wideBreakpoint, lessThan(750));
+    // 바 형태 폰과 폴드 바깥 화면(369~411)은 전부 좁은 쪽,
+    // 폴드를 편 화면(750~832)만 넓은 쪽이어야 한다
+    expect(wideBreakpoint, greaterThan(411), reason: '폴드 바깥 화면까지 좁은 쪽');
+    expect(wideBreakpoint, lessThan(750), reason: '폴드를 펴면 넓은 쪽');
   });
 }
