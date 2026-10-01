@@ -58,13 +58,15 @@ void main() {
     // 서랍 안에 있으므로 평소에는 안 보인다
     expect(find.text('#개발'), findsNothing);
     expect(find.byTooltip('참여자'), findsOneWidget);
-    expect(find.text('안녕 다들 뭐해'), findsOneWidget);
+    expect(find.textContaining('안녕 다들 뭐해', findRichText: true),
+        findsOneWidget);
   });
 
   testWidgets('넓은 화면에서는 채널 목록이 옆에 펼쳐진다', (tester) async {
     await pumpAt(tester, unfolded, ChatPage(state: sampleState()));
     expect(find.text('#개발'), findsOneWidget, reason: '두 칸이면 채널이 바로 보여야 한다');
-    expect(find.text('안녕 다들 뭐해'), findsOneWidget);
+    expect(find.textContaining('안녕 다들 뭐해', findRichText: true),
+        findsOneWidget);
   });
 
   testWidgets('접었다 펴도 쓰던 글이 남는다', (tester) async {

@@ -90,7 +90,10 @@ class MessageWidget(QWidget):
 
         # 링크 미리보기 자리. 못 받으면 높이 0이라 평소 메시지와 똑같이 보임
         self.preview_area = None
-        self.preview_urls = extract_urls(text) if preview else []
+        # **이모티콘을 떼어낸 글자**에서 찾아야 한다. 원문(text)에서 찾으면 이모티콘
+        # 주소까지 링크로 잡혀서, 같은 그림이 이모티콘으로 한 번 + 미리보기로 또 한 번
+        # 그려진다("이모티콘이 두 개 보인다"는 제보의 원인)
+        self.preview_urls = extract_urls(plain_text) if preview else []
         # 링크만 있는 메시지는 미리보기가 뜨면 주소 문자열을 지움 - 긴 주소가 몇 줄씩
         # 차지하기만 하고, 그림/카드를 눌러 열 수 있어서 주소가 없어도 못 여는 일이 없음.
         # 미리보기를 끝내 못 받으면 콜백이 안 불려서 주소가 그대로 남음

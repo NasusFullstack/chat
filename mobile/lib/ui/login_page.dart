@@ -4,6 +4,7 @@ library;
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import '../core/irc_protocol.dart';
 import '../net/irc_client.dart';
 
 class LoginPage extends StatefulWidget {
@@ -37,8 +38,12 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _connect() async {
     final nick = _nick.text.trim();
-    if (nick.isEmpty) {
-      setState(() => widget.state.statusText = '쓸 이름을 적어주세요.');
+    // 서버가 거절할 이름을 **보내기 전에** 막는다. 그냥 보내면 서버가 432로 막고
+    // 앱은 그걸 "사용 중"으로 보고 _ 를 붙여 다시 시도하다 조용히 포기한다 -
+    // 사람 눈에는 "눌렀는데 아무 일도 안 일어남"으로만 보인다
+    final problem = nickProblem(nick);
+    if (problem.isNotEmpty) {
+      setState(() => widget.state.statusText = problem);
       return;
     }
     setState(() => _busy = true);
@@ -80,7 +85,7 @@ class _LoginPageState extends State<LoginPage> {
                   autofocus: true,
                   decoration: const InputDecoration(
                     labelText: '쓸 이름',
-                    helperText: '채팅방에서 보이는 이름입니다',
+                    helperText: '채팅방에서 보이는 이름입니다 (영문·숫자만)',
                   ),
                   onSubmitted: (_) => _connect(),
                 ),
