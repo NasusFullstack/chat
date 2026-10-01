@@ -207,3 +207,19 @@ String normalizeChannel(String name) {
 /// 아니라 '프레임처럼 생겼는가'로 판단한다. PC 앱에서 잘린 base64 483자가 채팅에
 /// 그대로 쏟아진 적이 있다.
 bool isCtcpFrame(String text) => text.startsWith(ctcpDelim);
+
+/// 이 이름으로 접속할 수 있는가. 안 되면 이유를 돌려준다(되면 빈 값).
+///
+/// **IRC 닉네임에는 한글을 못 쓴다.** RFC가 영문·숫자·몇몇 기호만 허용하고, 실제
+/// 서버(UnrealIRCd)도 거절한다. 그냥 보내면 서버가 432로 막는데, 앱은 그걸 "이름이
+/// 사용 중"으로 보고 `_`를 붙여 다시 시도하다가 몇 번 만에 조용히 포기한다 -
+/// 사람 눈에는 "들어가기를 눌렀는데 아무 일도 안 일어남"으로만 보인다.
+String nickProblem(String nick) {
+  if (nick.isEmpty) return '쓸 이름을 적어주세요.';
+  if (nick.length > 30) return '이름이 너무 깁니다.';
+  if (RegExp(r'^[0-9]').hasMatch(nick)) return '이름은 숫자로 시작할 수 없습니다.';
+  if (!RegExp(r'^[A-Za-z0-9\[\]\`_^{|}-]+$').hasMatch(nick)) {
+    return '이름에는 영문·숫자만 쓸 수 있습니다(한글은 안 됩니다).';
+  }
+  return '';
+}

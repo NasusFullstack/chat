@@ -1,0 +1,532 @@
+{
+ "urls": {
+  "server": "https://jsserv.pdlab.kr",
+  "battle": "wss://jsserv.pdlab.kr/battle/ws",
+  "files": "https://jsserv.pdlab.kr/files",
+  "logs": "https://jsserv.pdlab.kr/logs",
+  "profiles": "https://jsserv.pdlab.kr/profiles"
+ },
+ "id_chars": 24,
+ "room": [
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "#일반",
+   "id": "d84dca14f9c0968230bd9e4a"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "#General",
+   "id": "ce1c88fa5f03ad8e34371e65"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "#general",
+   "id": "ce1c88fa5f03ad8e34371e65"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "#개발",
+   "id": "e072a4d883f3452070abcd94"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "#잡담",
+   "id": "628439da83f713621ff1fb53"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "일반",
+   "id": "6341dcec87685a7158416ad5"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "",
+   "id": "924e6a7e5e8558ca1ec15227"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "channel": "#일반",
+   "id": "d84dca14f9c0968230bd9e4a"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "channel": "#General",
+   "id": "ce1c88fa5f03ad8e34371e65"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "channel": "#general",
+   "id": "ce1c88fa5f03ad8e34371e65"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "channel": "#개발",
+   "id": "e072a4d883f3452070abcd94"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "channel": "#잡담",
+   "id": "628439da83f713621ff1fb53"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "channel": "일반",
+   "id": "6341dcec87685a7158416ad5"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "channel": "",
+   "id": "924e6a7e5e8558ca1ec15227"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "channel": "#일반",
+   "id": "e0972300e36d2ac90ef08469"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "channel": "#General",
+   "id": "3aa9ad0e9a12431e560cf57e"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "channel": "#general",
+   "id": "3aa9ad0e9a12431e560cf57e"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "channel": "#개발",
+   "id": "457640e81e7f498c274e0bec"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "channel": "#잡담",
+   "id": "73e8b068b9e0a50b0479a2ae"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "channel": "일반",
+   "id": "6c6c5d933ae7e2f978a63618"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "channel": "",
+   "id": "34f9745727c10654cde6ce85"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "channel": "#일반",
+   "id": "07e601f11469a513778d3353"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "channel": "#General",
+   "id": "000b760c5bb4b666a095f341"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "channel": "#general",
+   "id": "000b760c5bb4b666a095f341"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "channel": "#개발",
+   "id": "825af60db7697752451f3978"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "channel": "#잡담",
+   "id": "f3a17448bf6d003776635b83"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "channel": "일반",
+   "id": "c637452b8e7cf875cf6f2f5c"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "channel": "",
+   "id": "eb63e47161495b666b8a463c"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "#일반",
+   "id": "a3d0e425f9878bb9ac8702e1"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "#General",
+   "id": "1634030a9b7aafc3ee436b24"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "#general",
+   "id": "1634030a9b7aafc3ee436b24"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "#개발",
+   "id": "8f160407b50064c42c178ae9"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "#잡담",
+   "id": "1a0d6186b26881fc95705f9a"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "일반",
+   "id": "57fc30c7f0af1eba8752ba16"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "channel": "",
+   "id": "e014b859534b114d9b7193fb"
+  }
+ ],
+ "who": [
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "몽키",
+   "id": "258b1e849324560fe93b5177"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "MongKey",
+   "id": "9db410f6b8d81a292b031380"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "mongkey",
+   "id": "9db410f6b8d81a292b031380"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "두리",
+   "id": "e90e71558e67679d5699f20a"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "Ångström",
+   "id": "7d401e696d92d604a25029b5"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "",
+   "id": "ab47aa105dd6ab5ebf77bd5b"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "nick": "몽키",
+   "id": "258b1e849324560fe93b5177"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "nick": "MongKey",
+   "id": "9db410f6b8d81a292b031380"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "nick": "mongkey",
+   "id": "9db410f6b8d81a292b031380"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "nick": "두리",
+   "id": "e90e71558e67679d5699f20a"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "nick": "Ångström",
+   "id": "7d401e696d92d604a25029b5"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "nick": "",
+   "id": "ab47aa105dd6ab5ebf77bd5b"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "nick": "몽키",
+   "id": "df069fd6f8c951e09b184768"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "nick": "MongKey",
+   "id": "623c16dcf3d35927c823d592"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "nick": "mongkey",
+   "id": "623c16dcf3d35927c823d592"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "nick": "두리",
+   "id": "2b22d7ca8401a00477f5f022"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "nick": "Ångström",
+   "id": "040b66321a6d2df949004133"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "nick": "",
+   "id": "884f63fa11ed40d8b140e2c3"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "nick": "몽키",
+   "id": "474f14845bb1418d77736c8c"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "nick": "MongKey",
+   "id": "d9355480016e572431ee8d48"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "nick": "mongkey",
+   "id": "d9355480016e572431ee8d48"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "nick": "두리",
+   "id": "9c8695038e90a03dc7400adc"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "nick": "Ångström",
+   "id": "2cc6f6967a1dbc0867e9a708"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "nick": "",
+   "id": "ed53fefcbf43aaf939f97358"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "몽키",
+   "id": "5318e8d74a4380ac60c7a226"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "MongKey",
+   "id": "a6ac9e0662008d25d466fd6d"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "mongkey",
+   "id": "a6ac9e0662008d25d466fd6d"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "두리",
+   "id": "205fb59af07a94475431c3a1"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "Ångström",
+   "id": "651a01e60de6bc4caaed0597"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "nick": "",
+   "id": "8d4a00b5bc2e6569859cb006"
+  }
+ ],
+ "group": [
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "id": "47f63ee2791f4a176b2e9b61"
+  },
+  {
+   "protocol": "irc",
+   "host": "HOME.PDLAB.KR",
+   "port": 6697,
+   "id": "47f63ee2791f4a176b2e9b61"
+  },
+  {
+   "protocol": "irc",
+   "host": "home.pdlab.kr",
+   "port": 6667,
+   "id": "2d2df0bb670f4b6104efd500"
+  },
+  {
+   "protocol": "irc",
+   "host": "other.example.com",
+   "port": 6697,
+   "id": "6ee7eb01cf6e2846e84aa5ab"
+  },
+  {
+   "protocol": "custom",
+   "host": "home.pdlab.kr",
+   "port": 6697,
+   "id": "a4f004c6f4ec329f7b8f7ab6"
+  }
+ ],
+ "file_id": [
+  {
+   "url": "https://jsserv.pdlab.kr/files/aabbccddeeff00112233445c/문서.pdf",
+   "id": "aabbccddeeff00112233445c"
+  },
+  {
+   "url": "https://jsserv.pdlab.kr/files/aabbccddeeff00112233445c/a.png?x=1",
+   "id": "aabbccddeeff00112233445c"
+  },
+  {
+   "url": "https://jsserv.pdlab.kr/files/emoji?group=aaaaaaaaaaaaaaaaaaaaaaaa",
+   "id": ""
+  },
+  {
+   "url": "https://jsserv.pdlab.kr/files/TOOSHORT/a.png",
+   "id": ""
+  },
+  {
+   "url": "https://jsserv.pdlab.kr/files/zzbbccddeeff00112233445c/a.png",
+   "id": ""
+  },
+  {
+   "url": "https://example.com/files/aabbccddeeff00112233445c/a.png",
+   "id": ""
+  },
+  {
+   "url": "",
+   "id": ""
+  }
+ ],
+ "meta_url": "https://jsserv.pdlab.kr/files/aabbccddeeff00112233445c/meta"
+}

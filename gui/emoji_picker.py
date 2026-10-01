@@ -233,6 +233,10 @@ class EmojiPicker(QDialog):
             item = self.grid.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                # **부모를 떼기 전에 반드시 숨긴다.** Qt에서 보이던 위젯의 부모를 떼면
+                # 그 순간 '독립된 창'이 되어 화면에 잠깐 떴다가 사라진다 - 작은 빈 창이
+                # 깜빡이는 것으로 보인다. 다시 그릴 때마다 칸 수만큼 반복된다
+                widget.hide()
                 widget.setParent(None)
                 widget.deleteLater()
 
