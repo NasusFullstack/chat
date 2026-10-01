@@ -1,0 +1,268 @@
+{
+ "me": "몽키",
+ "cases": [
+  {
+   "name": "접속하고 채널에 들어가 이야기한다",
+   "lines": [
+    ":irc.test 001 몽키 :Welcome",
+    ":몽키!~m@h JOIN #일반",
+    ":irc.test 353 몽키 = #일반 :@몽키 두리 앨리스",
+    ":irc.test 366 몽키 #일반 :End of /NAMES list.",
+    ":두리!d@h PRIVMSG #일반 :안녕",
+    ":두리!d@h PRIVMSG #일반 :@몽키 밥 먹었어?",
+    ":앨리스!a@h JOIN #일반",
+    ":앨리스!a@h PART #일반 :간다"
+   ],
+   "events": [
+    {
+     "type": "LoggedIn",
+     "user_id": "몽키"
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "몽키"
+     ]
+    },
+    {
+     "type": "ChannelJoined",
+     "channel": "#일반",
+     "text": "#일반 입장 완료"
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "두리",
+      "몽키",
+      "앨리스"
+     ]
+    },
+    {
+     "type": "MessageReceived",
+     "channel": "#일반",
+     "sender": "두리",
+     "text": "안녕",
+     "mine": false,
+     "is_mention": false,
+     "kind": "chat"
+    },
+    {
+     "type": "MessageReceived",
+     "channel": "#일반",
+     "sender": "두리",
+     "text": "@몽키 밥 먹었어?",
+     "mine": false,
+     "is_mention": true,
+     "kind": "chat"
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "두리",
+      "몽키",
+      "앨리스"
+     ]
+    },
+    {
+     "type": "SystemNotice",
+     "channel": "#일반",
+     "text": "앨리스님이 입장했습니다.",
+     "has_time": true
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "두리",
+      "몽키"
+     ]
+    },
+    {
+     "type": "SystemNotice",
+     "channel": "#일반",
+     "text": "앨리스님이 나갔습니다.",
+     "has_time": true
+    }
+   ],
+   "sent": [
+    "NAMES #일반"
+   ]
+  },
+  {
+   "name": "빈 참여자 응답은 반영하지 않는다",
+   "lines": [
+    ":irc.test 001 몽키 :Welcome",
+    ":몽키!~m@h JOIN #일반",
+    ":irc.test 353 몽키 = #일반 :@몽키 두리",
+    ":irc.test 366 몽키 #일반 :End of /NAMES list.",
+    ":irc.test 366 몽키 #일반 :End of /NAMES list."
+   ],
+   "events": [
+    {
+     "type": "LoggedIn",
+     "user_id": "몽키"
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "몽키"
+     ]
+    },
+    {
+     "type": "ChannelJoined",
+     "channel": "#일반",
+     "text": "#일반 입장 완료"
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "두리",
+      "몽키"
+     ]
+    }
+   ],
+   "sent": [
+    "NAMES #일반"
+   ]
+  },
+  {
+   "name": "숨김 프레임은 채팅으로 새면 안 된다",
+   "lines": [
+    ":irc.test 001 몽키 :Welcome",
+    ":몽키!~m@h JOIN #일반",
+    ":두리!d@h PRIVMSG #일반 :\u0001VERSION\u0001",
+    ":두리!d@h PRIVMSG #일반 :\u0001FCAVATAR abc 1/3 ZZZ",
+    ":두리!d@h NOTICE #일반 :\u0001VERSION ChupChat\u0001",
+    ":두리!d@h PRIVMSG #일반 :이건 보여야 한다"
+   ],
+   "events": [
+    {
+     "type": "LoggedIn",
+     "user_id": "몽키"
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "몽키"
+     ]
+    },
+    {
+     "type": "ChannelJoined",
+     "channel": "#일반",
+     "text": "#일반 입장 완료"
+    },
+    {
+     "type": "MessageReceived",
+     "channel": "#일반",
+     "sender": "두리",
+     "text": "이건 보여야 한다",
+     "mine": false,
+     "is_mention": false,
+     "kind": "chat"
+    }
+   ],
+   "sent": [
+    "NAMES #일반",
+    "NOTICE 두리 :\u0001VERSION ChupChat 2.6.1 - https://github.com/NasusFullstack/chat\u0001"
+   ]
+  },
+  {
+   "name": "나간 사람과 접속 끊은 사람",
+   "lines": [
+    ":irc.test 001 몽키 :Welcome",
+    ":몽키!~m@h JOIN #일반",
+    ":irc.test 353 몽키 = #일반 :몽키 두리 앨리스",
+    ":irc.test 366 몽키 #일반 :End of /NAMES list.",
+    ":두리!d@h QUIT :Ping timeout",
+    ":몽키!~m@h PART #일반"
+   ],
+   "events": [
+    {
+     "type": "LoggedIn",
+     "user_id": "몽키"
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "몽키"
+     ]
+    },
+    {
+     "type": "ChannelJoined",
+     "channel": "#일반",
+     "text": "#일반 입장 완료"
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "두리",
+      "몽키",
+      "앨리스"
+     ]
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "몽키",
+      "앨리스"
+     ]
+    },
+    {
+     "type": "SystemNotice",
+     "channel": "#일반",
+     "text": "두리님이 접속을 종료했습니다.",
+     "has_time": true
+    },
+    {
+     "type": "UserlistUpdated",
+     "channel": "#일반",
+     "users": [
+      "앨리스"
+     ]
+    },
+    {
+     "type": "SystemNotice",
+     "channel": "#일반",
+     "text": "몽키님이 나갔습니다.",
+     "has_time": true
+    },
+    {
+     "type": "ChannelLeft",
+     "channel": "#일반"
+    }
+   ],
+   "sent": [
+    "NAMES #일반"
+   ]
+  },
+  {
+   "name": "닉네임이 밀리면 다시 시도한다",
+   "lines": [
+    ":irc.test 433 * 몽키 :Nickname is already in use",
+    ":irc.test 001 몽키_ :Welcome"
+   ],
+   "events": [
+    {
+     "type": "NicknameRetrying",
+     "new_nickname": "몽키_"
+    },
+    {
+     "type": "LoggedIn",
+     "user_id": "몽키_"
+    }
+   ],
+   "sent": [
+    "NICK 몽키_"
+   ]
+  }
+ ]
+}

@@ -1,8 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 채팅 앱이므로 당연히 필요한데, flutter create 는 이걸 **디버그 매니페스트에만**
+         넣어준다. 여기 안 적으면 정식 빌드에서만 연결이 조용히 안 된다 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
-        android:label="chupchat"
+        android:label="춥채팅"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
