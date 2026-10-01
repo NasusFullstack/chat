@@ -196,9 +196,15 @@ class _BattlePageState extends State<BattlePage> {
                 box.maxWidth / sim.fieldWidth, box.maxHeight / sim.fieldHeight);
             final margin = (box.maxWidth - sim.fieldWidth * scale) / 2;
 
-            // 폰마다 비율이 다르다. 좌우 여백이 조작을 담을 만큼 넓으면 **거기** 두고
-            // (손가락이 전투장을 안 가린다), 좁으면 반투명으로 화면 위에 얹는다
-            final roomy = margin >= _Joystick.size + 16;
+            // 폰마다 비율이 다르다. 좌우 여백에 조작을 넣으면 손가락이 전투장을
+            // 안 가린다 - 다만 **딱 들어맞을 필요는 없다.** 바깥 가장자리에 붙이면
+            // 조금 걸치는 정도는 가장자리라 배가 거의 안 다닌다.
+            //
+            // 실측: 갤S23+ 를 가로로 들면(851x393) 여백이 130.8px 인데 조이스틱이
+            // 132px 다. 딱 맞아야 한다고 보면 '좁다'로 판정되어 화면 한가운데 쪽으로
+            // 얹히는데, 가장자리에 붙이면 1.2px 만 걸친다
+            const allowedOverlap = 20.0;
+            final roomy = margin >= _Joystick.size - allowedOverlap;
 
             return Stack(
               children: [
@@ -228,7 +234,10 @@ class _BattlePageState extends State<BattlePage> {
                 ),
                 // 왼쪽 방향키
                 Positioned(
-                  left: roomy ? (margin - _Joystick.size) / 2 : 20,
+                  // 여백 가운데에 두되 **바깥으로는 안 나간다**(0 아래로 안 간다)
+                  left: roomy
+                      ? math.max(0, (margin - _Joystick.size) / 2)
+                      : 20,
                   bottom: roomy ? (box.maxHeight - _Joystick.size) / 2 : 16,
                   child: Opacity(
                     opacity: roomy ? 1.0 : 0.45,
@@ -237,7 +246,9 @@ class _BattlePageState extends State<BattlePage> {
                 ),
                 // 오른쪽 발사 - **누르고 있으면 기가 찬다**
                 Positioned(
-                  right: roomy ? (margin - _FireButton.size) / 2 : 20,
+                  right: roomy
+                      ? math.max(0, (margin - _FireButton.size) / 2)
+                      : 20,
                   bottom: roomy ? (box.maxHeight - _FireButton.size) / 2 : 16,
                   child: Opacity(
                     opacity: roomy ? 1.0 : 0.45,
