@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 받아온 APK를 시스템 설치 화면에 넘겨주려면 content:// 주소가 필요하다.
+     안드로이드 7부터 file:// 를 다른 앱에 넘기면 예외가 난다.
+     여기 적힌 자리의 파일만 넘길 수 있다 - 앱 임시 폴더 하나면 충분하다 -->
+<paths>
+    <cache-path name="downloads" path="." />
+</paths>
