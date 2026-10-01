@@ -137,6 +137,23 @@ class Updater {
     }
   }
 
+  /// 지난번에 받아둔 APK를 치운다. **앱을 켤 때** 부른다.
+  ///
+  /// 설치 직후에 지우면 안 된다 - 시스템 설치 화면이 아직 그 파일을 읽고 있어서
+  /// 설치가 깨진다. 다 끝난 다음 실행에서 치우는 것이 안전하다.
+  ///
+  /// 받을 때 같은 이름으로 덮어쓰므로 여러 개가 쌓이지는 않는다. 그래도 50MB짜리가
+  /// 하나 남아 있을 이유는 없다.
+  Future<void> cleanLeftover() async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/$apkAssetName');
+      if (await file.exists()) await file.delete();
+    } on Object {
+      // 못 지워도 앱 캐시 폴더라 안드로이드가 공간이 부족하면 알아서 비운다
+    }
+  }
+
   /// 설치 화면을 연다. 마지막 '설치'는 사람이 누른다(안드로이드 규칙).
   ///
   /// 처음에는 "이 앱의 설치 허용"이 꺼져 있어서, 그때는 그 설정 화면으로 보낸다.
