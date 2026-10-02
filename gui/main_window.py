@@ -41,6 +41,7 @@ from gui.version_prober import VersionProber
 from updater import POST_UPDATE_FLAG
 from gui.helpers import _friendly_connection_error
 from gui.network import ChatClient
+from gui.server_chat_link import ServerChatLink
 from gui.network_probe import WebReachableProbe, blocked_port_message
 from gui.pages import ChannelPage, ChatPage, LoginPage
 from gui.profile_dialog import ProfileDialog
@@ -106,13 +107,7 @@ class MainWindow(QMainWindow):
             QApplication.instance().installEventFilter(self)
 
         self.client = ChatClient()
-        self.client.connected.connect(self._on_tcp_connected)
-        self.client.encrypted.connect(self._on_connected)
-        self.client.connection_failed.connect(self._on_connection_failed)
-        self.client.certificate_untrusted.connect(self._on_certificate_untrusted)
-        self.client.message_received.connect(self._on_message)
-        self.client.irc_line_received.connect(self._on_irc_line)
-        self.client.disconnected.connect(self._on_socket_disconnected)
+        self._wire_client()
 
         self._connecting = False
         self._auth_phase = False
@@ -553,6 +548,42 @@ class MainWindow(QMainWindow):
         self._rebuild_relay()
         # '/'만 쳐도 명령 목록이 뜨게 - 지원 명령은 프로토콜마다 다르므로 코어에서 받아옴
         self.chat_page.set_command_specs(self.session.command_specs())
+    def _wire_client(self):
+        """통로가 보내는 신호를 창에 잇는다.
+
+        한 군데로 모아둔 이유: 서버 채팅은 **WebSocket** 으로 붙어서 통로 자체가
+        다르다. 그때 이 묶음을 그대로 다시 쓰면 접속 절차는 건드리지 않아도 된다.
+        """
+        self.client.connected.connect(self._on_tcp_connected)
+        self.client.encrypted.connect(self._on_connected)
+        self.client.connection_failed.connect(self._on_connection_failed)
+        self.client.certificate_untrusted.connect(self._on_certificate_untrusted)
+        self.client.message_received.connect(self._on_message)
+        self.client.irc_line_received.connect(self._on_irc_line)
+        self.client.disconnected.connect(self._on_socket_disconnected)
+
+    def _use_link_for(self, protocol: str):
+        """프로토콜에 맞는 통로를 고른다. 이미 맞으면 아무 일도 안 한다.
+
+        **갈아끼울 때는 쓰던 것을 확실히 끊는다.** 안 끊으면 옛 연결이 살아서 보내는
+        줄이 새 세션으로 흘러든다(끊김 신호도 새 연결의 사고로 읽힌다).
+        """
+        want_ws = protocol == "server"
+        have_ws = isinstance(self.client, ServerChatLink)
+        if want_ws == have_ws:
+            return
+        old = self.client
+        try:
+            old.abort()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            old.disconnect()        # 옛 통로의 신호를 창에서 떼어낸다
+        except Exception:  # noqa: BLE001
+            pass
+        self.client = ServerChatLink(self) if want_ws else ChatClient()
+        self._wire_client()
+
     def _connect_to(self, request):
         self.login_page.show_status(
             f"연결 중... ({request.mode_label})",
@@ -560,6 +591,8 @@ class MainWindow(QMainWindow):
         self.login_page.set_connecting(True)
         self._connecting = True
         self._connect_timer.start(CONNECT_TIMEOUT_MS)
+        # 서버 채팅은 WebSocket 으로 붙는다 - 통로부터 맞춰둔다
+        self._use_link_for(request.protocol)
         self.client.set_mode(request.protocol)
         try:
             self.client.connect_to_server(

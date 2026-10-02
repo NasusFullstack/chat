@@ -315,6 +315,8 @@ class AppState extends ChangeNotifier {
       _session?.joinChannel(room);
       await Future<void>.delayed(const Duration(milliseconds: 400));
     }
+    // 들어간 뒤에 보낸다 - 들어가기 전에 보내면 서버가 조용히 무시한다
+    _flushOutbox();
     return true;
   }
 
@@ -376,8 +378,15 @@ class AppState extends ChangeNotifier {
   Future<void> cameBack() async {
     inForeground = true;
     // 사람이 앱을 다시 보고 있다는 건 신호가 돌아왔을 가능성이 가장 큰 순간이다.
-    // 30초짜리 예약을 기다리면 그동안 먹통처럼 보인다
-    reconnect.tryNow();
+    // 30초짜리 예약을 기다리면 그동안 먹통처럼 보인다.
+    //
+    // **끊김을 아직 못 알아챘을 수도 있다** - 홈으로 나가 있는 동안 안드로이드가
+    // 우리를 멈춰 세우면 그 사실조차 돌아온 뒤에야 안다. 그래서 상태를 보고 시작한다
+    if (loggedIn && link != LinkState.connected) {
+      ensureConnected();
+    } else {
+      reconnect.tryNow();
+    }
   }
 
   /// 검사가 "실제로 입장 요청이 나갔는가"를 볼 수 있게 열어둔 구멍.
@@ -391,9 +400,66 @@ class AppState extends ChangeNotifier {
 
   void leaveChannel(String channel) => _session?.leaveChannel(channel);
 
+  /// 아직 못 보낸 말. 끊겨 있는 동안 친 것을 모아뒀다가 다시 붙으면 보낸다
+  final List<({String channel, String text})> _outbox = [];
+
+  /// 아직 안 나간 말이 있는가(화면이 "보내는 중"을 보여주는 데 쓴다)
+  bool get hasUnsent => _outbox.isNotEmpty;
+
   void sendChat(String text) {
     if (current.isEmpty || text.trim().isEmpty) return;
-    _session?.sendChat(current, text.trim());
+    final body = text.trim();
+
+    // **끊겨 있으면 버리지 않는다.** 홈으로 나갔다 오면 접속이 끊겨 있는데, 그때 친
+    // 말이 그냥 사라지면 사람은 보낸 줄 안다. 모아뒀다가 다시 붙는 대로 보낸다
+    if (!loggedIn || link != LinkState.connected) {
+      _outbox.add((channel: current, text: body));
+      _add(
+        current,
+        ChatLine.system(
+          text: '연결이 끊겨 있어 다시 붙는 중입니다. 친 말은 붙는 대로 전해집니다.',
+          at: DateTime.now(),
+        ),
+      );
+      ensureConnected();
+      notifyListeners();
+      return;
+    }
+    _session?.sendChat(current, body);
+  }
+
+  /// 끊겨 있으면 **지금** 다시 붙어본다.
+  ///
+  /// 홈으로 나가 있는 동안 안드로이드가 우리를 멈춰 세우면, 끊겼다는 것조차 돌아온
+  /// 뒤에야 알게 된다. 그래서 "끊김을 알아챈 뒤에 시작하는" 재접속만으로는 모자란다
+  void ensureConnected() {
+    if (!reconnect.active) {
+      reconnect.start(channels);
+    } else {
+      reconnect.tryNow();
+    }
+  }
+
+  /// 모아둔 말을 보낸다. 다시 붙어 채널까지 들어간 뒤에 부른다
+  void _flushOutbox() {
+    if (_outbox.isEmpty) return;
+    final waiting = List.of(_outbox);
+    _outbox.clear();
+    for (final one in waiting) {
+      // 그 사이에 나온 방이면 보낼 곳이 없다 - 조용히 버리지 말고 알린다
+      if (!channels.contains(one.channel)) {
+        _add(
+          current.isEmpty ? one.channel : current,
+          ChatLine.system(
+            text: '${one.channel}에 못 들어가 "${one.text}"를 보내지 못했습니다.',
+            at: DateTime.now(),
+          ),
+        );
+        continue;
+      }
+      _session?.sendChat(one.channel, one.text);
+    }
+    notifyListeners();
   }
 
   void showChannel(String channel) {
