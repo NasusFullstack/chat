@@ -94,6 +94,13 @@ class AppState extends ChangeNotifier {
   // ---------------------------------------------------------- 중계 서버
   ProfileApi? _profiles;
   ChatLogApi? _logs;
+
+  /// 검사가 가짜 기록 창구를 끼울 수 있게 열어둔다.
+  ///
+  /// 왜 필요한가: "지난 대화를 어디서부터 받아올까"를 정하는 규칙이 틀려서 **언제나
+  /// 0줄**이 오던 버그가 있었다. 그 규칙을 검사에 베껴 쓰면 코드가 바뀔 때 검사는
+  /// 안 바뀌어서 또 못 잡는다(CLAUDE.md 11-5). 진짜 코드가 무엇을 묻는지 봐야 한다
+  set logsForTest(ChatLogApi fake) => _logs = fake;
   final FileApi files = FileApi();
 
   /// 사람마다의 아이콘(base64). 서버에서 받아온다 - 상대가 접속해 있지 않아도 보인다
@@ -543,6 +550,10 @@ class AppState extends ChangeNotifier {
     final seen = lines[channel] ?? const <ChatLine>[];
     double newest = 0;
     for (final line in seen) {
+      // **안내 줄은 세지 않는다.** 들어가면 "입장 완료"를 먼저 올리는데 그 시각이
+      // 지금이라, 그걸 기준으로 삼으면 서버에 "지금 이후 것만 달라"고 묻게 되어
+      // **언제나 0줄**이 온다. 실제로 그래서 지난 대화가 안 보였다
+      if (line.isSystem) continue;
       final ts = line.at.millisecondsSinceEpoch / 1000;
       if (ts > newest) newest = ts;
     }
