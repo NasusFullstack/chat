@@ -19,6 +19,7 @@ from chat_core.constants import (
 )
 from chat_core.history_adapter import JsonFileHistoryStore
 from chat_core.protocols.custom import CustomProtocol
+from chat_core.protocols.server import ServerProtocol
 from chat_core.protocols.irc import IrcProtocol
 
 # 프로토콜 이름 -> 전략 클래스. 새 프로토콜은 여기 한 줄만 추가하면 되고,
@@ -26,6 +27,7 @@ from chat_core.protocols.irc import IrcProtocol
 PROTOCOL_REGISTRY = {
     CustomProtocol.name: CustomProtocol,
     IrcProtocol.name: IrcProtocol,
+    ServerProtocol.name: ServerProtocol,
 }
 
 
@@ -329,8 +331,13 @@ class ChatSession:
         return int(cheat.cooldown_sec - elapsed) + 1
 
     def set_avatar(self, avatar_b64: str) -> bool:
-        """너무 크면 아무 것도 안 하고 False 반환"""
-        if len(avatar_b64) > AVATAR_MAX_B64_CHARS:
+        """너무 크면 아무 것도 안 하고 False 반환.
+
+        **상한은 프로토콜이 정한다.** IRC 는 한 줄 512바이트라 쪼개 보내야 해서 작고,
+        서버 채팅은 그냥 보내므로 크다. 여기서 프로토콜 이름을 비교하지 않는다(OCP).
+        """
+        limit = getattr(self.protocol, "avatar_limit", AVATAR_MAX_B64_CHARS)
+        if len(avatar_b64) > limit:
             return False
         self.apply_avatar(self.my_id, avatar_b64)
         self.protocol.publish_avatar(self, avatar_b64)
