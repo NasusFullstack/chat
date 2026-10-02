@@ -774,6 +774,11 @@ class AppState extends ChangeNotifier {
             at: DateTime.now(),
           ),
         );
+      case AuthFailed(:final text):
+        // 끊긴 것이 아니라 **거절당한 것**이다. 그대로 보여주고 기다리는 쪽을 깨운다
+        statusText = text;
+        _loginDone?.complete(false);
+        _loginDone = null;
       case NicknameUpdated(:final userId, :final nickname):
         // 서버 채팅에서만 온다. 아이디와 **보이는 이름**이 따로다
         nicknames[userId] = nickname;

@@ -156,8 +156,9 @@ class ServerSession implements ChatPort {
   static void _onAuthResult(ServerSession s, Map msg) {
     if (msg['ok'] != true) {
       // 화면이 기다리고 있으므로 **끝났다고 알려야 한다** - 안 알리면 로그인 버튼이
-      // 영원히 돌아간다(IRC 쪽은 ConnectionClosed 가 그 일을 한다)
-      s.emit(ConnectionClosed(_text(msg, 'text', '아이디나 비밀번호가 다릅니다')));
+      // 영원히 돌아간다. 끊긴 것과는 **다른 일**로 알린다 - 같은 것으로 쓰면
+      // 비밀번호가 틀렸을 때도 "연결이 종료되었습니다"가 뜬다
+      s.emit(AuthFailed(_text(msg, 'text', '아이디나 비밀번호가 다릅니다')));
       return;
     }
     if (msg['made'] == true) {

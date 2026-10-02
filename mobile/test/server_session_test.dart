@@ -69,7 +69,10 @@ void main() {
       final f = Fake();
       f.session.handleIncoming(
           {'type': 'auth_result', 'ok': false, 'text': '아이디나 비밀번호가 다릅니다'});
-      expect(f.kinds<ConnectionClosed>().single.text, contains('비밀번호'));
+      // **끊긴 것과 나눠서** 알린다. 같은 것으로 쓰면 비밀번호가 틀렸을 때도
+      // "연결이 종료되었습니다"가 떠서, 사람이 무엇을 해야 할지 알 수 없다
+      expect(f.kinds<AuthFailed>().single.text, contains('비밀번호'));
+      expect(f.kinds<ConnectionClosed>(), isEmpty);
       expect(f.session.myId, isEmpty);
     });
 
