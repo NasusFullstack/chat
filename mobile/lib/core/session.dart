@@ -62,11 +62,22 @@ class ChatSession implements ChatPort {
   }
 
   @override
-  void joinChannel(String name) {
+  void joinChannel(String name, {String key = ''}) {
     final channel = normalizeChannel(name);
     if (channel.isEmpty) return;
-    send(formatJoin(channel));
+    send(formatJoin(channel, key));
   }
+
+  /// IRC 에도 방 목록을 묻는 길(LIST)은 있지만 **쓰지 않는다.**
+  ///
+  /// 큰 서버는 방이 수만 개라 한 번 물으면 그만큼이 쏟아지고, 서버가 폭주로 보고
+  /// 끊기도 한다(CLAUDE.md 2-4 와 같은 함정). 사람이 방 이름을 알고 들어가는 것이
+  /// IRC 의 쓰임새다.
+  @override
+  bool get canListRooms => false;
+
+  @override
+  void requestRoomList() {}
 
   @override
   void leaveChannel(String channel) => send(formatPart(channel));
@@ -88,6 +99,10 @@ class ChatSession implements ChatPort {
       ));
     }
   }
+
+  /// IRC 는 **서버가** 먼저 물어본다(90초마다). 우리가 보탤 것이 없다.
+  @override
+  void keepalive() {}
 
   @override
   void quit([String reason = '종료']) => send(formatQuit(reason));

@@ -45,6 +45,18 @@ class ProtocolPort(Protocol):
     # 코어가 `if protocol == ...` 로 가르지 않도록 전략이 들고 있는다(OCP)
     avatar_limit: int
 
+    # 지난 기록을 **서버가 들고 있는가.** 참이면 코어는 기록을 따로 적지도 읽지도
+    # 않고, 어댑터는 중계 서버에 올리거나 받아오지도 않는다.
+    #
+    # 없으면 같은 이야기가 **세 벌로 쌓인다** - 실제로 그랬다(2026-10-02): 로컬 기록,
+    # 서버가 입장 때 준 기록, 중계 서버의 "못 본 이야기"가 한 화면에 겹쳐 나왔다.
+    # 여기도 `if protocol == ...` 가 아니라 능력으로 가른다(OCP)
+    keeps_history: bool
+
+    # 서버에 **어떤 방이 있는지 보여줄 수 있는가.** 화면은 "지금 서버 채팅인가"가
+    # 아니라 이것을 묻는다 - 그래야 화면이 프로토콜 이름을 몰라도 된다
+    can_list_rooms: bool
+
     def start_auth(self, session: Any, user_id: str, password: str, mode: str) -> None:
         """mode는 "login" 또는 "register" (프로토콜이 구분을 안 하면 무시해도 됨)"""
         ...

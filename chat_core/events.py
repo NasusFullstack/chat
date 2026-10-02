@@ -174,3 +174,21 @@ class ClientVersionUpdated:
     """
     user_id: str
     version: str
+
+
+@dataclass(frozen=True)
+class RoomInfo:
+    """서버에 있는 방 하나."""
+
+    name: str
+    # 지금 그 방에 있는 사람 수. 0이어도 방과 기록은 남아 있다
+    users: int = 0
+    # 비밀번호가 걸렸는가. **비밀번호 자체는 서버가 안 보낸다**
+    locked: bool = False
+
+
+@dataclass(frozen=True)
+class RoomListReceived:
+    """서버에 어떤 방이 있는지 받았다."""
+
+    rooms: list

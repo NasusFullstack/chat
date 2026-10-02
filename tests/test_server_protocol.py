@@ -20,8 +20,26 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, HERE)
 
 from chat_core import events  # noqa: E402
-from chat_core.history_adapter import NullHistoryStore  # noqa: E402
 from chat_core.session import build_session  # noqa: E402
+
+
+class SpyHistory:
+    """기록 창구를 들여다본다 - **읽었는가 / 적었는가**.
+
+    서버가 기록을 들고 있는 쪽에서는 둘 다 일어나면 안 된다. 일어나면 다음에 들어갈
+    때 로컬 기록과 서버 기록이 겹쳐서 같은 이야기가 두 번 보인다(실제로 그랬다).
+    """
+
+    def __init__(self):
+        self.loaded = []
+        self.appended = []
+
+    def load_history(self, protocol, host, port, channel):
+        self.loaded.append(channel)
+        return [{"from": "유령", "text": "로컬에 남아 있던 줄", "ts": 0.5}]
+
+    def append_message(self, protocol, host, port, channel, sender, text, ts):
+        self.appended.append((channel, sender, text))
 
 checks = []
 
@@ -38,11 +56,12 @@ class Fake:
     def __init__(self):
         self.sent = []
         self.events = []
+        self.history = SpyHistory()
         self.session = build_session(
             "server", "jsserv.pdlab.kr", 443,
             transport=self.sent.append,
             on_event=self.events.append,
-            history_store=NullHistoryStore())
+            history_store=self.history)
 
     def feed(self, message):
         self.session.handle_incoming(message)
@@ -77,10 +96,21 @@ f.feed({"type": "channel_result", "ok": True, "channel": "일반",
 
 joined = f.kinds(events.ChannelJoined)
 check("채널에 들어간 것으로 본다", len(joined) == 1, joined)
-said = f.kinds(events.MessageReceived)
-check("지난 기록이 화면에 올라온다", [m.text for m in said] == ["어제 한 말", "내가 한 말"],
-      [m.text for m in said])
-check("내가 한 말은 내 것으로 표시된다", said[1].mine is True)
+
+# **지난 기록은 입장 이벤트에 실려 온다.** 한 줄씩 보통 메시지로 올리면 live 대화와
+# 섞여서 어디까지가 지난 것인지 알 수 없다 - 화면이 쓰던 틀을 그대로 쓰게 둔다
+check("지난 기록이 입장 이벤트에 실려 온다",
+      [one["text"] for one in joined[0].history] == ["어제 한 말", "내가 한 말"],
+      joined[0].history)
+check("화면이 읽는 모양 그대로다(from/text/ts)",
+      set(joined[0].history[0]) == {"from", "text", "ts"}, joined[0].history[0])
+check("지난 기록을 보통 메시지로는 올리지 않는다", not f.kinds(events.MessageReceived),
+      [m.text for m in f.kinds(events.MessageReceived)])
+
+# **로컬 기록을 읽지 않는다.** 읽으면 서버가 준 것과 겹쳐서 두 벌이 된다
+check("로컬 기록을 읽지 않는다", f.history.loaded == [], f.history.loaded)
+check("로컬에 남아 있던 줄이 안 섞인다",
+      all(one["from"] != "유령" for one in joined[0].history), joined[0].history)
 check("참여자 목록이 채워진다", f.session.members.get("일반") == {"mong22", "duri"},
       f.session.members.get("일반"))
 # **아이콘과 이름이 목록에 같이 온다** - IRC 는 CTCP 로 따로 물어야 했다
@@ -103,6 +133,11 @@ f.feed({"type": "chat", "channel": "일반", "id": "x1", "ts": 3.0,
 echoed = f.kinds(events.MessageReceived)
 check("서버가 돌려준 뒤에야 한 번 보인다", len(echoed) == 1, len(echoed))
 check("내가 보낸 것으로 표시된다", echoed[0].mine is True)
+
+# **로컬에 적지 않는다.** 적으면 다음에 들어갈 때 서버 기록과 겹친다
+check("오간 말을 로컬 기록에 적지 않는다", f.history.appended == [], f.history.appended)
+check("'서버가 기록을 들고 있다'를 전략이 알린다",
+      f.session.protocol.keeps_history is True)
 
 # ---------- 4) IRC 에서 못 하던 것 ----------
 f.events.clear()
@@ -139,6 +174,18 @@ check("전투 방 알림이 글자로 안 보인다", not f.kinds(events.Message
       [e.text for e in f.kinds(events.MessageReceived)])
 opened = f.kinds(events.BattleRoomOpened)
 check("전투 방이 열린 것으로 읽는다", len(opened) == 1 and opened[0].room == room, opened)
+
+# ---------- 6-1) 조용해도 끊기지 않게 ----------
+# **이게 없으면 조용한 연결을 우리가 죽은 것으로 보고 끊는다.** IRC 는 서버가 90초마다
+# PING 을 보내줘서 대화가 없어도 뭔가 오는데, 서버 채팅은 아무도 안 보낸다 -
+# 비워뒀더니 170초마다 끊고 다시 붙었다(실측 2026-10-02, 소켓은 멀쩡했다)
+f.sent.clear()
+f.events.clear()
+f.session.keepalive()
+check("조용하면 살아 있는지 물어본다", f.sent == [{"cmd": "ping"}], f.sent)
+
+f.feed({"type": "pong", "ts": 9.0})
+check("답(pong)은 화면에 아무 것도 안 띄운다", not f.events, f.events)
 
 # ---------- 7) 코어에 프로토콜 분기가 없어야 한다 ----------
 with open(os.path.join(REPO, "chat_core", "session.py"), encoding="utf-8") as fp:

@@ -34,6 +34,9 @@ def _logged_in(view, event):
         return
     view.stop_connecting()
     view.channel_page.set_mode(view.protocol_mode)
+    # 방 목록을 줄 수 있는 서버면 **들어오자마자 받아온다** - 이름을 몰라도 고를 수 있게
+    view.channel_page.set_room_list_shown(view.session.can_list_rooms)
+    view.request_room_list()
     view.show_page(view.channel_page)
     view.save_login_prefs()
     # 예전에 이 아이디로 설정해둔 아이콘을 되살림(로컬 저장분)
@@ -143,6 +146,10 @@ def _message_received(view, event):
         view.notify_new_message(event.sender, event.text, event.channel)
 
 
+def _room_list_received(view, event):
+    view.show_room_list(event.rooms)
+
+
 def _system_notice(view, event):
     # 서버가 우리 요청을 거절한 것이면 그 요청을 멈추고, 그 경고는 화면에 안 보여준다
     # (우리가 보낸 것 때문에 난 오류라 우리 안내문 한 줄로 갈음한다)
@@ -240,6 +247,7 @@ EVENT_HANDLERS = {
     domain_events.ChannelLeft: _channel_left,
     domain_events.ChannelLeaveFailed: _channel_leave_failed,
     domain_events.MessageReceived: _message_received,
+    domain_events.RoomListReceived: _room_list_received,
     domain_events.SystemNotice: _system_notice,
     domain_events.UserlistUpdated: _userlist_updated,
     domain_events.BattleRoomOpened: _battle_room_opened,

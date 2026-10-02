@@ -5,7 +5,7 @@
 ![Qt](https://img.shields.io/badge/PySide6-Qt%206-41CD52?logo=qt&logoColor=white)
 ![flutter](https://img.shields.io/badge/Flutter-Android-02569B?logo=flutter&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-93%20%2B%20244%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-94%20%2B%20254%20passing-brightgreen)
 
 **IRC 채팅 클라이언트 — 윈도우 앱(Python + PySide6)과 안드로이드 앱(Flutter).**
 
@@ -72,7 +72,7 @@ mobile/          안드로이드 앱 (Flutter) - core/ 가 PC 파이썬 코드�
 **프로토콜 분기를 코드에서 없앴습니다.** `if protocol == "irc"` 같은 분기 대신 전략 객체와
 표(registry)를 씁니다. 새 프로토콜은 클래스 하나 만들고 표에 한 줄 등록하면 됩니다.
 
-**회귀 테스트 93개**가 실제 서버를 띄워서 돕니다(`python tests/run_all.py`).
+**회귀 테스트 94개**가 실제 서버를 띄워서 돕니다(`python tests/run_all.py`).
 모바일은 따로 **127개**(`cd mobile && flutter test`)인데, 그중 일부는 파이썬이 뽑아둔
 답(`test/*.json`)과 다트의 답이 **같은지** 대조합니다 — 두 앱이 같은 서버에서 같은
 대화를 다르게 해석하기 시작하면 그게 가장 찾기 어려운 버그입니다.

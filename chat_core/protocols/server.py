@@ -27,6 +27,13 @@ class ServerProtocol(CommonCommands):
     # 쪼개지 않고 한 줄로 보낸다. 서버가 받아주는 만큼이다(jsserv features/chat.py)
     avatar_limit = 6000
 
+    # **지난 기록은 서버가 들고 있다**(하루치). 그래서 로컬에 적지도 않고, 중계 서버에
+    # 올리거나 받아오지도 않는다 - 안 그러면 같은 이야기가 세 벌로 쌓인다
+    keeps_history = True
+
+    # 우리 서버 하나뿐이라 목록이 크지 않다. 사람이 방 이름을 몰라도 들어갈 수 있어야 한다
+    can_list_rooms = True
+
     # ---------- 의도(내보내기) ----------
     def start_auth(self, session, user_id: str, password: str, mode: str) -> None:
         if mode == "register":
@@ -69,10 +76,21 @@ class ServerProtocol(CommonCommands):
         """계정으로 들어가므로 이름이 밀릴 일이 없다."""
 
     def keepalive(self, session) -> None:
-        """연결이 끊기면 바로 알아채므로 따로 물어볼 것이 없다."""
+        """살아 있는지 물어본다(서버는 pong 으로 답한다).
+
+        **없으면 조용한 연결을 우리가 죽은 것으로 보고 끊는다.** 어댑터는 얼마간
+        아무 것도 안 오면 여기를 부르고, 그래도 조용하면 다시 붙는다(gui/liveness.py).
+        IRC 는 서버가 90초마다 PING 을 보내줘서 대화가 없어도 뭔가 오는데, 서버
+        채팅은 아무도 안 보낸다 - 그래서 여기를 비워뒀더니 **조용하면 170초마다
+        끊고 다시 붙었다**(실측 2026-10-02). 소켓 자체는 멀쩡했다.
+        """
+        session.transport(wire.format_ping())
 
     def disconnect_gracefully(self, session, reason: str) -> None:
         """끊기는 즉시 서버가 알아채므로 따로 알릴 것이 없다."""
+
+    def request_room_list(self, session) -> None:
+        session.transport(wire.format_channels())
 
     def announce_battle_room(self, session, channel: str, room: str) -> None:
         """전투 방 번호를 채널에 알린다.
@@ -126,14 +144,17 @@ class ServerProtocol(CommonCommands):
         if not msg.get("ok"):
             session.emit(events.ChannelJoinFailed(channel, msg.get("text", "실패")))
             return
-        session.enter_channel(channel, msg.get("text", "입장 완료"))
-        # **지난 기록이 응답에 실려 온다.** 중계 서버에 따로 받아올 것이 없다
-        for line in msg.get("history", []) or []:
-            sender = line.get("sender", "?")
-            session.deliver_message(
-                channel, sender, line.get("text", ""),
-                mine=(sender == session.my_id), ts=line.get("ts", time.time()),
-                record_history=False)
+        # **지난 기록이 응답에 실려 온다.** 중계 서버에 따로 받아올 것이 없다.
+        # 입장 이벤트에 실어 보내면 화면은 평소 쓰던 틀("── 이전 대화 기록 ──")로
+        # 그대로 그린다 - 한 줄씩 보통 메시지로 올리면 live 대화와 섞여서 어디까지가
+        # 지난 것인지 알 수 없다(실제로 그렇게 보였다)
+        history = [
+            {"from": line.get("sender", "?"),
+             "text": line.get("text", ""),
+             "ts": line.get("ts", time.time())}
+            for line in (msg.get("history") or []) if isinstance(line, dict)
+        ]
+        session.enter_channel(channel, msg.get("text", "입장 완료"), history=history)
         self._apply_users(session, channel, msg.get("users", []))
 
     def _on_leave_result(self, session, msg: dict):
@@ -216,10 +237,31 @@ class ServerProtocol(CommonCommands):
         if user_id:
             session.apply_nickname(user_id, msg.get("nick"))
 
+    def _on_channel_list(self, session, msg: dict):
+        rooms = []
+        for one in msg.get("channels") or []:
+            if not isinstance(one, dict) or not one.get("name"):
+                continue
+            rooms.append(events.RoomInfo(
+                name=str(one["name"]),
+                users=int(one.get("users") or 0),
+                locked=bool(one.get("locked")),
+            ))
+        session.emit(events.RoomListReceived(rooms))
+
+    def _on_pong(self, session, msg: dict):
+        """살아 있다는 답. **받았다는 사실 자체가 전부**라 할 일이 없다.
+
+        어댑터가 '마지막으로 뭔가 받은 때'를 재고 있고(`last_rx_at`), 이 줄이 그걸
+        갱신한다. 화면에는 아무 것도 보이면 안 된다.
+        """
+
     def _on_error(self, session, msg: dict):
         session.emit(events.GenericError(msg.get("text", "오류")))
 
     _HANDLERS = {
+        wire.TYPE_CHANNEL_LIST: _on_channel_list,
+        wire.TYPE_PONG: _on_pong,
         wire.TYPE_AUTH_RESULT: _on_auth_result,
         wire.TYPE_CHANNEL_RESULT: _on_channel_result,
         wire.TYPE_LEAVE_RESULT: _on_leave_result,

@@ -196,6 +196,9 @@ class AppState extends ChangeNotifier {
 
   Timer? _flushTimer;
 
+  /// 조용할 때 살아 있는지 찔러보는 시계. 프로토콜이 할 일이 없으면 아무 것도 안 한다
+  Timer? _aliveTimer;
+
   /// 올리는 중인 파일(화면이 진행 상태를 보여주는 데 쓴다).
   String uploading = '';
 
@@ -296,6 +299,13 @@ class AppState extends ChangeNotifier {
     _profiles = ProfileApi(where, host, port);
     files.group = relay.groupId(where, host, port);
     unawaited(files.refreshLimits());
+    // **대화가 없어도 뭔가 오가게 한다.** 통신사·공유기는 조용한 연결을 한참 뒤
+    // 버리는데, 그러면 보낸 말이 그냥 사라진다. 할 일이 없는 프로토콜(IRC - 서버가
+    // 먼저 물어본다)에서는 이 시계가 돌아도 줄이 안 나간다
+    _aliveTimer?.cancel();
+    _aliveTimer = Timer.periodic(
+        const Duration(seconds: 60), (_) => _session?.keepalive());
+
     _flushTimer?.cancel();
     if (kind == ChatKind.server) {
       // **서버가 기록을 들고 있다.** 각자 올려서 모으던 길(아래 IRC 쪽)은 쓸 일이
@@ -483,9 +493,30 @@ class AppState extends ChangeNotifier {
   /// 핸들러를 직접 부르는 검사는 사람이 눌렀을 때만 나는 버그를 못 잡는다
   void Function(String)? onJoinForTest;
 
-  void joinChannel(String name) {
+  void joinChannel(String name, {String key = ''}) {
     onJoinForTest?.call(name);
-    _session?.joinChannel(name);
+    _session?.joinChannel(name, key: key);
+  }
+
+  // ------------------------------------------------------------ 서버의 방 목록
+  /// 서버에 어떤 방이 있는지 **보고 고를 수 있나.**
+  ///
+  /// 화면은 "지금 서버 채팅인가"가 아니라 이것을 묻는다 - 그래야 화면이 프로토콜을
+  /// 몰라도 된다(`core/chat_port.dart`).
+  bool get canListRooms => _session?.canListRooms ?? false;
+
+  /// 서버가 알려준 방들. 물어보기 전에는 비어 있다
+  List<RoomInfo> roomList = const [];
+
+  /// 방 목록을 받아오는 중인가(화면이 도는 표시를 보여준다)
+  bool roomListLoading = false;
+
+  /// 방 목록을 달라고 한다. 답이 오면 [roomList] 가 채워지고 화면이 다시 그려진다.
+  void refreshRoomList() {
+    if (!canListRooms) return;
+    roomListLoading = true;
+    notifyListeners();
+    _session!.requestRoomList();
   }
 
   void leaveChannel(String channel) => _session?.leaveChannel(channel);
@@ -565,6 +596,7 @@ class AppState extends ChangeNotifier {
     // 모아둔 대화를 마지막으로 밀어낸다 - 안 하면 방금 나눈 이야기가 통째로 안 올라가서
     // 그 사이에 없던 사람이 그만큼을 영영 못 본다
     _flushTimer?.cancel();
+    _aliveTimer?.cancel();
     await _logs?.flush();
     _session?.quit();
     await _client.close();
@@ -582,6 +614,7 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _flushTimer?.cancel();
+    _aliveTimer?.cancel();
     reconnect.cancel();
     // **둘 다 치운다.** 지금 쓰는 쪽만 치우면 다른 쪽 스트림이 열린 채로 남는다
     _irc.dispose();
@@ -774,6 +807,9 @@ class AppState extends ChangeNotifier {
             at: DateTime.now(),
           ),
         );
+      case RoomListReceived(:final rooms):
+        roomList = rooms;
+        roomListLoading = false;
       case AuthFailed(:final text):
         // 끊긴 것이 아니라 **거절당한 것**이다. 그대로 보여주고 기다리는 쪽을 깨운다
         statusText = text;

@@ -12,3 +12,6 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# 코틀린 컴파일러가 빌드 중에 만드는 자리. v2.7.0 에 한 번 딸려 들어갔다
+.kotlin/
