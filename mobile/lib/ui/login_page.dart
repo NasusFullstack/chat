@@ -14,6 +14,7 @@ import '../core/chat_port.dart';
 import '../core/irc_protocol.dart';
 import '../core/server_session.dart' show accountProblem;
 import '../login_store.dart';
+import 'signup_page.dart';
 import '../net/irc_client.dart';
 import '../net/trusted_certs.dart' as certs;
 import 'splash_page.dart' show developer;
@@ -28,7 +29,24 @@ class LoginPage extends StatefulWidget {
   State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<LoginPage> {
+class _LoginPageState extends State<LoginPage>
+    with SingleTickerProviderStateMixin {
+  /// 상단 탭. **두 개뿐이고 순서가 고정이다** - 아래 _kindAt 과 짝이다
+  late final TabController _tabs = TabController(length: 2, vsync: this)
+    ..addListener(_onTabChanged);
+
+  static ChatKind _kindAt(int index) =>
+      index == 0 ? ChatKind.server : ChatKind.irc;
+
+  static int _indexOf(ChatKind kind) => kind == ChatKind.server ? 0 : 1;
+
+  void _onTabChanged() {
+    // 손가락을 떼기 전(indexIsChanging)에도 불린다 - 끝난 뒤에만 본다
+    if (_tabs.indexIsChanging) return;
+    final picked = _kindAt(_tabs.index);
+    if (picked != _kind) _switchKind(picked);
+  }
+
   // PC 앱과 같은 기본값. 여기 처음 오는 사람이 아무것도 안 고치고 들어갈 수 있게
   final _host = TextEditingController(text: 'home.pdlab.kr');
   final _port = TextEditingController(text: '6697');
@@ -40,8 +58,6 @@ class _LoginPageState extends State<LoginPage> {
   /// IRC 로 갈까 서버 채팅으로 갈까. **앞단계**다 - 이 고름에 따라 아래 칸이 바뀐다
   ChatKind _kind = ChatKind.irc;
 
-  /// 서버 채팅에서 **계정부터 만들까**. 가입이 끝나면 이어서 알아서 들어간다
-  bool _makeAccount = false;
 
   /// 기억해둔 이름이 있으면 **알아서 들어간다.** 폰에서 글자 치는 것은 번거로워서,
   /// 켤 때마다 이름을 다시 받으면 그것만으로 안 쓰게 된다
@@ -70,6 +86,7 @@ class _LoginPageState extends State<LoginPage> {
     if (!mounted) return;
     setState(() {
       _kind = kind;
+      _tabs.index = _indexOf(kind);
       _fill(last);
       _ready = true;
     });
@@ -96,7 +113,6 @@ class _LoginPageState extends State<LoginPage> {
     if (!mounted) return;
     setState(() {
       _kind = kind;
-      _makeAccount = false;
       _password.clear();
       _fill(last);
       widget.state.statusText = '';
@@ -105,6 +121,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   void dispose() {
+    _tabs.dispose();
     _host.dispose();
     _port.dispose();
     _nick.dispose();
@@ -151,10 +168,18 @@ class _LoginPageState extends State<LoginPage> {
     if (ok) widget.onDone();
   }
 
+  /// 가입 화면을 띄운다. 만들고 들어왔으면 그대로 채팅으로 넘어간다.
+  Future<void> _openSignup() async {
+    final made = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => SignupPage(state: widget.state)),
+    );
+    if (made == true && mounted) widget.onDone();
+  }
+
   Future<bool> _tryConnect(String host, int port, String nick, String version) {
     return widget.state.connect(
       kind: _kind,
-      makeAccount: _kind == ChatKind.server && _makeAccount,
       host: host,
       port: port,
       nick: nick,
@@ -210,6 +235,19 @@ class _LoginPageState extends State<LoginPage> {
       body: SafeArea(
         child: Column(
           children: [
+            // **어디로 갈까가 먼저다.** 고른 쪽에 따라 아래 칸이 바뀐다 - IRC 는
+            // 주소를 적어야 하고, 서버 채팅은 적을 것이 없다.
+            // 접속하는 동안에는 못 바꾼다(바꾸면 지금 붙는 중인 쪽과 어긋난다)
+            IgnorePointer(
+              ignoring: _busy,
+              child: TabBar(
+                controller: _tabs,
+                tabs: [
+                  Tab(text: ChatKind.server.label),
+                  Tab(text: ChatKind.irc.label),
+                ],
+              ),
+            ),
             Expanded(
               child: Center(
                 // 폴드를 펴면 화면이 넓어지는데 입력칸이 끝까지 늘어나면 보기 나쁘다.
@@ -236,26 +274,6 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                       ),
                       const SizedBox(height: 18),
-                      // **어디로 갈까**가 먼저다. 이 고름에 따라 아래 칸이 바뀐다 -
-                      // IRC 는 주소를 적어야 하고, 서버 채팅은 적을 것이 없다
-                      SegmentedButton<ChatKind>(
-                        segments: [
-                          ButtonSegment(
-                            value: ChatKind.server,
-                            label: Text(ChatKind.server.label),
-                            icon: const Icon(Icons.chat_bubble_outline, size: 18),
-                          ),
-                          ButtonSegment(
-                            value: ChatKind.irc,
-                            label: Text(ChatKind.irc.label),
-                            icon: const Icon(Icons.dns_outlined, size: 18),
-                          ),
-                        ],
-                        selected: {_kind},
-                        onSelectionChanged:
-                            _busy ? null : (picked) => _switchKind(picked.first),
-                      ),
-                      const SizedBox(height: 8),
                       Text(
                         server
                             ? '한글 이름·긴 글·큰 아이콘이 되고, 지난 대화가 들어갈 때 같이 옵니다.'
@@ -307,18 +325,7 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                         onSubmitted: (_) => _connect(),
                       ),
-                      if (server)
-                        CheckboxListTile(
-                          contentPadding: EdgeInsets.zero,
-                          controlAffinity: ListTileControlAffinity.leading,
-                          dense: true,
-                          value: _makeAccount,
-                          onChanged: (on) =>
-                              setState(() => _makeAccount = on ?? false),
-                          title: const Text('계정 만들기'),
-                          subtitle:
-                              const Text('처음이라면 켜세요. 만든 뒤 바로 들어갑니다'),
-                        ),
+
                       if (!server)
                         SwitchListTile(
                           contentPadding: EdgeInsets.zero,
@@ -366,10 +373,15 @@ class _LoginPageState extends State<LoginPage> {
                                 width: 18,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
-                            : Text(server && _makeAccount
-                                ? '계정 만들고 들어가기'
-                                : '들어가기'),
+                            : const Text('들어가기'),
                       ),
+                      // 가입은 한 번뿐이고 들어가기는 매번이다. 같은 칸에 체크 하나로
+                      // 뜻을 바꾸면 지금 무엇을 하는 건지 알기 어렵다 - 따로 띄운다
+                      if (server)
+                        TextButton(
+                          onPressed: _busy ? null : _openSignup,
+                          child: const Text('계정이 없나요? 만들기'),
+                        ),
                       if (state.statusText.isNotEmpty) ...[
                         const SizedBox(height: 14),
                         Text(

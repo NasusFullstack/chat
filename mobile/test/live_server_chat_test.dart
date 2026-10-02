@@ -13,7 +13,6 @@
 /// 검사는 초록"이 된다.
 library;
 
-import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
@@ -27,7 +26,6 @@ import 'package:chupchat/core/chat_port.dart';
 import 'package:chupchat/core/events.dart';
 import 'package:chupchat/core/relay.dart' as relay;
 import 'package:chupchat/core/server_session.dart';
-import 'package:chupchat/net/chat_link.dart';
 import 'package:chupchat/net/server_chat_client.dart';
 
 /// 서버가 올라와 있고, 어떤 버전인가.
@@ -187,6 +185,25 @@ void main() {
     me.session.sendChat(channel, long);
     final longSaid = await me.waitFor<MessageReceived>();
     expect(longSaid?.text, long, reason: '긴 글이 잘리면 안 된다');
+
+    // ---------- 서버에 어떤 방이 있는지 ----------
+    if (atLeast(server, [1, 2, 0])) {
+      me.events.clear();
+      me.session.requestRoomList();
+      final listed = await me.waitFor<RoomListReceived>();
+      expect(listed, isNotNull, reason: '방 목록을 받아야 한다');
+      expect(listed!.rooms.map((r) => r.name), contains(channel),
+          reason: '방금 만든 방이 목록에 있어야 한다');
+
+      // 조용해도 끊기지 않게 - 답이 와야 한다
+      me.events.clear();
+      me.session.keepalive();
+      await Future<void>.delayed(const Duration(seconds: 2));
+      expect(me.events.whereType<MessageReceived>(), isEmpty,
+          reason: '살아 있는지 묻고 받은 답이 글자로 보이면 안 된다');
+    } else {
+      print('[건너뜀] 방 목록·살아있나 - 올라간 chat 이 ${server['version']}');
+    }
 
     // ---------- 다시 들어가면 **지난 기록이 같이 온다** ----------
     await me.close();

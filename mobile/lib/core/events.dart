@@ -250,3 +250,51 @@ class AuthFailed extends ChatEvent {
   @override
   Map<String, Object?> toMap() => {'type': type, 'text': text};
 }
+
+/// 서버에 있는 방 하나.
+class RoomInfo {
+  const RoomInfo({
+    required this.name,
+    this.users = 0,
+    this.locked = false,
+  });
+
+  final String name;
+
+  /// 지금 그 방에 있는 사람 수. 0이어도 방과 기록은 남아 있다
+  final int users;
+
+  /// 비밀번호가 걸렸는가. **비밀번호 자체는 서버가 안 보낸다** - 걸렸다는 사실만 온다
+  final bool locked;
+
+  static RoomInfo? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final name = raw['name'];
+    if (name is! String || name.isEmpty) return null;
+    final users = raw['users'];
+    return RoomInfo(
+      name: name,
+      users: users is num ? users.toInt() : 0,
+      locked: raw['locked'] == true,
+    );
+  }
+}
+
+/// 서버에 어떤 방이 있는지 받았다.
+class RoomListReceived extends ChatEvent {
+  const RoomListReceived(this.rooms);
+
+  final List<RoomInfo> rooms;
+
+  @override
+  String get type => 'RoomListReceived';
+
+  @override
+  Map<String, Object?> toMap() => {
+        'type': type,
+        'rooms': [
+          for (final one in rooms)
+            {'name': one.name, 'users': one.users, 'locked': one.locked}
+        ],
+      };
+}

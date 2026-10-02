@@ -188,6 +188,7 @@ class MainWindow(QMainWindow):
         self.startup_page = StartupPage()
         self.login_page = LoginPage(self._handle_login_submit, self._handle_cancel_connect)
         self.channel_page = ChannelPage(self._handle_channel_submit, self._handle_back_to_login)
+        self.channel_page.refresh_btn.clicked.connect(self.request_room_list)
         self.chat_page = ChatPage(
             self._handle_send, self._handle_add_channel, self._handle_leave_channel,
             self._handle_set_avatar, self._handle_all_channels_left,
@@ -257,9 +258,27 @@ class MainWindow(QMainWindow):
         if chat_page is not None:
             chat_page.set_emoji_group(group)
 
+    def request_room_list(self):
+        """서버에 어떤 방이 있는지 달라고 한다(줄 수 있는 서버에서만)."""
+        if self.session.can_list_rooms:
+            self.session.request_room_list()
+
+    def show_room_list(self, rooms):
+        self.channel_page.show_rooms(rooms)
+
     def record_chat_line(self, channel: str, sender: str, text: str, ts: float):
-        """받아본 줄을 중계 서버에 올릴 목록에 넣는다(놓친 사람이 따라잡을 수 있게)."""
+        """받아본 줄을 중계 서버에 올릴 목록에 넣는다(놓친 사람이 따라잡을 수 있게).
+
+        **서버가 기록을 들고 있는 쪽은 올리지 않는다.** 올리면 다음에 들어갈 때
+        서버가 준 기록과 중계 서버가 준 기록이 겹쳐서 같은 이야기가 두 번 보인다.
+        """
+        if self._server_keeps_history:
+            return
         self.log_sync.record(channel, sender, text, ts)
+
+    @property
+    def _server_keeps_history(self) -> bool:
+        return bool(getattr(self.session.protocol, "keeps_history", False))
 
     def fetch_missed(self, channel: str, history: list):
         """앱을 꺼둔 사이에 오간 이야기를 받아온다.
@@ -267,6 +286,9 @@ class MainWindow(QMainWindow):
         기준은 **내가 마지막으로 본 줄의 시각**이다. 그보다 뒤엣것만 달라고 하면 이미
         화면에 있는 것과 겹치지 않는다.
         """
+        # 서버가 기록을 들고 있으면 받아올 것이 없다 - 이미 입장 응답에 실려 왔다
+        if self._server_keeps_history:
+            return
         newest = 0.0
         for entry in history or []:
             newest = max(newest, float(entry.get("ts", 0) or 0))

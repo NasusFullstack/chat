@@ -29,8 +29,12 @@ TYPE_USERLIST = "userlist"
 TYPE_MEMBER_AVATAR = "member_avatar"
 TYPE_MEMBER_NICKNAME = "member_nickname"
 TYPE_ERROR = "error"
+TYPE_PONG = "pong"
+TYPE_CHANNEL_LIST = "channel_list"
 
 # 클라이언트 -> 서버 (msg["cmd"])
+CMD_PING = "ping"
+CMD_CHANNELS = "channels"
 CMD_REGISTER = "register"
 CMD_LOGIN = "login"
 CMD_JOIN = "join"
@@ -74,3 +78,20 @@ def format_set_avatar(avatar_b64: str) -> dict:
 def format_set_nickname(nickname: str) -> dict:
     """**한글도 된다.** IRC 서버는 한글 닉네임을 거절했다."""
     return {"cmd": CMD_SET_NICKNAME, "nick": nickname}
+
+
+def format_ping() -> dict:
+    """살아 있나. 서버는 pong 으로 답한다.
+
+    **대화가 없어도 뭔가 오가게 하는 것이 목적이다.** 이것이 없으면 조용한 연결을
+    우리가 죽은 것으로 보고 끊는다(실측 2026-10-02: 170초마다 그랬다).
+    """
+    return {"cmd": CMD_PING}
+
+
+def format_channels() -> dict:
+    """서버에 어떤 방이 있는지 달라고 한다.
+
+    **비밀번호는 안 온다** - 걸렸다는 사실만 온다(서버가 안 보낸다).
+    """
+    return {"cmd": CMD_CHANNELS}

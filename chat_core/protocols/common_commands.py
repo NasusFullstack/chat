@@ -11,6 +11,14 @@ from chat_core import commands, events
 
 
 class CommonCommands:
+    # 방 목록은 **줄 수 있는 쪽만** 준다. IRC 에도 LIST 가 있지만 쓰지 않는다 -
+    # 큰 서버는 방이 수만 개라 한 번 물으면 그만큼이 쏟아지고, 서버가 폭주로 보고
+    # 끊기도 한다(CLAUDE.md 2-4 와 같은 함정)
+    can_list_rooms = False
+
+    def request_room_list(self, session) -> None:
+        """방 목록을 달라고 한다. 줄 수 없는 쪽은 할 일이 없다."""
+
     def _cmd_help(self, session, channel: str, args: str) -> None:
         lines = [f"{spec.usage}  -  {spec.help}" for spec in self.command_specs()]
         session.emit(events.CommandHelp(channel, lines))

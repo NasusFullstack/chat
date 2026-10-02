@@ -33,8 +33,8 @@ extension ChatKindName on ChatKind {
   /// (PC 는 `chat_core/protocols/*.py` 의 `name`).
   String get wireName => this == ChatKind.server ? 'server' : 'irc';
 
-  /// 사람에게 보여줄 이름
-  String get label => this == ChatKind.server ? '춥채팅 서버' : '실제 IRC 서버';
+  /// 사람에게 보여줄 이름. **탭 두 칸에 들어가야 해서 짧게 둔다**
+  String get label => this == ChatKind.server ? '춥채팅 서버' : 'IRC 서버';
 }
 
 abstract class ChatPort {
@@ -44,7 +44,17 @@ abstract class ChatPort {
   /// 들어가기. IRC 는 닉네임만, 서버 채팅은 아이디+비밀번호다
   void login({String? password, String realname});
 
-  void joinChannel(String name);
+  /// 들어간다. [key]는 비밀번호가 걸린 방에만 쓴다.
+  void joinChannel(String name, {String key = ''});
+
+  /// 서버에 있는 방을 **보고 고를 수 있나.**
+  ///
+  /// 화면은 "지금 서버 채팅인가"가 아니라 **이것**을 묻는다. 그래야 화면이 프로토콜
+  /// 이름을 몰라도 되고, 나중에 목록을 줄 수 있는 쪽이 늘어도 화면은 안 바뀐다.
+  bool get canListRooms;
+
+  /// 방 목록을 달라고 한다. 답은 `RoomListReceived` 로 온다.
+  void requestRoomList();
 
   void leaveChannel(String channel);
 
@@ -55,6 +65,13 @@ abstract class ChatPort {
   /// IRC 는 CTCP 프레임으로, 서버 채팅은 그냥 채팅으로 보낸다 - 받는 쪽이 걸러낸다.
   /// **주소는 안 실린다**(번호만).
   void announceBattleRoom(String channel, String room);
+
+  /// 조용할 때 "살아 있나" 하고 한 번 찔러본다.
+  ///
+  /// IRC 는 **서버가** 90초마다 물어봐서 할 일이 없다. 서버 채팅은 아무도 안 물으니
+  /// 우리가 보낸다 - 대화가 없어도 뭔가 오가게 하는 것이 목적이다(통신사·공유기가
+  /// 조용한 연결을 버리는 것을 막는다).
+  void keepalive();
 
   /// 나간다고 알리고 끝낸다.
   void quit([String reason]);

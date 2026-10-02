@@ -146,6 +146,8 @@ def feature_at_least(want: tuple) -> bool:
 
 # 1.1.0 부터 WebSocket 으로도 가입할 수 있다
 WS_REGISTER = feature_at_least((1, 1, 0))
+# 1.2.0 부터 ping 에 답하고 방 목록을 준다
+KEEPALIVE = feature_at_least((1, 2, 0))
 
 # ---------- 1) 가입하고 들어간다 ----------
 me = Peer()
@@ -208,7 +210,41 @@ check("긴 글이 안 잘린다", long_said is not None and long_said.text == lo
 big_avatar = "A" * 5000      # IRC 는 300자씩 쪼개야 했다
 check("큰 아이콘을 받아준다(쪼개지 않는다)", me.session.set_avatar(big_avatar) is True)
 
-# ---------- 4) 다시 들어가면 **지난 기록이 같이 온다** ----------
+# ---------- 4) 조용해도 끊기지 않게 ----------
+# **없으면 조용한 연결을 우리가 죽은 것으로 보고 끊는다** - 실측(2026-10-02): PC 가
+# 170초마다 끊고 다시 붙었다. 소켓 자체는 5분 넘게 멀쩡했다
+if KEEPALIVE:
+    me.events.clear()
+    before_rx = me.link.last_rx_at
+    me.session.keepalive()
+    wait_for(lambda: me.link.last_rx_at > before_rx, 8)
+    check("살아 있는지 물으면 답이 온다", me.link.last_rx_at > before_rx)
+    # **글자가 하나도 안 보여야 한다.** (아이콘을 올린 답 같은 것이 늦게 섞여 들어올
+    # 수 있으므로 "이벤트가 0개"로 보면 안 된다 - 여기서 실제로 그렇게 헛걸렸다)
+    noisy = [e for e in me.events if isinstance(
+        e, (events.MessageReceived, events.SystemNotice, events.GenericError))]
+    check("그 답은 화면에 글자를 안 띄운다", not noisy, noisy[:2])
+else:
+    print(f"[건너뜀] 살아 있는지 묻기 - 올라간 chat 이 {info.get('version')} "
+          f"(1.2.0 이상 필요)", flush=True)
+
+# ---------- 5) 서버에 어떤 방이 있는지 보고 고른다 ----------
+if KEEPALIVE:
+    me.events.clear()
+    me.session.request_room_list()
+    listed = me.wait_event(events.RoomListReceived)
+    check("방 목록을 받는다", listed is not None, me.events[:2])
+    if listed is not None:
+        names = [room.name for room in listed.rooms]
+        check("방금 만든 방이 목록에 있다", channel in names, names[:5])
+        mine_room = next((r for r in listed.rooms if r.name == channel), None)
+        check("몇 명 있는지 같이 온다", mine_room is not None and mine_room.users >= 1,
+              mine_room)
+else:
+    print(f"[건너뜀] 방 목록 - 올라간 chat 이 {info.get('version')} (1.2.0 이상 필요)",
+          flush=True)
+
+# ---------- 6) 다시 들어가면 **지난 기록이 같이 온다** ----------
 me.close()
 time.sleep(0.5)
 
@@ -222,9 +258,14 @@ again.session.join_channel(channel)
 back = again.wait_event(events.ChannelJoined)
 check("다시 들어간다", back is not None, back)
 
-history = [e.text for e in again.events if isinstance(e, events.MessageReceived)]
-# IRC 모드는 중계 서버에 따로 받아와야 했다. 여기서는 입장 응답에 실려 온다
+# **입장 이벤트에 실려 온다.** 보통 메시지로 한 줄씩 올리면 live 대화와 섞여서
+# 어디까지가 지난 것인지 알 수 없다(실제로 그렇게 보였고, 거기에 로컬 기록과
+# 중계 서버 기록까지 겹쳐 같은 이야기가 세 벌로 쌓였다)
+history = [one.get("text") for one in (back.history if back else [])]
 check("지난 이야기가 입장과 함께 온다", "안녕하세요" in history, history[:3])
+check("지난 이야기를 보통 메시지로는 안 올린다",
+      not [e for e in again.events if isinstance(e, events.MessageReceived)],
+      [e.text for e in again.events if isinstance(e, events.MessageReceived)][:3])
 again.close()
 
 finish()

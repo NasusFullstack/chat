@@ -84,10 +84,18 @@ class ServerSession implements ChatPort {
   /// 이름을 다듬지 않는다. `#` 도 필요 없고 **한글도 된다** - IRC 쪽
   /// `normalizeChannel()` 이 하던 일이 여기서는 할 일이 아니다.
   @override
-  void joinChannel(String name) {
+  void joinChannel(String name, {String key = ''}) {
     if (name.trim().isEmpty) return;
-    send({'cmd': 'join', 'channel': name.trim(), 'key': ''});
+    send({'cmd': 'join', 'channel': name.trim(), 'key': key});
   }
+
+  /// **서버에 어떤 방이 있는지 보여줄 수 있다.** 우리 서버 하나뿐이라 목록이 크지
+  /// 않고, 사람이 방 이름을 몰라도 들어갈 수 있어야 한다.
+  @override
+  bool get canListRooms => true;
+
+  @override
+  void requestRoomList() => send({'cmd': 'channels'});
 
   @override
   void leaveChannel(String channel) =>
@@ -121,6 +129,13 @@ class ServerSession implements ChatPort {
     send({'cmd': 'msg', 'channel': channel, 'text': bp.formatRoomNotice(room)});
   }
 
+  /// 살아 있나. 서버가 pong 으로 답한다.
+  ///
+  /// **대화가 없어도 뭔가 오가게 하는 것이 목적이다.** PC 는 이게 없어서 조용한
+  /// 연결을 죽은 것으로 보고 170초마다 끊고 다시 붙었다(실측 2026-10-02).
+  @override
+  void keepalive() => send({'cmd': 'ping'});
+
   @override
   void quit([String reason = '종료']) {
     // 끊기는 즉시 서버가 알아채므로 따로 알릴 것이 없다(IRC 는 QUIT 을 보내야 했다).
@@ -145,6 +160,8 @@ class ServerSession implements ChatPort {
     'userlist': _onUserlist,
     'member_avatar': _onMemberAvatar,
     'member_nickname': _onMemberNickname,
+    'channel_list': _onChannelList,
+    'pong': _onPong,
     'error': _onError,
   };
 
@@ -302,6 +319,22 @@ class ServerSession implements ChatPort {
     if (id.isEmpty || nick.isEmpty) return;
     s.nicknames[id] = nick;
     s.emit(NicknameUpdated(id, nick));
+  }
+
+  static void _onChannelList(ServerSession s, Map msg) {
+    final raw = msg['channels'];
+    if (raw is! List) return;
+    final rooms = <RoomInfo>[];
+    for (final one in raw) {
+      final room = RoomInfo.fromJson(one);
+      if (room != null) rooms.add(room);
+    }
+    s.emit(RoomListReceived(rooms));
+  }
+
+  static void _onPong(ServerSession s, Map msg) {
+    // 살아 있다는 답. **받았다는 사실 자체가 전부**라 할 일이 없다 - 화면에는
+    // 아무 것도 보이면 안 된다
   }
 
   static void _onError(ServerSession s, Map msg) {

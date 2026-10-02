@@ -18,6 +18,7 @@ import '../core/relay.dart' as relay;
 import 'battle_lobby_page.dart';
 import 'file_card.dart';
 import 'layout.dart';
+import 'room_picker.dart';
 import 'settings_page.dart';
 
 class ChatPage extends StatefulWidget {
@@ -141,31 +142,11 @@ class _ChatPageState extends State<ChatPage> {
     _input.selection = TextSelection.collapsed(offset: _input.text.length);
   }
 
+  /// 들어갈 방을 고른다. 서버가 목록을 줄 수 있으면 **보고 고르고**, 아니면 이름을
+  /// 받는다 - 어느 쪽인지는 `room_picker.dart` 가 안다.
   Future<void> _askChannel() async {
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('채널 들어가기'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: '일반',
-            helperText: '# 은 안 붙여도 됩니다',
-          ),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text('들어가기'),
-          ),
-        ],
-      ),
-    );
-    if (name == null || name.trim().isEmpty) return;
+    final picked = await pickRoom(context, widget.state);
+    if (picked == null) return;
     if (!widget.state.loggedIn) {
       // 로그인 전에 보내면 서버가 조용히 무시한다 - 그러면 "눌렀는데 아무 일도
       // 안 일어남"으로만 보이므로 여기서 알려준다
@@ -175,7 +156,7 @@ class _ChatPageState extends State<ChatPage> {
       );
       return;
     }
-    widget.state.joinChannel(name.trim());
+    widget.state.joinChannel(picked.name, key: picked.key);
   }
 
   void _showSettings() {

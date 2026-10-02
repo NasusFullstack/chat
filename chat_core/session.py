@@ -124,11 +124,34 @@ class ChatSession:
         # 이걸 안 해두면 참여자 목록에서 나만 로고가 비어 보인다
         self.apply_client_version(user_id, constants.our_client_version())
 
-    def enter_channel(self, channel: str, text: str):
+    def enter_channel(self, channel: str, text: str, history=None):
+        """채널에 들어갔다. [history]를 주면 **그것이 지난 기록이다**.
+
+        서버가 기록을 들고 있는 프로토콜(`keeps_history`)은 입장 응답에 하루치를
+        실어 보낸다. 그걸 여기로 넘기면 화면은 평소와 똑같이 그리면 되고, 로컬
+        기록을 또 읽지 않으므로 **같은 이야기가 두 벌로 쌓이지 않는다**.
+        """
         self.joined_channels.add(channel)
         self.active_channel = channel
-        history = self._history.load_history(self.protocol.name, self.host, self.port, channel)
+        if history is None:
+            history = ([] if self._server_keeps_history else
+                       self._history.load_history(
+                           self.protocol.name, self.host, self.port, channel))
         self._emit(events.ChannelJoined(channel, text, history))
+
+    @property
+    def _server_keeps_history(self) -> bool:
+        """서버가 지난 기록을 들고 있는가. 옛 전략은 이 값을 안 가지므로 기본은 거짓."""
+        return bool(getattr(self.protocol, "keeps_history", False))
+
+    def request_room_list(self):
+        """서버에 어떤 방이 있는지 달라고 한다. 답은 `RoomListReceived` 로 온다."""
+        self.protocol.request_room_list(self)
+
+    @property
+    def can_list_rooms(self) -> bool:
+        """방 목록을 보여줄 수 있는 서버인가. 화면은 이것을 묻는다."""
+        return bool(getattr(self.protocol, "can_list_rooms", False))
 
     def forget_channel(self, channel: str):
         self.joined_channels.discard(channel)
@@ -143,7 +166,7 @@ class ChatSession:
         kind, body = commands.classify_message(text)
         is_mention = (not mine) and self._is_mentioned(body)
         self._emit(events.MessageReceived(channel, sender, body, mine, ts, is_mention, kind))
-        if record_history:
+        if record_history and not self._server_keeps_history:
             self._history.append_message(
                 self.protocol.name, self.host, self.port, channel, sender, body, ts
             )
