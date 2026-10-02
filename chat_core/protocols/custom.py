@@ -16,6 +16,9 @@ from chat_core.protocols.common_commands import CommonCommands
 class CustomProtocol(CommonCommands):
     name = "custom"
 
+    # 옛 서버(server.py)가 그 값으로 막는다
+    avatar_limit = constants.AVATAR_MAX_B64_CHARS
+
     # ---------- 의도(내보내기) ----------
     def start_auth(self, session, user_id: str, password: str, mode: str) -> None:
         if mode == "register":

@@ -31,6 +31,9 @@ INFO_NUMERICS = {
 class IrcProtocol(CommonCommands):
     name = "irc"
 
+    # 한 줄 512바이트라 300자씩 쪼개 보낸다 - 조각이 늘수록 하나라도 빠질 확률이 커진다
+    avatar_limit = constants.AVATAR_MAX_B64_CHARS
+
     # ---------- 의도(내보내기) ----------
     def start_auth(self, session, user_id: str, password: str, mode: str) -> None:
         """IRC는 회원가입 개념이 없음 - mode와 무관하게 등록(registration) 핸드셰이크를 함"""

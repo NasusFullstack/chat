@@ -40,6 +40,11 @@ class ProtocolPort(Protocol):
 
     name: str
 
+    # 아이콘(base64 글자) 상한. **프로토콜마다 다르다** - IRC 는 한 줄 512바이트라
+    # 쪼개 보내야 해서 작게 잡았고, 서버 채팅은 그냥 보내므로 서버가 받아주는 만큼이다.
+    # 코어가 `if protocol == ...` 로 가르지 않도록 전략이 들고 있는다(OCP)
+    avatar_limit: int
+
     def start_auth(self, session: Any, user_id: str, password: str, mode: str) -> None:
         """mode는 "login" 또는 "register" (프로토콜이 구분을 안 하면 무시해도 됨)"""
         ...
