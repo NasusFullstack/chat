@@ -40,8 +40,12 @@ class LoginPage(QWidget):
         box.addWidget(version_label)
 
         self.protocol_combo = QComboBox()
-        self.protocol_combo.addItem("친구 채팅 서버 (커스텀)", "custom")
+        # **춥채팅 서버가 기본이다.** IRC 가 못 하던 것들(한글 닉네임, 긴 글, 귓속말
+        # 기록, 아이콘을 쪼개지 않고 보내기)이 여기서는 된다. IRC 도 그대로 둔다 -
+        # 쓰던 방이 거기 있고, 다른 IRC 클라이언트와 같은 채널에 있을 수도 있다
+        self.protocol_combo.addItem("춥채팅 서버", "server")
         self.protocol_combo.addItem("실제 IRC 서버", "irc")
+        self.protocol_combo.addItem("친구 채팅 서버 (커스텀)", "custom")
         self.protocol_combo.currentIndexChanged.connect(self._on_protocol_changed)
         box.addWidget(self.protocol_combo)
 
@@ -200,8 +204,16 @@ class LoginPage(QWidget):
         self.server_combo.setCurrentIndex(select_index)
         self.server_combo.blockSignals(False)
 
+    # 서버 채팅에서 **숨기는 입력들.** 우리 서버 하나뿐이라 사람이 적을 것이 없다 -
+    # 적게 두면 오타로 "왜 안 되지"가 생기고 그 오타를 기억까지 해버린다
+    _SERVER_HIDDEN = ("server_combo", "host_input", "port_input", "cert_input",
+                      "cert_btn", "ssl_checkbox", "save_server_btn")
+
     def _on_protocol_changed(self, index: int):
-        is_irc = self.protocol_combo.itemData(index) == "irc"
+        protocol = self.protocol_combo.itemData(index)
+        is_irc = protocol == "irc"
+        is_server = protocol == "server"
+
         if is_irc:
             self.user_input.setPlaceholderText("닉네임")
             self.pw_input.setPlaceholderText("서버 계정 비밀번호 (없으면 비워두세요)")
@@ -210,6 +222,12 @@ class LoginPage(QWidget):
             self.pw_input.setPlaceholderText("비밀번호")
         self.register_btn.setVisible(not is_irc)
         self.login_btn.setText("접속" if is_irc else "로그인")
+
+        # 주소·포트·인증서·SSL 은 서버 채팅에서 의미가 없다(늘 같은 주소, 늘 wss)
+        for name in self._SERVER_HIDDEN:
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setVisible(not is_server)
 
     def _on_server_selected(self, index: int):
         data = self.server_combo.itemData(index)
