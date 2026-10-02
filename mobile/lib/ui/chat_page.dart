@@ -325,8 +325,11 @@ class _MemberList extends StatelessWidget {
             child: ListView.builder(
               shrinkWrap: true,
               itemCount: people.length,
+              // 보이는 이름은 **상태에 물어본다**(state.displayName). 서버 채팅은
+              // 아이디와 보이는 이름이 따로고, 여기서 `nicknames[id] ?? id` 를
+              // 직접 쓰면 다른 칸에서 한 군데를 빠뜨리는 날이 온다
               itemBuilder: (_, i) => _Member(
-                nick: people[i],
+                nick: state.displayName(people[i]),
                 avatar: state.avatars[people[i]],
                 client: state.clients[people[i]] ?? const ClientInfo(),
               ),
@@ -440,7 +443,9 @@ class _Line extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _Face(nick: line.sender, avatar: state.avatars[line.sender]),
+          _Face(
+              nick: state.displayName(line.sender),
+              avatar: state.avatars[line.sender]),
           const SizedBox(width: 8),
           // 긴 글이 화면 밖으로 나가지 않게 남은 폭을 전부 준다
           Expanded(
@@ -453,7 +458,7 @@ class _Line extends StatelessWidget {
                       style: DefaultTextStyle.of(context).style,
                       children: [
                         TextSpan(
-                          text: '${line.sender}: ',
+                          text: '${state.displayName(line.sender)}: ',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: line.mine ? scheme.primary : scheme.tertiary,
@@ -481,7 +486,7 @@ class _Line extends StatelessWidget {
                     ),
                   )
                 else
-                  Text('${line.sender}:',
+                  Text('${state.displayName(line.sender)}:',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: line.mine ? scheme.primary : scheme.tertiary,

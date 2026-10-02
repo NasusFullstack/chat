@@ -14,12 +14,15 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../core/irc_protocol.dart';
+import 'chat_link.dart';
 import 'trusted_certs.dart' as certs;
 
-/// 연결이 어떤 상태인가 - 화면이 이걸 보고 안내 문구를 바꾼다.
-enum LinkState { idle, connecting, connected, closed, failed }
+// 연결 상태(`LinkState`)는 **약속 쪽으로 옮겼다**(chat_link.dart). 서버 채팅 통로도
+// 같은 말을 써야 하는데, 그걸 여기서 가져가면 구현이 구현에 기대는 모양이 된다.
+// 예전처럼 이 파일에서 import 해 온 곳들이 안 바뀌게 그대로 내보낸다.
+export 'chat_link.dart' show LinkState;
 
-class IrcClient {
+class IrcClient implements ChatLink {
   IrcClient();
 
   Socket? _socket;
@@ -34,14 +37,22 @@ class IrcClient {
   /// 서버에서 온 줄(CR-LF는 떼어낸 상태).
   Stream<String> get lines => _lines.stream;
 
+  /// 통로 약속이 부르는 이름. IRC 가 올리는 것은 **줄 하나**다.
+  @override
+  Stream<Object> get incoming => _lines.stream;
+
+  @override
   Stream<LinkState> get state => _state.stream;
 
+  @override
   String lastError = '';
 
   /// 처음 보는 인증서를 만났을 때 그 지문. 화면이 사람에게 보여주고 물어본다
+  @override
   String pendingFingerprint = '';
 
   /// 전에 믿기로 한 것과 **달라졌는가**. 서버를 바꾼 게 아니라면 위험하다
+  @override
   bool fingerprintChanged = false;
 
   bool get isConnected => _socket != null;
@@ -53,6 +64,7 @@ class IrcClient {
   ///
   /// 그래서 **전에 믿기로 한 그 인증서만** 받아들인다(trusted_certs.dart). 처음 보는
   /// 것이면 붙지 않고 지문만 남긴다 - 화면이 사람에게 보여주고 물어본 뒤 다시 부른다.
+  @override
   Future<bool> connect({
     required String host,
     required int port,
@@ -113,6 +125,13 @@ class IrcClient {
     socket.add(encodeLine(line));
   }
 
+  /// 통로 약속이 부르는 이름. IRC 로 가는 것은 **줄 하나**뿐이다.
+  @override
+  void sendRaw(Object payload) {
+    if (payload is String) send(payload);
+  }
+
+  @override
   Future<void> close() async {
     final socket = _socket;
     _socket = null;
@@ -125,6 +144,7 @@ class IrcClient {
     }
   }
 
+  @override
   void dispose() {
     close();
     _lines.close();

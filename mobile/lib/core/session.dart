@@ -8,16 +8,17 @@
 /// 각각 주석에 이유를 적어뒀다.
 library;
 
-import 'events.dart';
 import 'battle_protocol.dart' as bp;
+import 'chat_port.dart';
+import 'events.dart';
 import 'irc_protocol.dart';
 
 /// 서버로 한 줄 보내는 통로. 소켓을 여기 끌어들이지 않으려고 함수로 받는다.
 typedef SendLine = void Function(String line);
 
-typedef EmitEvent = void Function(ChatEvent event);
+// `EmitEvent` 는 events.dart 로 옮겼다 - 서버 채팅 판단도 같은 것을 쓴다
 
-class ChatSession {
+class ChatSession implements ChatPort {
   ChatSession({
     required this.send,
     required this.emit,
@@ -30,6 +31,7 @@ class ChatSession {
   final EmitEvent emit;
 
   /// 서버가 확정해준 내 이름. 접속 전에는 비어 있다.
+  @override
   String myId = '';
 
   /// 내가 쓰려던 이름. 밀리면 여기에 `_`를 붙여 다시 시도한다.
@@ -50,6 +52,7 @@ class ChatSession {
   final Map<String, List<String>> _namesBuffer = {};
 
   // ------------------------------------------------------------------ 보내기
+  @override
   void login({String? password, String realname = ''}) {
     if (password != null && password.isNotEmpty) {
       send(formatPass(password));
@@ -58,18 +61,21 @@ class ChatSession {
     send(formatUser(wantedNick, realname.isEmpty ? wantedNick : realname));
   }
 
+  @override
   void joinChannel(String name) {
     final channel = normalizeChannel(name);
     if (channel.isEmpty) return;
     send(formatJoin(channel));
   }
 
+  @override
   void leaveChannel(String channel) => send(formatPart(channel));
 
   /// 한 줄 보낸다. 긴 글은 나눠 보내고, **보낸 것은 내가 직접 화면에 올린다**.
   ///
   /// IRC 서버는 내가 보낸 말을 나에게 되돌려주지 않는다. 그래서 여기서 올리지 않으면
   /// 내 말만 화면에 안 보인다(PC 앱의 `IrcProtocol.send_chat`과 같은 이유).
+  @override
   void sendChat(String channel, String text) {
     if (channel.isEmpty || text.isEmpty) return;
     for (final piece in splitMessage(text)) {
@@ -83,9 +89,26 @@ class ChatSession {
     }
   }
 
+  @override
   void quit([String reason = '종료']) => send(formatQuit(reason));
 
+  /// 전투 방 번호를 채널에 알린다. **주소는 안 실린다**(번호만).
+  ///
+  /// CTCP 프레임으로 보낸다 - 글자로 보이지 않아야 한다(CLAUDE.md 2-2).
+  @override
+  void announceBattleRoom(String channel, String room) =>
+      send(formatPrivmsg(channel, bp.formatRoomNotice(room)));
+
   // ------------------------------------------------------------------ 받기
+  /// 약속이 부르는 이름. IRC 로 오는 것은 **줄 하나**다.
+  ///
+  /// 받는 모양이 프로토콜마다 다른 것을 여기서 끝낸다 - 상태가 "지금 무슨 모양이
+  /// 오지"를 알면 거기서 또 갈라진다.
+  @override
+  void handleIncoming(Object raw) {
+    if (raw is String) handleLine(raw);
+  }
+
   void handleLine(String raw) {
     final msg = parseLine(raw);
     final handler = _handlers[msg.command];

@@ -11,11 +11,15 @@ import 'dart:async';
 import 'dart:io';
 
 import 'core/battle_protocol.dart' as bp;
+import 'core/chat_port.dart';
 import 'core/client_badge.dart';
 import 'core/events.dart';
 import 'core/relay.dart' as relay;
+import 'core/server_session.dart';
 import 'core/session.dart';
+import 'net/chat_link.dart';
 import 'net/irc_client.dart';
+import 'net/server_chat_client.dart';
 import 'login_store.dart';
 import 'net/reconnect.dart';
 import 'net/relay_api.dart';
@@ -50,18 +54,40 @@ class AppState extends ChangeNotifier {
     // **한 번만** 듣는다. connect() 안에서 듣기 시작하면 다시 붙을 때마다 듣는
     // 사람이 하나씩 늘어나서 같은 줄을 두 번, 세 번 해석한다 - 인증서를 믿고 다시
     // 붙는 경우에 바로 겪는다(메시지가 두 번 보인다)
-    _client.state.listen(_onLink);
-    _client.lines.listen((line) => _session?.handleLine(line));
+    _listenTo(ChatKind.irc, _irc);
+    _listenTo(ChatKind.server, _ws);
   }
 
-  final IrcClient _client = IrcClient();
+  /// 통로 하나를 듣기 시작한다.
+  ///
+  /// **지금 쓰는 쪽에서 온 것만 본다.** 둘 다 열어두고 듣기 때문에, 확인하지 않으면
+  /// 쓰지 않는 쪽이 늦게 올린 '끊겼다'가 지금 접속을 끊은 것처럼 보인다
+  void _listenTo(ChatKind which, ChatLink link) {
+    link.state.listen((s) {
+      if (chatKind == which) _onLink(s);
+    });
+    link.incoming.listen((raw) {
+      if (chatKind == which) _session?.handleIncoming(raw);
+    });
+  }
+
+  final IrcClient _irc = IrcClient();
+  final ServerChatClient _ws = ServerChatClient();
+
+  /// 지금 어느 쪽인가. 통로·판단·**쌓이는 자리**가 전부 이 값으로 갈린다
+  ChatKind chatKind = ChatKind.irc;
+
+  /// 지금 쓰는 통로. 화면과 상태는 이것이 TLS 소켓인지 WebSocket 인지 모른다
+  ChatLink get _client => chatKind == ChatKind.server ? _ws : _irc;
 
   /// 처음 보는 인증서를 만났으면 그 지문(없으면 빈 값). 화면이 사람에게 물어본다
   String get pendingFingerprint => _client.pendingFingerprint;
 
   /// 전에 믿기로 한 것과 달라졌는가
   bool get fingerprintChanged => _client.fingerprintChanged;
-  ChatSession? _session;
+  /// 받은 것을 무슨 일로 읽을지 아는 쪽. IRC 면 `ChatSession`,
+  /// 서버 채팅이면 `ServerSession` - **화면은 어느 쪽인지 모른다**
+  ChatPort? _session;
 
   LinkState link = LinkState.idle;
   String statusText = '';
@@ -106,6 +132,19 @@ class AppState extends ChangeNotifier {
   /// 사람마다의 아이콘(base64). 서버에서 받아온다 - 상대가 접속해 있지 않아도 보인다
   final Map<String, String> avatars = {};
 
+  /// 사람마다 **보이는 이름**. 서버 채팅에서만 채워진다 - IRC 는 닉네임이 곧
+  /// 아이디였고 한글도 못 썼다. 화면은 [displayName] 으로 묻는다
+  final Map<String, String> nicknames = {};
+
+  /// 이 사람을 화면에 뭐라고 쓸까. 모르면 아이디 그대로.
+  ///
+  /// 화면이 `nicknames[id] ?? id` 를 곳곳에서 쓰면 한 군데를 빠뜨리는 날이 온다
+  /// (그러면 같은 사람이 어떤 칸에서는 아이디로, 어떤 칸에서는 이름으로 보인다).
+  String displayName(String id) {
+    final nick = nicknames[id];
+    return nick == null || nick.isEmpty ? id : nick;
+  }
+
   /// 채널마다 직전에 본 참여자. 새로 들어온 사람을 가려내는 데 쓴다
   final Map<String, Set<String>> _seenMembers = {};
 
@@ -135,7 +174,9 @@ class AppState extends ChangeNotifier {
   /// **주소는 안 나간다** - 번호만 알린다. 중계 서버 주소는 각자 안다
   String openBattleRoom(String channel) {
     final room = bp.newRoom();
-    _session?.send('PRIVMSG $channel :${bp.formatRoomNotice(room)}');
+    // 알리는 방법은 프로토콜마다 다르다(IRC 는 CTCP, 서버 채팅은 걸러지는 채팅).
+    // **여기서 갈라지지 않는다** - 그걸 아는 쪽이 한다
+    _session?.announceBattleRoom(channel, room);
     knownRooms[channel] = (room, myId, DateTime.now());
     return room;
   }
@@ -196,6 +237,12 @@ class AppState extends ChangeNotifier {
   );
 
   // ------------------------------------------------------------------ 접속
+  /// 붙는다. [kind] 가 **어느 쪽인지**를 정하고, 나머지는 그쪽 사정이다.
+  ///
+  /// - IRC: 주소·포트·인증서를 사람이 정한다. 이름은 닉네임이고 비밀번호는 서버
+  ///   비밀번호다(대개 없다)
+  /// - 서버 채팅: 주소는 **우리가 안다**. 이름은 계정 아이디고 비밀번호는 그 계정의
+  ///   것이다. [makeAccount] 면 가입부터 하고 이어서 로그인한다
   Future<bool> connect({
     required String host,
     required int port,
@@ -203,10 +250,21 @@ class AppState extends ChangeNotifier {
     String password = '',
     bool secure = true,
     String appVersion = '0.0.0',
+    ChatKind kind = ChatKind.irc,
+    bool makeAccount = false,
   }) async {
     statusText = '연결 중...';
+    chatKind = kind;
     notifyListeners();
 
+    if (kind == ChatKind.server) {
+      // 주소를 사람에게 받지 않는다 - 우리 서버 하나뿐이라 잘못 적을 여지를 없앤다.
+      // **고정값이어야 한다** - 기록·프로필이 쌓이는 자리가 이 값으로 정해지고,
+      // PC 와 같은 값이라야 폰과 PC 가 같은 자리를 본다
+      host = relay.serverChatHost;
+      port = relay.serverChatPort;
+      secure = true;
+    }
     this.host = host;
     this.port = port;
     // 다시 붙을 때 쓴다. 사람에게 또 물어볼 수는 없다
@@ -218,28 +276,49 @@ class AppState extends ChangeNotifier {
     final ok = await _client.connect(host: host, port: port, secure: secure);
     if (!ok) return false;
 
-    _session = ChatSession(
-      send: _client.send,
-      emit: handleEvent,
-      wantedNick: nick,
-      appVersion: appVersion,
-    );
-    // 기록·프로필이 놓이는 자리는 (프로토콜, 호스트, 포트)로 정해진다. 서버가 바뀌면
-    // 같이 바꿔야 **다른 서버 기록에 우리 대화가 쌓이지 않는다**
+    _session = switch (kind) {
+      ChatKind.irc => ChatSession(
+          send: _irc.send,
+          emit: handleEvent,
+          wantedNick: nick,
+          appVersion: appVersion,
+        ),
+      ChatKind.server => ServerSession(
+          send: _ws.sendRaw,
+          emit: handleEvent,
+          userId: nick,
+        ),
+    };
+    // 기록·프로필이 놓이는 자리는 (프로토콜, 호스트, 포트)로 정해진다. 프로토콜이
+    // 같이 들어가므로 **IRC 방과 서버 채팅 방은 저절로 갈린다**
     _me = ourClient(appVersion);
-    _profiles = ProfileApi('irc', host, port);
-    _logs = ChatLogApi('irc', host, port);
-    files.group = relay.groupId('irc', host, port);
+    final where = kind.wireName;
+    _profiles = ProfileApi(where, host, port);
+    files.group = relay.groupId(where, host, port);
     unawaited(files.refreshLimits());
-    // 모아서 보낸다. 말 한마디마다 보내면 수다 떠는 속도가 곧 요청 속도가 된다
     _flushTimer?.cancel();
-    _flushTimer = Timer.periodic(const Duration(seconds: 8), (_) => _logs?.flush());
+    if (kind == ChatKind.server) {
+      // **서버가 기록을 들고 있다.** 각자 올려서 모으던 길(아래 IRC 쪽)은 쓸 일이
+      // 없다 - 들어가면 응답에 하루치가 실려 오고, 그래서 올리는 요청도 0건이다
+      _logs = null;
+    } else {
+      _logs = ChatLogApi(where, host, port);
+      // 모아서 보낸다. 말 한마디마다 보내면 수다 떠는 속도가 곧 요청 속도가 된다
+      _flushTimer = Timer.periodic(const Duration(seconds: 8), (_) => _logs?.flush());
+    }
 
     // **여기서 끝이 아니다.** IRC 는 서버가 001 을 보내줘야 '등록된 사용자'가 된다.
     // 그 전에 채널 입장을 보내면 서버가 조용히 무시하므로, 화면도 그때까지 기다린다
     _loginDone = Completer<bool>();
-    _session!.login(password: password, realname: nick);
-    statusText = '로그인 중...';
+    final session = _session;
+    if (makeAccount && session is ServerSession) {
+      // 가입이 끝나면 **세션이 알아서 이어서 로그인한다** - 사람이 두 번 누를 일이 없게
+      session.register(password);
+      statusText = '가입하는 중...';
+    } else {
+      session!.login(password: password, realname: nick);
+      statusText = '로그인 중...';
+    }
     notifyListeners();
 
     final accepted = await _loginDone!.future.timeout(
@@ -264,6 +343,7 @@ class AppState extends ChangeNotifier {
     // 다음에 켤 때 이름을 다시 치지 않게 적어둔다. **성공한 뒤에만** 적는다 -
     // 거절당한 이름을 기억하면 다음에도 같은 실패로 시작한다
     unawaited(saveLastLogin(
+      kind: kind,
       host: host,
       port: port,
       nick: myId,
@@ -303,6 +383,7 @@ class AppState extends ChangeNotifier {
   Future<bool> _reconnectNow() async {
     final rooms = reconnect.pendingRooms;
     final ok = await connect(
+      kind: chatKind,
       host: host,
       port: port,
       nick: _nick,
@@ -332,7 +413,7 @@ class AppState extends ChangeNotifier {
   /// 한꺼번에 보내지 않고 한 박자씩 띄운다. 서버는 짧은 시간에 몰린 요청을 폭주로
   /// 보고 연결을 끊는다(CLAUDE.md 2-4 에 실측표가 있다).
   Future<void> rejoinSaved() async {
-    final rooms = await loadRooms(host, port, myId);
+    final rooms = await loadRooms(host, port, myId, kind: chatKind);
     // 다시 들어가는 **동안에는 기억을 건드리지 않는다.** 한 방에 들어갈 때마다
     // 적어버리면, 도중에 앱이 꺼지면 아직 못 들어간 방들이 통째로 사라진다
     _rejoining = true;
@@ -361,7 +442,9 @@ class AppState extends ChangeNotifier {
   void _rememberRooms() {
     if (_rejoining || !loggedIn || host.isEmpty) return;
     final now = List<String>.of(channels);
-    _roomWrite = _roomWrite.then((_) => saveRooms(host, port, myId, now));
+    final kind = chatKind;
+    _roomWrite =
+        _roomWrite.then((_) => saveRooms(host, port, myId, now, kind: kind));
   }
 
   /// 적어두는 일이 끝나기를 기다린다(검사와 종료 때 쓴다).
@@ -500,7 +583,9 @@ class AppState extends ChangeNotifier {
   void dispose() {
     _flushTimer?.cancel();
     reconnect.cancel();
-    _client.dispose();
+    // **둘 다 치운다.** 지금 쓰는 쪽만 치우면 다른 쪽 스트림이 열린 채로 남는다
+    _irc.dispose();
+    _ws.dispose();
     super.dispose();
   }
 
@@ -547,6 +632,9 @@ class AppState extends ChangeNotifier {
   /// 기준은 **내가 마지막으로 본 줄의 시각**이다. 그보다 뒤엣것만 달라고 하면 이미
   /// 화면에 있는 것과 겹치지 않는다.
   Future<void> fetchMissed(String channel) async {
+    // **서버 채팅은 받아올 것이 없다.** 들어갈 때 응답에 하루치가 실려 온다 -
+    // 여기서 또 물으면 같은 이야기가 두 벌로 쌓인다
+    if (_logs == null) return;
     final seen = lines[channel] ?? const <ChatLine>[];
     double newest = 0;
     for (final line in seen) {
@@ -686,6 +774,17 @@ class AppState extends ChangeNotifier {
             at: DateTime.now(),
           ),
         );
+      case NicknameUpdated(:final userId, :final nickname):
+        // 서버 채팅에서만 온다. 아이디와 **보이는 이름**이 따로다
+        nicknames[userId] = nickname;
+      case AvatarUpdated(:final userId, :final avatar):
+        // **참여자 목록에 같이 온다** - 따로 물어볼 것이 없다(IRC 는 CTCP 로 300자씩
+        // 쪼개 주고받아야 했고 조각이 하나 빠지면 아무것도 안 떴다)
+        if (avatar.isEmpty) {
+          avatars.remove(userId);
+        } else {
+          avatars[userId] = avatar;
+        }
       case NicknameRetrying(:final newNickname):
         statusText = '닉네임이 사용 중이라 $newNickname(으)로 다시 시도합니다.';
       case ConnectionClosed(:final text):

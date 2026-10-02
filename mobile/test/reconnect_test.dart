@@ -20,18 +20,36 @@ void main() {
     // 경우에 바로 겪는 일이라, 소스에서 못 박아 둔다.
     //
     // 소켓 없이 확인할 방법이 이것뿐이다 - 진짜 서버를 띄워야 재현되는 종류라
-    // 평소 검사에서는 안 걸린다
+    // 평소 검사에서는 안 걸린다.
+    //
+    // **통로가 둘이 된 뒤로 더 중요해졌다**(IRC / 서버 채팅). 한쪽을 거는 코드를
+    // 복사해 다른 쪽을 걸면 손이 미끄러지기 쉬운 자리다
     final source = File('lib/app_state.dart').readAsStringSync();
-    final listens = RegExp(r'_client\.(state|lines)\.listen')
+    final listens = RegExp(r'\.(state|incoming|lines)\.listen')
         .allMatches(source)
         .toList();
-    expect(listens.length, 2, reason: '소켓을 듣는 곳은 상태 스트림과 줄 스트림 하나씩이다');
+    expect(listens.length, 2,
+        reason: '듣는 곳은 상태 스트림과 받은 것 스트림 하나씩이다'
+            ' (통로별로 또 쓰지 말고 _listenTo 하나를 쓴다)');
 
     final connectAt = source.indexOf('Future<bool> connect(');
     expect(connectAt, greaterThan(0));
     for (final found in listens) {
       expect(found.start, lessThan(connectAt),
           reason: 'connect() 안에서 듣기 시작하면 다시 붙을 때마다 하나씩 늘어난다');
+    }
+
+    // **두 통로 다 걸려 있어야 한다.** 한쪽을 빼먹으면 그 모드에서만 아무 말도
+    // 안 들어오는데, 다른 모드는 멀쩡해서 "서버가 이상하다"로 오해하게 된다
+    final calls =
+        RegExp(r'_listenTo\(ChatKind\.(irc|server),').allMatches(source).toList();
+    expect(calls.map((m) => m.group(1)).toSet(), {'irc', 'server'},
+        reason: '통로 둘 다 한 번씩 듣기 시작해야 한다');
+    // 걸어두는 일 자체도 **connect() 밖**이어야 한다. 안에서 부르면 위 `.listen`
+    // 개수는 그대로여서 눈에 안 띄는데 듣는 사람은 접속마다 늘어난다
+    for (final call in calls) {
+      expect(call.start, lessThan(connectAt),
+          reason: '_listenTo 를 connect() 안에서 부르면 다시 붙을 때마다 늘어난다');
     }
   });
 
