@@ -233,3 +233,20 @@ class AvatarUpdated extends ChatEvent {
   Map<String, Object?> toMap() =>
       {'type': type, 'user_id': userId, 'avatar': avatar};
 }
+
+/// 들어가지 못했다 - 아이디나 비밀번호가 틀렸거나 서버가 거절했다.
+///
+/// 끊긴 것(`ConnectionClosed`)과 **나눠 둔다.** 둘을 같은 것으로 쓰면 비밀번호가
+/// 틀렸을 때도 "연결이 종료되었습니다"가 뜨는데, 그건 사람이 읽고 무엇을 해야 할지
+/// 알 수 없는 말이다.
+class AuthFailed extends ChatEvent {
+  const AuthFailed(this.text);
+
+  final String text;
+
+  @override
+  String get type => 'AuthFailed';
+
+  @override
+  Map<String, Object?> toMap() => {'type': type, 'text': text};
+}
