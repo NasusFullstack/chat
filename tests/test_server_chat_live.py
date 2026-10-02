@@ -148,6 +148,8 @@ def feature_at_least(want: tuple) -> bool:
 WS_REGISTER = feature_at_least((1, 1, 0))
 # 1.2.0 부터 ping 에 답하고 방 목록을 준다
 KEEPALIVE = feature_at_least((1, 2, 0))
+# 1.3.0 부터 아이디의 대소문자를 안 가린다
+CASELESS = feature_at_least((1, 3, 0))
 
 # ---------- 1) 가입하고 들어간다 ----------
 me = Peer()
@@ -243,6 +245,31 @@ if KEEPALIVE:
 else:
     print(f"[건너뜀] 방 목록 - 올라간 chat 이 {info.get('version')} (1.2.0 이상 필요)",
           flush=True)
+
+# ---------- 5-1) 아이디의 대소문자를 안 가린다 ----------
+# IRC 는 이름의 대소문자를 안 가려서 사람들이 그 버릇으로 친다. 가렸더니 "있는
+# 아이디인데 로그인이 안 된다"가 됐다(실측 2026-10-02)
+if CASELESS:
+    mixed = "Case" + secrets.token_hex(3).upper()
+    body = json.dumps({"id": mixed, "pw": "비밀1234"}).encode("utf-8")
+    ask = urllib.request.Request(f"{relay.SERVER}/chat/register", data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(ask, timeout=15) as reply:
+        reply.read()
+
+    other = Peer()
+    if other.open():
+        other.session.login(mixed.lower(), "비밀1234")
+        wait_for(lambda: other.session.my_id != "", 12)
+        check("소문자로 쳐도 들어간다", other.session.my_id != "", other.session.my_id)
+        # **처음 적은 그대로**를 돌려줘야 한다 - 안 그러면 같은 사람이 Mong 과 mong
+        # 으로 갈려 보인다
+        check("이름은 처음 적은 그대로다", other.session.my_id == mixed,
+              other.session.my_id)
+        other.close()
+else:
+    print(f"[건너뜀] 아이디 대소문자 - 올라간 chat 이 {info.get('version')} "
+          f"(1.3.0 이상 필요)", flush=True)
 
 # ---------- 6) 다시 들어가면 **지난 기록이 같이 온다** ----------
 me.close()
