@@ -7,6 +7,12 @@
 /// 모양이어야 한다(`test/session_test.dart`).
 library;
 
+/// 이벤트를 받는 곳. 판단하는 쪽은 화면도 상태도 모른 채 이 함수만 부른다.
+///
+/// **여기 있는 이유**: 예전에는 `core/session.dart`(IRC) 안에 있었는데, 그러면 서버
+/// 채팅 판단이 IRC 파일을 가져다 써야 한다. 이벤트와 같은 자리가 맞다.
+typedef EmitEvent = void Function(ChatEvent event);
+
 abstract class ChatEvent {
   const ChatEvent();
 
@@ -188,4 +194,42 @@ class ConnectionClosed extends ChatEvent {
 
   @override
   Map<String, Object?> toMap() => {'type': type, 'text': text};
+}
+
+/// 누군가의 **표시 이름**을 알게 됐다.
+///
+/// 서버 채팅에서만 나온다. IRC 는 닉네임이 곧 아이디였지만(한글도 못 썼다), 서버
+/// 채팅은 아이디와 보이는 이름이 따로다 - 참여자 목록에 같이 실려 온다.
+class NicknameUpdated extends ChatEvent {
+  const NicknameUpdated(this.userId, this.nickname);
+
+  final String userId;
+  final String nickname;
+
+  @override
+  String get type => 'NicknameUpdated';
+
+  @override
+  Map<String, Object?> toMap() =>
+      {'type': type, 'user_id': userId, 'nickname': nickname};
+}
+
+/// 누군가의 아이콘을 알게 됐다.
+///
+/// 서버 채팅에서만 나온다. **참여자 목록에 같이 오므로 따로 물어볼 것이 없다** -
+/// IRC 는 CTCP 로 300자씩 쪼개 주고받아야 했고 조각이 하나 빠지면 아무것도 안 떴다.
+class AvatarUpdated extends ChatEvent {
+  const AvatarUpdated(this.userId, this.avatar);
+
+  final String userId;
+
+  /// base64 PNG. 빈 값이면 "지웠다"는 뜻이다
+  final String avatar;
+
+  @override
+  String get type => 'AvatarUpdated';
+
+  @override
+  Map<String, Object?> toMap() =>
+      {'type': type, 'user_id': userId, 'avatar': avatar};
 }

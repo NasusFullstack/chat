@@ -16,8 +16,10 @@ chat_core/          도메인 코어 - Qt/asyncio/파일시스템을 전혀 모�
   protocols/
     custom.py           커스텀 JSON 프로토콜 전략
     irc.py              실제 IRC 프로토콜 전략
+    server.py           춥채팅 서버 채팅 전략(jsserv /chat/ws) - IRC 제약이 없는 쪽
     common_commands.py  두 프로토콜이 동일하게 처리하는 명령(믹스인)
     wire_custom.py      커스텀 프로토콜 메시지 타입 상수 + dict 빌더
+    wire_server.py      서버 채팅 메시지 타입 상수 + dict 빌더
 
 gui/                GUI 어댑터 (PySide6) - 화면만 담당
   main_window.py      창 전체 조정(화면 전환, 소켓 연결, 프로필/치트 연결)
@@ -59,6 +61,7 @@ gui/                GUI 어댑터 (PySide6) - 화면만 담당
   link_preview.py     링크 미리보기 - 받아오기부터 그리기까지 전부 클라이언트가 함
   emoji_picker.py     이모티콘 보관함 창 / emoji_view.py 메시지 안 이모티콘
   uploader.py         사진·파일 올리기(진행률/취소, 한도는 서버에서 받아옴)
+  server_chat_link.py 서버 채팅 통로(QWebSocket) - ChatClient 와 **같은 모양**
   chat_log_sync.py    놓친 대화를 중계 서버에 올리고 받아오기
   profile_sync.py     프로필(아이콘)과 **무슨 프로그램을 쓰는지**를 중계 서버로 주고받기
   emoji_backup.py     예전 이모티콘을 서버로 옮겨 담기(한 번만)
@@ -98,12 +101,16 @@ PC와 **같은 저장소·같은 버전**이다. "왜 이렇게 하기로 했는
 ```
 mobile/lib/
   core/             판단 규칙 - 파이썬 코드와 **답을 대조한다**(test/*_cases.json)
+    chat_port.dart      "채팅이 할 수 있는 일" + ChatKind(IRC 인가 서버 채팅인가)
     irc_protocol.dart   irc_protocol.py 를 옮긴 것
-    session.dart        chat_core/session.py 의 판단 표
+    session.dart        chat_core/session.py 의 판단 표 (IRC)
+    server_session.dart chat_core/protocols/server.py 의 판단 표 (서버 채팅)
     client_badge.dart   무슨 프로그램을 쓰나(서버에서 받은 값을 안 믿고 검사)
     emoji.dart / relay.dart / events.dart
   net/
+    chat_link.dart      "서버와 이어진 줄" 약속 + LinkState
     irc_client.dart     줄 단위 TLS 소켓 + 인증서 지문 고정
+    server_chat_client.dart  서버 채팅 통로(WebSocket)
     relay_api.dart      /files /logs /profiles 부르기
     reconnect.dart      끊기면 언제 다시 붙을지(PC의 gui/reconnect.py와 같은 숫자)
     battle_link.dart    전투 중계 WebSocket / core/battle_sim.dart 전투 계산
@@ -120,9 +127,47 @@ mobile/lib/
 | PC를 이렇게 고치면 | 모바일도 |
 |---|---|
 | `irc_protocol.py` / `chat_core/session.py` 판단을 고치면 | `core/`의 같은 파일 + 대조 답(`tests/dump_*.py`로 다시 뽑기) |
+| `chat_core/protocols/server.py` 를 고치면 | `core/server_session.dart` (같은 메시지 타입·같은 이벤트여야 한다) |
+| jsserv `features/chat*.py` 를 고치면 | **서버 기능 버전을 올리고**(아래 2-7) PC·모바일 양쪽 live 검사를 돌릴 것 |
 | 서버 창구(`/files` `/logs` `/profiles`)를 고치면 | `net/relay_api.dart` |
 | `version.py`를 올리면 | `mobile/pubspec.yaml`(안 맞으면 `tests/test_version_sync.py` 실패) |
 | 설정을 하나 추가하면 | `mobile/lib/prefs.dart`에도 같은 이름으로 |
+
+## IRC 와 서버 채팅 - 이음매가 어디인가
+
+사용자가 바란 것은 "둘을 따로 쓴다"다. IRC 를 없애지 않고 서버 채팅을 더하는 것이라,
+**어디가 갈리고 어디가 하나인지**를 못 박아 둔다.
+
+| | IRC | 서버 채팅 |
+|---|---|---|
+| 붙는 곳 | 사람이 적은 주소 | 우리 서버 하나(주소를 안 받는다) |
+| 이름 | 닉네임(영문·숫자) | 계정 아이디 + **한글 표시 이름** |
+| 한 줄 | 512바이트에서 **서버가 자른다** | 4000자 |
+| 아이콘 | CTCP 로 300자씩 쪼개기 | 한 줄로, 참여자 목록에 같이 옴 |
+| 내가 보낸 말 | 서버가 안 돌려줌 → **로컬 에코** | 돌려줌 → 에코하면 **두 번 보임** |
+| 지난 기록 | 각자 올린 것을 중계 서버가 모음 | **서버가 들고 있다**(하루치, 입장 응답에 실려 옴) |
+| 귓속말 | 기록 안 됨 | 됨 |
+
+갈리는 자리(여기 말고 다른 곳에서 갈리면 안 된다):
+
+- **무엇을 보내고 받은 것이 무슨 뜻인가** - PC `chat_core/protocols/*.py`,
+  모바일 `core/session.dart` / `core/server_session.dart`
+- **어떤 통로로 주고받나** - PC `gui/network.py` / `gui/server_chat_link.py`,
+  모바일 `net/irc_client.dart` / `net/server_chat_client.dart`
+- **어느 쪽을 고를까** - 로그인 화면만 안다(PC `gui/pages/login_page.py`,
+  모바일 `lib/ui/login_page.dart`)
+
+하나인 자리:
+
+- **나오는 이벤트가 같다.** 그래서 화면 코드가 한 벌이다. 채팅 화면이 `ChatKind` 를
+  입에 올리면 안 된다(`mobile/test/chat_kind_test.dart` 가 소스를 읽어 막는다)
+- **쌓이는 자리 계산이 같다.** `relay.room_id(프로토콜, 호스트, 포트, 채널)` 에
+  프로토콜이 들어가므로 IRC 방과 서버 방은 **저절로** 갈린다. 그래서 서버 채팅의
+  자리는 `("server", "chupchat", 0)` 으로 **못 박아 둔다** - PC 와 모바일이 같은 값을
+  써야 같은 자리를 본다. **바꾸면 그동안 쌓인 기록·프로필을 통째로 못 찾는다**
+- 설정은 **쪽마다 따로 적는다**(모바일 `login_store.dart` 의 `login_<쪽>_*` 열쇠).
+  IRC 쪽은 옛 열쇠(`login_nick` 등)도 되읽는다 - 이미 깔려 있는 앱이 기억해둔 이름을
+  잃으면 안 된다
 
 ## SOLID 적용 지점 (지켜야 할 것)
 
@@ -383,6 +428,31 @@ RFC 1459: IRC 한 줄은 CR-LF 포함 512바이트를 넘을 수 없고, 실제 
 (`ProfileSync.publish(nick, avatar_b64=None, client=None)` / 모바일
 `publish(nick, {avatar, client})`). 올리는 창구에 칸을 하나 더 보탤 때마다 같은 함정이
 생기므로, 기본값은 **"안 보냄"**이어야 한다.
+
+### 2-7. 서버는 **모르는 명령을 조용히 버린다** - 그래서 기능 버전을 올려야 한다
+구버전 클라이언트가 모르는 것을 보내도 죽지 않게, jsserv 는 표에 없는 명령을 아무 말
+없이 버린다(`features/chat_ws.py` 의 `HANDLERS`). 반대 방향에서 이게 함정이 된다 -
+**새 클라이언트가 옛 서버에 붙으면 실패도 안 오고 그냥 답이 없다.**
+
+실제로 겪었다(2026-10-02). PC 를 실제 서버에 붙여보니 가입이 아무 답 없이 멎었는데,
+코드·검사는 전부 통과했고 로그인·입장은 멀쩡했다. 원인은 올라가 있는 서버에 그 명령이
+없던 것뿐이었다. 가리는 데 쓴 탐침이 이것이다:
+
+| 보낸 것 | 결과 | 무엇이 밝혀지나 |
+|---|---|---|
+| 틀린 비밀번호로 로그인 | 거절 문구가 옴 | 읽기·답하기 경로는 산다 |
+| 로그인 전 입장 | "먼저 로그인해야 합니다" | 표에 있는 명령은 돈다 |
+| 가입 | **아무 답 없음** | 그 명령이 표에 없다 |
+| HTTP 가입 창구 | 200, 0.2초 | 쓰기·저장은 멀쩡하다 |
+
+그래서 **기능을 보태면 `features/*.py` 의 `VERSION` 을 올린다.** 올려두면 클라이언트와
+검사가 "이 서버가 그걸 할 수 있는가"를 물어볼 수 있다 - live 검사는 못 하는 서버에서는
+**건너뛰고 그 사실을 말한다**(`tests/test_server_chat_live.py`,
+`mobile/test/live_server_chat_test.dart`). 안 올리면 조용히 안 되는 것을 알 길이 없다.
+
+같이 지킬 것: **jsserv 를 고쳤으면 먼저 올리고 나서** 앱 쪽 live 검사를 돌릴 것.
+그리고 커밋 안 한 변경이 로컬에만 남아 있지 않은지 확인할 것 - 이번 원인이 그것이었다
+(`git status` 에 세 파일이 수정 상태로 남아 있었다).
 
 ### 2-3. 링크 미리보기는 전부 클라이언트가 한다 (서버는 관여 안 함)
 서버가 대신 가져오는 구조로 만들었다가 되돌렸다. 서버 자원을 쓰지 않는 게 우선이고,

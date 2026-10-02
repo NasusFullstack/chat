@@ -18,9 +18,23 @@ const String server = 'https://jsserv.pdlab.kr';
 const String wsServer = 'wss://jsserv.pdlab.kr';
 
 const String battleUrl = '$wsServer/battle/ws';
+const String chatWsUrl = '$wsServer/chat/ws';
+const String chatUrl = '$server/chat';
 const String filesUrl = '$server/files';
 const String logsUrl = '$server/logs';
 const String profilesUrl = '$server/profiles';
+
+/// 서버 채팅의 **고정된 자리**. 기록·이모티콘·프로필이 어디에 쌓이는지가 이 값으로
+/// 정해지므로 **절대 바꾸면 안 된다** - 바꾸면 그동안 쌓인 것을 통째로 못 찾는다.
+/// PC 의 `gui/login_request.py`(SERVER_HOST / SERVER_PORT)와 **같은 값**이어야
+/// 폰과 PC 가 같은 자리를 본다.
+const String serverChatHost = 'chupchat';
+const int serverChatPort = 0;
+
+/// 자리 계산에 쓰는 프로토콜 이름. IRC 와 서버 채팅이 섞이지 않는 까닭이 이것이다
+/// (`roomId` 가 프로토콜까지 넣어 해시한다).
+const String ircKindName = 'irc';
+const String serverKindName = 'server';
 
 /// 서버가 받아주는 자리 이름 길이. 서버 쪽 정규식(`^[0-9a-f]{24}$`)과 같아야 한다.
 const int idChars = 24;
