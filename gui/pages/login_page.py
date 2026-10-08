@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxL
 import login_prefs
 import server_registry
 from gui import irc_format
-from gui.helpers import _find_default_cert
+from gui import availability
 from gui.theme import APP_TITLE, DEFAULT_PLAIN_PORT, DEFAULT_SSL_PORT
 from version import APP_VERSION
 
@@ -40,12 +40,13 @@ class LoginPage(QWidget):
         box.addWidget(version_label)
 
         self.protocol_combo = QComboBox()
-        # **춥채팅 서버가 기본이다.** IRC 가 못 하던 것들(한글 닉네임, 긴 글, 귓속말
-        # 기록, 아이콘을 쪼개지 않고 보내기)이 여기서는 된다. IRC 도 그대로 둔다 -
-        # 쓰던 방이 거기 있고, 다른 IRC 클라이언트와 같은 채널에 있을 수도 있다
+        # 세 쪽을 다 **보여주되**, 지금 막아둔 쪽은 흐리게 해서 못 고르게 한다
+        # (gui/availability.py). 아예 빼버리면 "그 기능 없어졌나" 하고, 고를 수 있게
+        # 두면 "눌렀는데 안 붙는다"가 된다
         self.protocol_combo.addItem("춥채팅 서버", "server")
         self.protocol_combo.addItem("실제 IRC 서버", "irc")
         self.protocol_combo.addItem("친구 채팅 서버 (커스텀)", "custom")
+        self._lock_blocked_protocols()
         self.protocol_combo.currentIndexChanged.connect(self._on_protocol_changed)
         box.addWidget(self.protocol_combo)
 
@@ -64,12 +65,14 @@ class LoginPage(QWidget):
         server_btn_row.addWidget(delete_server_btn)
         box.addLayout(server_btn_row)
 
-        self.host_input = QLineEdit("home.pdlab.kr")
+        # 주소·포트는 **비워서 시작한다.** 채워지는 것은 이 기기에 저장해둔 것뿐이다
+        # (지난번 접속 / '공용서버 등록'으로 적어둔 서버). 미리 박아두면 다른 서버를
+        # 쓰는 사람이 매번 지우고 다시 쳐야 하고, 모르는 사이에 엉뚱한 곳에 붙는다
+        self.host_input = QLineEdit()
         self.host_input.setPlaceholderText("서버 주소")
         box.addWidget(self.host_input)
 
-        # 기본은 **보안 접속**이다. 평문으로 붙으면 대화와 비밀번호가 그대로 오간다
-        self.port_input = QLineEdit(DEFAULT_SSL_PORT)
+        self.port_input = QLineEdit()
         self.port_input.setPlaceholderText("포트")
         box.addWidget(self.port_input)
 
@@ -80,7 +83,7 @@ class LoginPage(QWidget):
         box.addWidget(self.ssl_checkbox)
 
         cert_row = QHBoxLayout()
-        self.cert_input = QLineEdit(_find_default_cert())
+        self.cert_input = QLineEdit()
         self.cert_input.setPlaceholderText("cert.pem 경로 (없으면 비워둠)")
         self.cert_browse_btn = QPushButton("찾아보기")
         self.cert_browse_btn.setObjectName("secondary")
@@ -170,6 +173,14 @@ class LoginPage(QWidget):
         # 예전에 평문으로 저장된 접속은 보안 접속으로 올려준다(같은 서버의 보안 포트가
         # 열려 있는 것을 확인하고 기본값을 바꿨다 - 쓰던 사람도 따라오게)
         prefs = login_prefs.upgrade_to_secure(prefs)
+        # **막힌 쪽인지 먼저 본다.** 지난번에 서버 채팅으로 들어갔다면 주소가 그쪽의
+        # 고정 자리(chupchat:0)라서, 그대로 채우면 IRC 주소 칸에 그게 들어간다.
+        # 아이디도 IRC 닉네임으로 쓰면 엉뚱한 이름으로 붙으므로 **아무것도 안 채운다**
+        if not availability.protocol_enabled(prefs.get("protocol") or "irc"):
+            self.show_status(
+                f"{availability.PROTOCOL_BLOCKED_TEXT} 지난번 접속은 지우지 않고 두었습니다.",
+                error=False)
+            return
         if prefs.get("host"):
             self.host_input.setText(prefs["host"])
         if prefs.get("port"):
@@ -178,11 +189,7 @@ class LoginPage(QWidget):
             self.ssl_checkbox.setChecked(bool(prefs["ssl"]))
         if prefs.get("cert_path"):
             self.cert_input.setText(prefs["cert_path"])
-        proto = prefs.get("protocol")
-        if proto:
-            idx = self.protocol_combo.findData(proto)
-            if idx >= 0:
-                self.protocol_combo.setCurrentIndex(idx)
+        self._select_protocol(prefs.get("protocol") or "irc")
         if prefs.get("user_id"):
             self.user_input.setText(prefs["user_id"])
         if prefs.get("auto_login"):
@@ -209,8 +216,34 @@ class LoginPage(QWidget):
     _SERVER_HIDDEN = ("server_combo", "host_input", "port_input", "cert_input",
                       "cert_btn", "ssl_checkbox", "save_server_btn")
 
+    def _lock_blocked_protocols(self):
+        """막아둔 쪽을 **흐리게** 하고 못 고르게 한다(보이기는 한다)."""
+        model = self.protocol_combo.model()
+        for i in range(self.protocol_combo.count()):
+            if availability.protocol_enabled(self.protocol_combo.itemData(i)):
+                continue
+            item = model.item(i)
+            item.setEnabled(False)
+            item.setToolTip(availability.PROTOCOL_BLOCKED_TEXT)
+
+    def _select_protocol(self, protocol: str) -> bool:
+        """그쪽을 고른다. **막아둔 쪽이면 안 고르고** 거짓을 돌려준다."""
+        if not availability.protocol_enabled(protocol):
+            return False
+        index = self.protocol_combo.findData(protocol)
+        if index < 0:
+            return False
+        self.protocol_combo.setCurrentIndex(index)
+        return True
+
     def _on_protocol_changed(self, index: int):
         protocol = self.protocol_combo.itemData(index)
+        # 흐린 항목은 눌러도 안 골라지지만, 코드가 바꾸는 길(저장해둔 서버 고르기 등)이
+        # 따로 있다. 어느 길로 왔든 막힌 쪽이면 IRC 로 되돌린다
+        if not availability.protocol_enabled(protocol):
+            self.show_status(availability.PROTOCOL_BLOCKED_TEXT)
+            self.protocol_combo.setCurrentIndex(self.protocol_combo.findData("irc"))
+            return
         is_irc = protocol == "irc"
         is_server = protocol == "server"
 
@@ -231,6 +264,14 @@ class LoginPage(QWidget):
 
     def _on_server_selected(self, index: int):
         data = self.server_combo.itemData(index)
+        if data and not availability.protocol_enabled(data.get("protocol", "custom")):
+            # 막아둔 쪽(커스텀 등)으로 저장해둔 서버다. 주소만 채우면 IRC 로 그 주소에
+            # 붙으려 해서 엉뚱하게 실패한다 - 고르지 않은 것으로 되돌린다
+            self.show_status(availability.PROTOCOL_BLOCKED_TEXT)
+            self.server_combo.blockSignals(True)
+            self.server_combo.setCurrentIndex(0)
+            self.server_combo.blockSignals(False)
+            return
         if data:
             self.host_input.setText(data["host"])
             self.port_input.setText(str(data["port"]))
@@ -243,8 +284,10 @@ class LoginPage(QWidget):
     def _on_ssl_toggled(self, checked: bool):
         self.cert_input.setEnabled(checked)
         self.cert_browse_btn.setEnabled(checked)
+        # 표준 포트 둘 사이를 오갈 때만 바꿔준다. **빈 칸은 채우지 않는다** - 저장해둔
+        # 것만 채운다는 약속을 여기서 깨면 결국 기본 포트가 다시 박힌다
         current_port = self.port_input.text().strip()
-        if current_port in (DEFAULT_SSL_PORT, DEFAULT_PLAIN_PORT, ""):
+        if current_port in (DEFAULT_SSL_PORT, DEFAULT_PLAIN_PORT):
             self.port_input.setText(DEFAULT_SSL_PORT if checked else DEFAULT_PLAIN_PORT)
 
     def _register_server(self):

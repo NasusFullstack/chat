@@ -42,8 +42,10 @@ window = g.MainWindow()
 page = window.login_page
 check(f"기본으로 보안 접속을 켠다({page.ssl_checkbox.isChecked()})",
       page.ssl_checkbox.isChecked() is True, page.ssl_checkbox.isChecked())
-check(f"기본 포트가 보안 포트({page.port_input.text()})",
-      page.port_input.text() == g.DEFAULT_SSL_PORT, page.port_input.text())
+# 포트는 **비어서 시작한다**(2026-10-08 사용자 요청 - 저장해둔 것만 채운다).
+# 보안 접속을 켜둔 것만 기본으로 남긴다
+check(f"포트는 비어서 시작한다({page.port_input.text()!r})",
+      page.port_input.text() == "", page.port_input.text())
 
 # ---------- 2) 예전에 평문으로 쓰던 사람도 옮겨준다 ----------
 check("평문으로 저장된 접속은 보안 접속으로 올린다",

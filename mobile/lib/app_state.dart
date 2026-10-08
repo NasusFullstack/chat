@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'core/battle_protocol.dart' as bp;
+import 'core/availability.dart' as availability;
 import 'core/chat_port.dart';
 import 'core/client_badge.dart';
 import 'core/events.dart';
@@ -497,6 +498,13 @@ class AppState extends ChangeNotifier {
     onJoinForTest?.call(name);
     _session?.joinChannel(name, key: key);
   }
+
+  // ------------------------------------------------------------ 올리기
+  /// 지금 보는 방에서 사진·파일을 올릴 수 있나(`core/availability.dart`).
+  ///
+  /// 화면은 이것만 묻는다 - 어느 서버의 어느 방에서 되는지는 화면이 몰라야 한다
+  bool get canUploadHere => current.isNotEmpty &&
+      availability.uploadAllowed(chatKind.wireName, host, current);
 
   // ------------------------------------------------------------ 서버의 방 목록
   /// 서버에 어떤 방이 있는지 **보고 고를 수 있나.**

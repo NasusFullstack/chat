@@ -209,6 +209,10 @@ class ChatPage(QWidget):
         self._uploader = None
         self._uploading_channel = ""
         self._upload_queue: list[str] = []
+        # 이 방에서 올려도 되나 - **창이 알려준다**(set_upload_check). 화면은 지금 무슨
+        # 서버·프로토콜인지 모르고, 몰라야 한다. 알려주기 전에는 막지 않는다
+        self._upload_check = lambda channel: True
+        self._upload_blocked_text = ""
         # 창에 끌어다 놓으면 올라간다. 사진인지 파일인지는 **내용을 보고** 정하므로
         # 사람이 미리 고를 필요가 없다(확장자는 거짓말을 한다)
         self.setAcceptDrops(True)
@@ -278,6 +282,8 @@ class ChatPage(QWidget):
         if not files:
             return
         event.acceptProposedAction()
+        if self._refuse_upload_here():
+            return
         skipped = len(paths) - len(files)
         channel = self.active_channel()
         if skipped and channel:
@@ -328,6 +334,8 @@ class ChatPage(QWidget):
         """
         from PySide6.QtWidgets import QFileDialog
 
+        if self._refuse_upload_here():
+            return
         if kind == "photo":
             title, filters = "사진 고르기", "사진 (*.png *.jpg *.jpeg *.gif *.webp *.bmp)"
         else:
@@ -386,6 +394,37 @@ class ChatPage(QWidget):
 
     def set_emoji_group(self, group: str):
         self._emoji_group = group
+
+    def set_upload_check(self, can_upload, blocked_text: str = ""):
+        """사진·파일을 올려도 되는 방인지 묻는 함수를 받는다(채널 이름 -> 참/거짓).
+
+        판단은 받아서 쓰기만 한다 - 어느 서버의 어느 방에서 되는지는 창이 안다.
+        """
+        self._upload_check = can_upload
+        self._upload_blocked_text = blocked_text
+        self._refresh_upload_buttons()
+
+    def _upload_open_here(self) -> bool:
+        channel = self.active_channel()
+        return bool(channel) and bool(self._upload_check(channel))
+
+    def _refresh_upload_buttons(self):
+        """지금 보는 방에 맞춰 버튼을 켜고 끈다(막힌 방에서는 흐리게)."""
+        self.message_input.set_attach_enabled(
+            self._upload_open_here() or not self.active_channel(),
+            self._upload_blocked_text)
+
+    def _refuse_upload_here(self) -> bool:
+        """이 방에서 못 올리면 **그렇다고 말하고** 참을 돌려준다.
+
+        말없이 무시하면 "끌어다 놨는데 아무 일도 안 일어난다"가 된다.
+        """
+        if self._upload_open_here():
+            return False
+        channel = self.active_channel()
+        if channel and self._upload_blocked_text:
+            self.append_system(channel, self._upload_blocked_text)
+        return True
 
     def battle_host(self):
         """전투 화면이 올라갈 자리 - 혼자 나는 배틀크루저와 같은 곳(채팅 영역 위)."""
@@ -498,6 +537,7 @@ class ChatPage(QWidget):
             return
         self._active_channel = view.channel_name
         self.channel_header.setText(view.channel_name)
+        self._refresh_upload_buttons()
         # 사이드바 선택도 같이 옮김. 여기서 신호가 되돌아오는 걸 막으려고 잠시 끊음
         self.channel_sidebar.list.blockSignals(True)
         self.channel_sidebar.set_active(view.channel_name)

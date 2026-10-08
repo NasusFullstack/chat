@@ -19,6 +19,12 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, HERE)
 
 import relay  # noqa: E402
+from gui import availability  # noqa: E402
+
+# **지금은 서버 채팅과 커스텀을 막아뒀다**(gui/availability.py, 2026-10-08). 그래도
+# 길 자체는 시험한다 - 막아둔 동안 아무도 안 돌려보면, 다시 열 때 깨진 걸 모른다.
+# 여기서만 잠깐 연다(기본이 막혀 있는지는 tests/test_availability.py 가 본다)
+availability.ENABLED_PROTOCOLS = frozenset({"irc", "server", "custom"})
 from gui.login_request import SERVER_HOST, SERVER_PORT, parse_login_values  # noqa: E402
 from gui.network import ChatClient  # noqa: E402
 from gui.server_chat_link import ServerChatLink  # noqa: E402

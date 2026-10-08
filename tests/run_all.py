@@ -68,8 +68,10 @@ def main():
         return 0
 
     servers = start_servers()
+    # CHUPCHAT_OPEN_ALL: 당분간 막아둔 것(커스텀·서버 채팅·올리기)을 **검사에서만**
+    # 연다 - 막아둔 동안에도 그 길이 성한지 봐야 한다(gui/availability.py)
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8",
-               CHUPCHAT_DATA_DIR=DATA_DIR)
+               CHUPCHAT_DATA_DIR=DATA_DIR, CHUPCHAT_OPEN_ALL="1")
     failures = []
     try:
         for name in names:

@@ -134,6 +134,15 @@ class MessageInput(QWidget):
     def set_enabled(self, enabled: bool):
         self.line.setEnabled(enabled)
 
+    def set_attach_enabled(self, enabled: bool, why: str = ""):
+        """사진·파일 버튼을 켜고 끈다. 꺼져 있을 때 **왜인지**를 말풍선으로 보여준다.
+
+        입력줄은 "왜 막혔는지" 판단하지 않는다 - 화면이 알려준 그대로 보여주기만 한다.
+        """
+        for button, tip in ((self.photo_btn, "사진 올리기"), (self.file_btn, "파일 올리기")):
+            button.setEnabled(enabled)
+            button.setToolTip(tip if enabled else (why or tip))
+
     def focus(self):
         self.line.setFocus()
 

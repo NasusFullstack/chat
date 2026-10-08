@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../app_state.dart';
+import '../core/availability.dart';
 import '../core/chat_port.dart';
 import '../core/irc_protocol.dart';
 import '../core/server_session.dart' show accountProblem;
@@ -44,12 +45,27 @@ class _LoginPageState extends State<LoginPage>
     // 손가락을 떼기 전(indexIsChanging)에도 불린다 - 끝난 뒤에만 본다
     if (_tabs.indexIsChanging) return;
     final picked = _kindAt(_tabs.index);
+    if (!kindEnabled(picked)) {
+      // 막아둔 쪽이다 - 보이기만 하고 못 고른다. 되돌리고 **왜인지 말한다**
+      _tabs.index = _indexOf(_kind);
+      setState(() => widget.state.statusText = kindBlockedText);
+      return;
+    }
     if (picked != _kind) _switchKind(picked);
   }
 
-  // PC 앱과 같은 기본값. 여기 처음 오는 사람이 아무것도 안 고치고 들어갈 수 있게
-  final _host = TextEditingController(text: 'home.pdlab.kr');
-  final _port = TextEditingController(text: '6697');
+  /// 탭을 누른 바로 그때 막는다(넘어가는 움직임이 보이지 않게).
+  /// 위의 듣는 쪽은 다른 길(밀어서 넘기기 등)로 왔을 때를 잡는다
+  void _onTabTapped(int index) {
+    if (kindEnabled(_kindAt(index))) return;
+    _tabs.index = _indexOf(_kind);
+    setState(() => widget.state.statusText = kindBlockedText);
+  }
+
+  // 주소·포트는 **비워서 시작한다.** 채워지는 것은 이 기기에 저장해둔 것뿐이다
+  // (지난번 접속). PC 도 같다 - 미리 박아두면 다른 서버를 쓰는 사람이 매번 지운다
+  final _host = TextEditingController();
+  final _port = TextEditingController();
   final _nick = TextEditingController();
   final _password = TextEditingController();
   bool _secure = true;
@@ -81,7 +97,9 @@ class _LoginPageState extends State<LoginPage>
   /// **어느 쪽이었는지를 먼저 읽는다.** 설정이 쪽마다 따로라서, 쪽을 모르면 어느
   /// 칸을 채워야 할지도 모른다
   Future<void> _restore() async {
-    final kind = await loadLastKind();
+    final lastKind = await loadLastKind();
+    // 지난번 쪽이 지금 막혀 있으면 IRC 로 연다. 그쪽 기억은 지우지 않는다(되살릴 때 쓴다)
+    final kind = kindEnabled(lastKind) ? lastKind : ChatKind.irc;
     final last = await loadLastLogin(kind);
     if (!mounted) return;
     setState(() {
@@ -96,7 +114,8 @@ class _LoginPageState extends State<LoginPage>
   /// 기억해둔 값을 칸에 넣는다.
   void _fill(LastLogin last) {
     _host.text = last.host;
-    _port.text = '${last.port}';
+    // 0 은 "안 적힘"이다 - 칸에 0 을 보여주면 그게 포트인 줄 안다
+    _port.text = last.port > 0 ? '${last.port}' : '';
     _nick.text = last.nick;
     _secure = last.secure;
     widget.state.rememberLogin = last.remember;
@@ -144,7 +163,16 @@ class _LoginPageState extends State<LoginPage>
     setState(() => _busy = true);
 
     final host = _host.text.trim();
-    final port = int.tryParse(_port.text.trim()) ?? 6697;
+    final port = int.tryParse(_port.text.trim()) ?? 0;
+    // **몰래 기본값을 쓰지 않는다.** 비어 있으면 채우라고 말한다(서버 채팅은 주소를
+    // 안 받으므로 IRC 일 때만 본다)
+    if (_kind == ChatKind.irc && (host.isEmpty || port <= 0)) {
+      setState(() {
+        _busy = false;
+        widget.state.statusText = '서버 주소와 포트를 입력해 주세요.';
+      });
+      return;
+    }
     // 참여자 목록에 춥채팅 배지와 폰 표시를 띄우려면 우리 버전을 알려줘야 한다
     final info = await PackageInfo.fromPlatform();
 
@@ -242,9 +270,18 @@ class _LoginPageState extends State<LoginPage>
               ignoring: _busy,
               child: TabBar(
                 controller: _tabs,
+                onTap: _onTabTapped,
+                // 막아둔 쪽도 **보이기는 한다**(흐리게). 빼버리면 "없어졌나" 한다
                 tabs: [
-                  Tab(text: ChatKind.server.label),
-                  Tab(text: ChatKind.irc.label),
+                  for (final kind in [ChatKind.server, ChatKind.irc])
+                    Tab(
+                      child: Text(
+                        kind.label,
+                        style: kindEnabled(kind)
+                            ? null
+                            : TextStyle(color: Theme.of(context).disabledColor),
+                      ),
+                    ),
                 ],
               ),
             ),

@@ -32,6 +32,7 @@ from gui import event_router, liveness, window_geometry
 from gui.login_request import parse_login_values
 from gui.reconnect import ReconnectPolicy
 from gui.tray import TrayIcon
+from gui import availability
 from gui.chat_log_sync import ChatLogSync
 from gui import client_badges
 from gui.client_probe import ClientProbeController
@@ -193,6 +194,12 @@ class MainWindow(QMainWindow):
             self._handle_send, self._handle_add_channel, self._handle_leave_channel,
             self._handle_set_avatar, self._handle_all_channels_left,
         )
+        # 사진·파일은 **정해둔 방에서만** 올린다(gui/availability.py). 판단할 때마다
+        # 지금 세션을 읽는다 - 다시 붙으면 세션이 새로 만들어지기 때문이다
+        self.chat_page.set_upload_check(
+            lambda channel: availability.upload_allowed(
+                self.session.protocol.name, self.session.host, channel),
+            availability.UPLOAD_BLOCKED_TEXT)
         # 채널 목록 아래 톱니바퀴 - 트레이 메뉴의 '환경설정'과 같은 창을 연다
         # (설정 창을 여는 곳이 둘이지만 여는 코드는 트레이 쪽 하나만 둔다)
         self.chat_page.settings_requested.connect(self._tray.open_settings)

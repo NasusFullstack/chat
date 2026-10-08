@@ -29,10 +29,12 @@ import 'core/relay.dart' as relay;
 
 /// 기억해둔 접속 정보.
 class LastLogin {
+  /// 주소·포트는 **비어서 시작한다**(0 = 안 적힘). 채워지는 것은 이 기기에
+  /// 저장해둔 것뿐이다 - 미리 박아두면 다른 서버를 쓰는 사람이 매번 지우고 다시 친다
   const LastLogin({
     this.kind = ChatKind.irc,
-    this.host = 'home.pdlab.kr',
-    this.port = 6697,
+    this.host = '',
+    this.port = 0,
     this.nick = '',
     this.secure = true,
     this.remember = true,
@@ -115,10 +117,10 @@ Future<LastLogin> loadLastLogin([ChatKind kind = ChatKind.irc]) async {
     }
     return LastLogin(
       kind: kind,
-      host: text('host') ?? 'home.pdlab.kr',
+      host: text('host') ?? '',
       port: store.getInt(_key(kind, 'port')) ??
           store.getInt('login_port') ??
-          6697,
+          0,
       nick: text('nick') ?? '',
       secure: flag('secure') ?? true,
       remember: flag('remember') ?? true,

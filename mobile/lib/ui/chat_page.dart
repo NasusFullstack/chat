@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../app_state.dart';
+import '../core/availability.dart' show uploadBlockedText;
 import '../core/client_badge.dart';
 import '../core/emoji.dart';
 import '../core/relay.dart' as relay;
@@ -109,6 +110,12 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _pick({required bool photo}) async {
+    // 버튼이 흐려도 다른 길로 올 수 있다 - 여기서 한 번 더 막고 **왜인지 말한다**
+    if (!widget.state.canUploadHere) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text(uploadBlockedText)));
+      return;
+    }
     final picker = ImagePicker();
     // 사진은 갤러리에서, 그 밖의 파일은 아직 사진 고르기로만 받는다(파일 고르기는
     // 기기마다 권한이 달라 따로 붙여야 한다)
@@ -189,6 +196,7 @@ class _ChatPageState extends State<ChatPage> {
           onPhoto: () => _pick(photo: true),
           onEmoji: _showEmoji,
           enabled: state.current.isNotEmpty,
+          photoEnabled: state.canUploadHere,
         ),
       ],
     );
@@ -516,6 +524,7 @@ class _InputRow extends StatelessWidget {
     required this.onPhoto,
     required this.onEmoji,
     required this.enabled,
+    this.photoEnabled = true,
   });
 
   final TextEditingController controller;
@@ -523,6 +532,9 @@ class _InputRow extends StatelessWidget {
   final VoidCallback onPhoto;
   final VoidCallback onEmoji;
   final bool enabled;
+
+  /// 이 방에서 사진을 올릴 수 있나. 막힌 방에서는 버튼을 흐리게 두고 왜인지 알려준다
+  final bool photoEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -536,9 +548,14 @@ class _InputRow extends StatelessWidget {
             tooltip: '이모티콘',
           ),
           IconButton(
+            // 막힌 방에서도 **눌리기는 한다** - 흐리게만 하고 누르면 왜인지 알려준다.
+            // 아예 못 누르게 하면 "고장났나" 하고 이유를 알 길이 없다
             onPressed: enabled ? onPhoto : null,
-            icon: const Icon(Icons.image_outlined),
-            tooltip: '사진 보내기',
+            icon: Icon(Icons.image_outlined,
+                color: photoEnabled
+                    ? null
+                    : Theme.of(context).disabledColor),
+            tooltip: photoEnabled ? '사진 보내기' : uploadBlockedText,
           ),
           Expanded(
             child: TextField(

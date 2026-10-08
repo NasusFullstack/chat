@@ -56,6 +56,12 @@ class LoginRequest:
 def parse_login_values(values: dict) -> tuple[LoginRequest | None, str]:
     """로그인 화면 입력값 -> (요청, "") 또는 (None, 사용자에게 보여줄 이유)."""
     protocol = values.get("protocol", "custom")
+    # **막아둔 쪽은 여기서 거른다.** 화면에서 흐리게 해도, 예전에 저장해둔 자동
+    # 로그인은 화면을 안 거치고 이 길로 바로 온다 - 그래서 거르는 곳은 여기 하나다
+    from gui import availability
+    if not availability.protocol_enabled(values.get("protocol") or "irc"):
+        return None, availability.PROTOCOL_BLOCKED_TEXT
+
     host = (values.get("host") or "").strip()
     port_text = (values.get("port") or "").strip()
     user_id = (values.get("user_id") or "").strip()

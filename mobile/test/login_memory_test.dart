@@ -21,10 +21,12 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  test('처음 켜면 우리 서버가 적혀 있고 이름은 비어 있다', () async {
+  test('처음 켜면 **다 비어 있다** - 저장해둔 것만 채운다', () async {
+    // 예전에는 우리 서버 주소와 포트가 박혀 있었다. 다른 서버를 쓰는 사람은 매번
+    // 지우고 다시 쳐야 했다(2026-10-08 사용자 요청으로 뺐다)
     final last = await loadLastLogin();
-    expect(last.host, host);
-    expect(last.port, port);
+    expect(last.host, isEmpty);
+    expect(last.port, 0, reason: '0 은 "안 적힘"이다');
     expect(last.nick, isEmpty);
     expect(last.canAuto, isFalse, reason: '이름이 없으면 알아서 들어갈 수 없다');
   });
